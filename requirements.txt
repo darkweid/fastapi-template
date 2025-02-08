@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+gunicorn
+sqlalchemy
+alembic
+asyncpg
+redis
+celery
+pydantic
+pyjwt
+passlib
+python-dotenv
+httpx
+loguru
+websockets
