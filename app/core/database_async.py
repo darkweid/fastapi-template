@@ -18,9 +18,6 @@ engine = create_async_engine(DATABASE_URL,
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)  # noqa
 
 
-from app.models import *  # noqa
-
-
 async def init_models():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
