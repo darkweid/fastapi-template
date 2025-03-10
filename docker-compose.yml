@@ -16,6 +16,7 @@ services:
   app:
     container_name: app
     command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    #    command: gunicorn -k uvicorn.workers.UvicornWorker -w 8 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 main:app
     build: .
     volumes:
       - .:/app
