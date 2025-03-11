@@ -1,13 +1,13 @@
 import logging
 import os
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "log_files")
 LOG_FILE = os.path.join(LOG_DIR, "debug.log")
 
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
-logging_format = "%(asctime)s [%(levelname)s]|[%(process)d]| %(name)s: %(message)s"
+logging_format = "%(asctime)s [%(levelname)s]|[PID:%(process)d]| %(name)s: %(message)s"
 time_logging_format = "%Y-%m-%d %H:%M:%S"
 
 
