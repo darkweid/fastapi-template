@@ -4,6 +4,7 @@ fastapi-pagination
 uvicorn
 gunicorn
 sqlalchemy
+GeoAlchemy2
 alembic
 asyncpg
 psycopg2
