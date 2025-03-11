@@ -59,10 +59,12 @@ services:
   flower:
     container_name: flower
     image: mher/flower:latest
+    build: .
     restart: always
+    env_file: .env
     ports:
-      - 5555:5555
-    command: celery -A celery_tasks.main flower --port=5555 --broker=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+      - "5555:5555"
+    command: celery --broker=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672// -A celery_tasks.main flower --port=5555
     depends_on:
       - rabbitmq
       - celery_worker
