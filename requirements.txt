@@ -1,3 +1,4 @@
+black
 fastapi
 fastapi-pagination
 uvicorn
