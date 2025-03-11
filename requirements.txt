@@ -19,3 +19,4 @@ websockets
 sentry-sdk
 python-multipart
 pytz
+flower
