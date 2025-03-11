@@ -18,3 +18,4 @@ loguru
 websockets
 sentry-sdk
 python-multipart
+pytz

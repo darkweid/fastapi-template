@@ -1,8 +1,10 @@
 from pydantic_settings import BaseSettings
 from sqlalchemy import URL
+from pytz import timezone
 
 
 class Settings(BaseSettings):
+    timezone: str = "Asia/Tashkent"
     sentry_dsn: str
     db_echo: bool
     project_name: str
@@ -37,6 +39,11 @@ class Settings(BaseSettings):
     aws_secret_access_key: str
     region_name: str
     s3_sample_url: str
+
+    @property
+    def tz(self):
+        """Return timezone-aware object."""
+        return timezone(self.timezone)
 
     def build_postgres_dsn_async(self) -> URL:
         return URL.create(
