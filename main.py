@@ -33,7 +33,7 @@ def get_application() -> FastAPI:
     )
 
     application.include_router(v1, prefix="/api/v1")
-    logger.info(f"Total endpoints: %s", len(application.routes))
+    logger.info(f"Total endpoints: %s", len(application.routes) - 4)
 
     application.add_middleware(
         CORSMiddleware,  # noqa
