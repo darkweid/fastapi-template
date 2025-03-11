@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
-from app.core.database_async import init_models
+from app.core.database.database_async import init_models
 from app.core.middleware import ValidationErrorMiddleware, UnexpectedErrorMiddleware, DatabaseErrorMiddleware
 from app.core.routes import v1
 from app.core.settings import settings
@@ -55,7 +55,7 @@ def get_application() -> FastAPI:
     async def startup_event():
         await init_models()
 
-        from app.core.redis import redis_client
+        from app.core.database.redis import redis_client
         try:
             await redis_client.ping()
             logger.info("Successfully connected to Redis")
@@ -65,7 +65,7 @@ def get_application() -> FastAPI:
 
     @application.on_event("shutdown")
     async def shutdown_event():
-        from app.core.redis import redis_client
+        from app.core.database.redis import redis_client
         await redis_client.close()
 
     return application
