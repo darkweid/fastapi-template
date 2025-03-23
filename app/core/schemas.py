@@ -1,8 +1,9 @@
-from pydantic import BaseModel, Extra
+from pydantic import BaseModel, ConfigDict
 
 
 class Base(BaseModel):
-    class Config:
-        from_attributes = True
-        use_enum_values = True
-        extra = Extra.forbid
+    model_config = ConfigDict(
+        from_attributes=True,
+        use_enum_values=True,
+        extra="forbid"
+    )
