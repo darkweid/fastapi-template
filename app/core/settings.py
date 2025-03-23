@@ -6,6 +6,7 @@ from pytz import timezone
 class Settings(BaseSettings):
     timezone: str = "Asia/Tashkent"
     sentry_dsn: str
+    sentry_env: str = "development"
     db_echo: bool
     project_name: str
     version: str
