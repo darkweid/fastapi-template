@@ -20,5 +20,7 @@ loguru
 websockets
 sentry-sdk
 python-multipart
+pytest
+pytest-asyncio
 pytz
 flower
