@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
-from app.core.middleware import ValidationErrorMiddleware, UnexpectedErrorMiddleware, DatabaseErrorMiddleware
+from app.core.middleware import register_middlewares
 from app.core.routes import v1
 from app.core.settings import settings
 from loggers import get_logger
@@ -61,9 +61,9 @@ def get_application() -> FastAPI:
 
     # Sentry middleware for error tracking
     application.add_middleware(SentryAsgiMiddleware)  # noqa
-    application.add_middleware(ValidationErrorMiddleware)  # noqa
-    application.add_middleware(DatabaseErrorMiddleware)  # noqa
-    application.add_middleware(UnexpectedErrorMiddleware)  # noqa
+
+    # Register middlewares from core/middleware.py
+    register_middlewares(application)
 
     add_pagination(application)
 
