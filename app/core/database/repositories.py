@@ -19,14 +19,18 @@ class BaseRepository:
     def __init__(self, model: Type[T]):
         self.model = model
 
-    async def create(self, data: dict, session: AsyncSession) -> Optional[T]:
+    async def create(self, data: dict, session: AsyncSession) -> T:
         """Create a new record using the provided session."""
-        instance = self.model(**data)
-        session.add(instance)
-        await session.commit()
-        await session.refresh(instance)
-        logger.info("%s created successfully.", self.model.__name__)
-        return instance
+        try:
+            instance = self.model(**data)
+            session.add(instance)
+            await session.commit()
+            await session.refresh(instance)
+            logger.info("%s created successfully.", self.model.__name__)
+            return instance
+        except (IntegrityError, SQLAlchemyError):
+            await session.rollback()
+            raise
 
     async def get_single(self, session: AsyncSession, **filters) -> Optional[T]:
         """Retrieve a single record using the provided session."""
