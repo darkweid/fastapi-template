@@ -14,7 +14,7 @@ class BaseService:
     def __init__(self, repository):
         self.repository = repository
 
-    async def create(self, data: R, session: AsyncSession) -> Optional[T]:
+    async def create(self, session: AsyncSession, data: R) -> Optional[T]:
         """Create a new record using the provided session."""
         return await self.repository.create(data.model_dump(), session)
 
@@ -26,7 +26,7 @@ class BaseService:
         """Retrieve a list of records matching the filters using the provided session."""
         return await self.repository.get_list(session, **filters)
 
-    async def update(self, data: R, session: AsyncSession, **filters) -> Optional[T]:
+    async def update(self, session: AsyncSession, data: R, **filters) -> Optional[T]:
         """Update a record matching the filters using the provided session."""
         return await self.repository.update(data.model_dump(exclude_unset=True), session, **filters)
 
