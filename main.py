@@ -51,6 +51,9 @@ def get_application() -> FastAPI:
     application.include_router(v1, prefix="/api/v1")
     logger.info(f"Total endpoints: %s", len(application.routes) - 4)
 
+    # Register middlewares from core/middleware.py
+    register_middlewares(application)
+
     application.add_middleware(
         CORSMiddleware,  # noqa
         allow_origins=["*"],
@@ -61,9 +64,6 @@ def get_application() -> FastAPI:
 
     # Sentry middleware for error tracking
     application.add_middleware(SentryAsgiMiddleware)  # noqa
-
-    # Register middlewares from core/middleware.py
-    register_middlewares(application)
 
     add_pagination(application)
 
