@@ -27,7 +27,9 @@ def get_stream_handler():
 
 def get_logger(name):
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-    logger.addHandler(get_file_handler())
-    logger.addHandler(get_stream_handler())
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        logger.addHandler(get_file_handler())
+        logger.addHandler(get_stream_handler())
+        logger.propagate = False
     return logger
