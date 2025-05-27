@@ -11,13 +11,15 @@ DATABASE_URL = settings.build_postgres_dsn_async()
 
 engine = create_async_engine(DATABASE_URL,
                              echo=settings.db_echo,
-                             pool_size=15,
-                             max_overflow=15,
+                             pool_size=10,
+                             max_overflow=10,
                              pool_timeout=30,
                              pool_recycle=60 * 30,  # Restart the pool after 30 minutes
                              )
 
-async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)  # noqa
+async_session = sessionmaker(bind=engine,  # type: ignore
+                             class_=AsyncSession,
+                             expire_on_commit=False)
 
 
 async def init_models():
