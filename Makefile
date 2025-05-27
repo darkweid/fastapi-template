@@ -39,6 +39,13 @@ restart:
 clean:
 	$(DOCKER_COMPOSE) down -v --rmi local --remove-orphans
 
+# Remove builds and other unneeded stuff
+.PHONY: clean-resources
+clean-resources:
+	docker image prune -a -f
+	docker container prune -f
+	docker builder prune -a -f
+
 # Alembic: Create a new migration
 .PHONY: migration
 migration:
@@ -85,3 +92,32 @@ logs-celery-beat:
 .PHONY: logs-postgres
 logs-postgres:
 	$(DOCKER_COMPOSE) logs -f $(POSTGRES_CONTAINER)
+
+.PHONY: info
+info:
+	@echo "================== FastAPI Template Info =================="
+	@echo "Project based on FastAPI template"
+	@echo ""
+	@echo "Containers status:"
+	@$(DOCKER_COMPOSE) ps
+	@echo ""
+	@echo "Useful commands:"
+	@echo "  make build              # Build all containers"
+	@echo "  make up                 # Start containers"
+	@echo "  make run                # Build and start containers"
+	@echo "  make down               # Stop and remove containers"
+	@echo "  make restart            # Restart all running containers"
+	@echo "  make clean              # Remove containers, volumes, orphans"
+	@echo "  make clean-resources    # Remove all unused Docker resources"
+	@echo "  make shell              # Enter bash inside the app container"
+	@echo "  make migrate            # Apply Alembic migrations"
+	@echo "  make migration          # Create Alembic migration (use: make migration message='msg')"
+	@echo "  make celery-worker      # Start Celery worker"
+	@echo "  make stop-celery        # Stop Celery worker"
+	@echo "  make logs               # Show all logs"
+	@echo "  make logs-app           # Show logs from the app container"
+	@echo "  make logs-celery        # Show logs from the celery_worker container"
+	@echo "  make logs-celery-beat   # Show logs from the celery_beat container"
+	@echo "  make logs-postgres      # Show logs from the postgres container"
+	@echo ""
+	@echo "==========================================================="
