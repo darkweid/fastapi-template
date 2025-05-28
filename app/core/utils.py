@@ -1,5 +1,9 @@
+import asyncio
+import inspect
 import random
+import time
 from datetime import datetime, date, time
+from functools import wraps
 from typing import Optional, Tuple, Union
 from zoneinfo import ZoneInfo
 
@@ -7,6 +11,9 @@ import pytz
 from passlib.context import CryptContext
 
 from app.core.settings import settings
+from loggers import get_logger
+
+logger = get_logger(__name__)
 
 pwd_context = CryptContext(
     schemes=["argon2"],
@@ -100,3 +107,71 @@ def get_utc_now() -> datetime:
         datetime: The current date and time in UTC with tzinfo set to ZoneInfo("UTC").
     """
     return datetime.now(ZoneInfo("UTC"))
+
+
+def with_retries(max_retries=3, delay=2):
+    """
+    A universal retry decorator for both asynchronous and synchronous functions.
+
+    This decorator retries the wrapped function up to `max_retries` times in case of exceptions.
+    For asynchronous functions (`async def`), it uses `await asyncio.sleep(...)` between attempts.
+    For synchronous functions (`def`), it uses `time.sleep(...)`.
+
+    Useful for operations that may fail intermittently, such as network requests, database transactions,
+    or third-party API calls.
+
+    The delay between retries increases linearly: `delay * attempt_number`.
+
+    Args:
+        max_retries (int): Maximum number of retry attempts before raising the last exception. Default is 3.
+        delay (int): Base delay in seconds between retries. Default is 2.
+
+    Returns:
+        The result of the function if it eventually succeeds within the retry limit.
+
+    Raises:
+        The last exception encountered if all retry attempts fail.
+
+    Notes:
+        Automatically detects whether the wrapped function is async or sync and handles retries accordingly.
+        Only exceptions are retried — if the function returns an incorrect or unexpected result, it will not retry.
+
+    Example:
+        @with_retries(max_retries=5, delay=1)
+        async def fetch_data(): ...
+
+        @with_retries()
+        def read_file(): ...
+    """
+
+    def decorator(func):
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        return await func(*args, **kwargs)
+                    except Exception as e:
+                        logger.warning(f"[RETRY] Async function '{func.__name__}' attempt {attempt} failed: {e}")
+                        if attempt < max_retries:
+                            await asyncio.sleep(delay * attempt)
+                        else:
+                            raise
+
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        return func(*args, **kwargs)
+                    except Exception as e:
+                        logger.warning(f"[RETRY] Sync function '{func.__name__}' attempt {attempt} failed: {e}")
+                        if attempt < max_retries:
+                            time.sleep(delay * attempt)
+                        else:
+                            raise
+
+            return sync_wrapper
+
+    return decorator
