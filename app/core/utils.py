@@ -175,3 +175,57 @@ def with_retries(max_retries=3, delay=2):
             return sync_wrapper
 
     return decorator
+
+
+def with_retries_on_result(max_retries=3, delay=2, success_key=("result", "code"), expected_value="OK"):
+    """
+    A decorator that retries an asynchronous function if the result does not contain an expected value
+    at a specified key path.
+
+    Ideal for async API calls that return structured responses, where retry logic depends not on exceptions,
+    but on the content of the result (e.g., status codes or result flags).
+
+    The key path is defined as a tuple and used to traverse the nested dictionary in the result.
+
+    Note:
+        This decorator must be applied to asynchronous functions only (`async def`).
+
+    Args:
+        max_retries (int): Maximum number of retry attempts. Default is 3.
+        delay (int): Base delay (in seconds) between retries. Increases linearly. Default is 2.
+        success_key (tuple): A tuple representing the key path to check in the result dict. Default is ("result", "code").
+        expected_value (Any): The value that indicates success. Default is "OK".
+
+    Returns:
+        The result from the decorated async function if it matches the expected value.
+
+    Raises:
+        ValueError if the expected value is not found.
+        The last exception raised if all retries fail.
+    """
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            for attempt in range(1, max_retries + 1):
+                try:
+                    result = await func(*args, **kwargs)
+                    current = result
+                    for key in success_key:
+                        current = current.get(key)
+                        if current is None:
+                            break
+                    if current == expected_value:
+                        return result
+                    else:
+                        raise ValueError(f"Unexpected result: {result}")
+                except Exception as e:
+                    logger.warning(f"[RETRY] Function '{func.__name__}' attempt {attempt} failed: {e}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(delay * attempt)
+                    else:
+                        raise
+
+        return wrapper
+
+    return decorator
