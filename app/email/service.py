@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Union
 
 from fastapi_mail import MessageType
-from pydantic import EmailStr, ValidationError, TypeAdapter
+from pydantic import EmailStr, ValidationError, TypeAdapter, BaseModel
 
 from app.email.interfaces import AbstractMailer
 from loggers import get_logger
@@ -23,7 +23,7 @@ class EmailService:
             subject: str,
             recipients: Union[str, List[str]],
             template_name: str,
-            template_body: dict,
+            template_body: BaseModel,
             subtype: MessageType = MessageType.html,
     ) -> None:
         normalized = self._normalize_and_validate_recipients(recipients)

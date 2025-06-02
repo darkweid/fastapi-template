@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List
+from pydantic import BaseModel
 
 
 class AbstractMailer(ABC):
@@ -10,7 +11,7 @@ class AbstractMailer(ABC):
             subject: str,
             recipients: List[str],
             template_name: str,
-            template_data: dict,
+            template_data: BaseModel,
             subtype: str = "html",
     ) -> None:
         """Send an email based on a template with dynamic content."""

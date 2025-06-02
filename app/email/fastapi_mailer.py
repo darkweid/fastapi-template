@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
-from pydantic import EmailStr
+from pydantic import EmailStr, BaseModel
 
 from app.email.interfaces import AbstractMailer
 
@@ -16,7 +16,7 @@ class FastAPIMailer(AbstractMailer):
             subject: str,
             recipients: List[EmailStr],
             template_name: str,
-            template_data: dict,
+            template_data: BaseModel,
             subtype: MessageType = MessageType.html,
     ) -> None:
         """
@@ -32,7 +32,7 @@ class FastAPIMailer(AbstractMailer):
         message = MessageSchema(
             subject=subject,
             recipients=recipients,
-            template_body=template_data,
+            template_body=template_data.model_dump(),
             subtype=subtype,
         )
         await self._mailer.send_message(message, template_name=template_name)
