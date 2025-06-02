@@ -13,6 +13,7 @@ redis
 celery
 pydantic
 pydantic-settings
+email-validator
 pyjwt
 passlib
 python-dotenv

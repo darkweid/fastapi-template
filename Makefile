@@ -93,6 +93,10 @@ logs-celery-beat:
 logs-postgres:
 	$(DOCKER_COMPOSE) logs -f $(POSTGRES_CONTAINER)
 
+.PHONY: test
+test:
+	pytest
+
 .PHONY: info
 info:
 	@echo "================== FastAPI Template Info =================="
