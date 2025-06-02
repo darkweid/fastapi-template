@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     debug: bool
     cors_allowed_origins: str
 
+    log_level: str
+    log_level_file: str
+
     postgres_user: str
     postgres_password: str
     postgres_host: str
