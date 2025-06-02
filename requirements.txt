@@ -1,6 +1,7 @@
 black
 fastapi
 fastapi-pagination
+fastapi_mail
 uvicorn
 gunicorn
 sqlalchemy

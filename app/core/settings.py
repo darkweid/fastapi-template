@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
-from sqlalchemy import URL
 from pytz import timezone
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     algorithm: str
     access_token_expire_minutes: int
     refresh_token_expire_minutes: int
+
+    email_server: str
+    email_port: int
+    email_password: str
+    email_user: str
+    email_use_tls: bool
+    mail_from_name: str
 
     redis_host: str
     redis_port: int
