@@ -29,6 +29,14 @@ run:
 down:
 	$(DOCKER_COMPOSE) down
 
+.PHONY: deploy-prod
+deploy-prod:
+	make build && make down && make up && make migrate
+
+.PHONY: deploy-dev
+deploy-dev:
+	make run && make migrate
+
 # Restart containers
 .PHONY: restart
 restart:
@@ -39,9 +47,18 @@ restart:
 clean:
 	$(DOCKER_COMPOSE) down -v --rmi local --remove-orphans
 
-# Remove builds and other unneeded stuff
+# Clean up unused Docker resources, keeping build cache and reusable images.
+# Safe to run after deployment without affecting performance.
 .PHONY: clean-resources
 clean-resources:
+	docker image prune -f
+	docker container prune -f
+	docker builder prune -f
+
+# Aggressively clean up all Docker resources, including all unused images and build cache.
+# Warning: This will force full rebuilds of all images on next build.
+.PHONY: clean-resources-hard
+clean-resources-hard:
 	docker image prune -a -f
 	docker container prune -f
 	docker builder prune -a -f
