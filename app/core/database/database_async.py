@@ -50,3 +50,24 @@ async def maybe_begin(session: AsyncSession) -> AsyncGenerator[None, None]:
     else:
         async with session.begin():
             yield
+
+
+@asynccontextmanager
+async def safe_begin(session: AsyncSession) -> AsyncGenerator[None, None]:
+    """
+    Context manager that guarantees a transactional scope for ORM operations.
+
+    - If the session is not already in a transaction, opens a regular transaction
+      (BEGIN...COMMIT/ROLLBACK).
+    - If the session is already in a transaction, creates a nested transaction
+      (SAVEPOINT) to allow local commit or rollback without affecting the outer transaction.
+
+    Args:
+        session (AsyncSession): The SQLAlchemy async session to manage.
+    """
+    if session.in_transaction():
+        async with session.begin_nested():
+            yield
+    else:
+        async with session.begin():
+            yield
