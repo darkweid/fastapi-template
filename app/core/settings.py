@@ -11,7 +11,12 @@ class Settings(BaseSettings):
     project_name: str
     version: str
     debug: bool
-    cors_allowed_origins: str
+
+    # CORS
+    cors_allow_origins: list[str] = ["*"]
+    cors_allow_credentials: bool = True
+    cors_allow_methods: list[str] = ["*"]
+    cors_allow_headers: list[str] = ["*"]
 
     log_level: str
     log_level_file: str

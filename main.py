@@ -54,12 +54,13 @@ def get_application() -> FastAPI:
     # Register middlewares from core/middleware.py
     register_middlewares(application)
 
+    # CORS
     application.add_middleware(
-        CORSMiddleware,  # noqa
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        CORSMiddleware, # noqa
+        allow_origins=settings.cors_allow_origins,
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=settings.cors_allow_methods,
+        allow_headers=settings.cors_allow_headers,
     )
 
     # Sentry middleware for error tracking
