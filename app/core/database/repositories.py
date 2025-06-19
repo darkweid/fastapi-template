@@ -20,11 +20,14 @@ class BaseRepository(Generic[T]):
 
     model: Type[T]
 
-    def __init__(self):
+    def __init__(self) -> None:
         if not hasattr(self, "model"):
             raise NotImplementedError("Subclasses must define class variable 'model'")
 
-    async def create(self, session: AsyncSession, data: dict[str, Any], commit: bool = True) -> Optional[T]:
+    async def create(self,
+                     session: AsyncSession,
+                     data: dict[str, Any],
+                     commit: bool = True) -> Optional[T]:
         """Create a new record using the provided session."""
         try:
             instance = self.model(**data)
@@ -39,43 +42,58 @@ class BaseRepository(Generic[T]):
                 await session.rollback()
             raise
 
-    async def get_single(self, session: AsyncSession, **filters: Any) -> Optional[T]:
+    async def get_single(self,
+                         session: AsyncSession,
+                         allow_null_filters: bool = False,
+                         **filters: Any) -> Optional[T]:
         """Retrieve a single record using the provided session."""
+        filters = self._clean_filters(filters, allow_null_filters)
         query = select(self.model).filter_by(**filters)
         result = await session.execute(query)
         return result.scalars().first()
 
-    async def get_list(self, session: AsyncSession, **filters: Any) -> Page[T]:
-        """Retrieve a paginated list of records using the provided session."""
+    async def get_list(self,
+                       session: AsyncSession,
+                       allow_null_filters: bool = False,
+                       **filters: Any) -> List[T]:
+        """Retrieve a list of records using the provided session without pagination."""
+        filters = self._clean_filters(filters, allow_null_filters)
         query = select(self.model).filter_by(**filters)
 
         order_by = getattr(self.model, "created_at", None)
         if order_by is None:
             order_by = getattr(self.model, "id", None)
-
-        if order_by is not None:
-            query = query.order_by(order_by.desc())
-
-        return await paginate(session, query)  # type: ignore
-
-    async def get_list_without_pagination(self, session: AsyncSession, **filters: Any) -> List[T]:
-        """Retrieve a paginated list of records using the provided session without pagination."""
-        query = select(self.model).filter_by(**filters)
-
-        order_by = getattr(self.model, "created_at", None)
-        if order_by is None:
-            order_by = getattr(self.model, "id", None)
-
         if order_by is not None:
             query = query.order_by(order_by.desc())
 
         result = await session.execute(query)
         return list(result.scalars().all())
 
-    async def update(self, session: AsyncSession, data: dict[str, Any], commit: bool = True, **filters: Any) -> \
-            Optional[T]:
+    async def get_paginated_list(self,
+                                 session: AsyncSession,
+                                 allow_null_filters: bool = False,
+                                 **filters: Any) -> Page[T]:
+        """Retrieve a paginated list of records using the provided session."""
+        filters = self._clean_filters(filters, allow_null_filters)
+        query = select(self.model).filter_by(**filters)
+
+        order_by = getattr(self.model, "created_at", None)
+        if order_by is None:
+            order_by = getattr(self.model, "id", None)
+        if order_by is not None:
+            query = query.order_by(order_by.desc())
+
+        return await paginate(session, query)  # type: ignore
+
+    async def update(self,
+                     session: AsyncSession,
+                     data: dict[str, Any],
+                     allow_null_filters: bool = False,
+                     commit: bool = True,
+                     **filters: Any) -> Optional[T]:
         """Update a record using the provided session."""
         try:
+            filters = self._clean_filters(filters, allow_null_filters)
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
             instance = result.scalars().first()
@@ -93,9 +111,14 @@ class BaseRepository(Generic[T]):
                 await session.rollback()
             raise
 
-    async def delete(self, session: AsyncSession, commit: bool = True, **filters: Any) -> Optional[T]:
+    async def delete(self,
+                     session: AsyncSession,
+                     commit: bool = True,
+                     allow_null_filters: bool = False,
+                     **filters: Any) -> Optional[T]:
         """Delete a record using the provided session."""
         try:
+            filters = self._clean_filters(filters, allow_null_filters)
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
             instance = result.scalars().first()
@@ -111,39 +134,57 @@ class BaseRepository(Generic[T]):
                 await session.rollback()
             raise
 
+    def _clean_filters(self, filters: dict[str, Any], allow_null: bool) -> dict[str, Any]:
+        return filters if allow_null else {k: v for k, v in filters.items() if v is not None}
+
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     """Repository with soft delete support."""
 
-    async def get_single(self, session: AsyncSession, **filters: Any) -> Optional[T]:
+    async def get_single(self,
+                         session: AsyncSession,
+                         allow_null_filters: bool = False,
+                         **filters: Any) -> Optional[T]:
         """Retrieve a single record where is_deleted flag is False, using the provided session and filters."""
         filters.setdefault("is_deleted", False)
-        return await super().get_single(session, **filters)
+        return await super().get_single(session, allow_null_filters, **filters)
 
-    async def get_list(self, session: AsyncSession, **filters: Any) -> Page[T]:
+    async def get_list(self,
+                       session: AsyncSession,
+                       allow_null_filters: bool = False,
+                       **filters: Any) -> List[T]:
         """Retrieve a list of records where is_deleted flag is False, using the provided session and filters."""
         filters.setdefault("is_deleted", False)
-        return await super().get_list(session, **filters)
+        return await super().get_list(session, allow_null_filters, **filters)
 
-    async def get_list_without_pagination(self, session: AsyncSession, **filters: Any) -> List[T]:
+    async def get_paginated_list(self,
+                                 session: AsyncSession,
+                                 allow_null_filters: bool = False,
+                                 **filters: Any) -> Page[T]:
         """Retrieve a list of records where is_deleted flag is False, using the provided session and filters,
-        without pagination."""
+        with pagination."""
         filters.setdefault("is_deleted", False)
-        return await super().get_list_without_pagination(session, **filters)
+        return await super().get_paginated_list(session, allow_null_filters, **filters)
 
     async def update(self,
                      session: AsyncSession,
                      data: dict[str, Any],
+                     allow_null_filters: bool = False,
                      commit: bool = True,
                      **filters: Any) -> Optional[T]:
         """Update a record where is_deleted flag is False, using the provided session and filters."""
         filters.setdefault("is_deleted", False)
-        return await super().update(session, data, commit, **filters)
+        return await super().update(session, data, allow_null_filters, commit, **filters)
 
-    async def delete(self, session: AsyncSession, commit: bool = True, **filters: Any) -> Optional[T]:
+    async def delete(self,
+                     session: AsyncSession,
+                     commit: bool = True,
+                     allow_null_filters: bool = False,
+                     **filters: Any) -> Optional[T]:
         """Soft delete a record, using the provided session and filters."""
         filters.setdefault("is_deleted", False)
         try:
+            filters = self._clean_filters(filters, allow_null_filters)
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
             instance: Optional[T] = result.scalars().first()
