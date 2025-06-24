@@ -3,6 +3,7 @@ import traceback
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
@@ -23,7 +24,7 @@ def register_middlewares(app: FastAPI) -> None:
             sentry_sdk.capture_exception(e)
             return JSONResponse(
                 status_code=422,
-                content={"detail": e.errors()}
+                content={"detail": jsonable_encoder(e.errors())}
             )
 
     @app.middleware("http")
