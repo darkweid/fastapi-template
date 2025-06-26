@@ -1,10 +1,14 @@
+import re
 import traceback
+from typing import Callable, Awaitable
 
 import sentry_sdk
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from starlette.responses import Response
 
 from loggers import get_logger
 
@@ -15,19 +19,25 @@ def register_middlewares(app: FastAPI) -> None:
     """Registers all custom middlewares in proper order"""
 
     @app.middleware("http")
-    async def validation_error_middleware(request: Request, call_next):
+    async def validation_error_middleware(request: Request,
+                                          call_next: Callable[[Request],
+                                          Awaitable[Response]]) -> Response:
         try:
             return await call_next(request)
         except ValidationError as e:
             logger.error("Validation error at %s: %s", request.url.path, e.errors())
             sentry_sdk.capture_exception(e)
+
+            safe_detail = jsonable_encoder(e.errors())
             return JSONResponse(
                 status_code=422,
-                content={"detail": e.errors()}
+                content={"detail": safe_detail}
             )
 
     @app.middleware("http")
-    async def database_error_middleware(request: Request, call_next):
+    async def database_error_middleware(request: Request,
+                                        call_next: Callable[[Request],
+                                        Awaitable[Response]]) -> Response:
         try:
             return await call_next(request)
         except IntegrityError as e:
@@ -52,7 +62,9 @@ def register_middlewares(app: FastAPI) -> None:
             )
 
     @app.middleware("http")
-    async def unexpected_error_middleware(request: Request, call_next):
+    async def unexpected_error_middleware(request: Request,
+                                          call_next: Callable[[Request],
+                                          Awaitable[Response]]) -> Response:
         try:
             return await call_next(request)
         except Exception as e:
@@ -84,7 +96,12 @@ def handle_postgresql_error(error: IntegrityError) -> JSONResponse:
             detail_message = "No additional details provided."
 
     if sqlstate == "23505":  # UniqueViolation
-        return JSONResponse(status_code=409, content={"detail": detail_message})
+        match = re.search(r'\(([^)]+)\)', detail_message)
+        if match:
+            first_value = match.group(1)
+        else:
+            first_value = detail_message
+        return JSONResponse(status_code=409, content={"detail": first_value})
     elif sqlstate == "23502":  # NotNullViolation
         return JSONResponse(status_code=422, content={"detail": detail_message})
     elif sqlstate == "23503":  # ForeignKeyViolation
