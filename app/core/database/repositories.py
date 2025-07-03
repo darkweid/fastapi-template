@@ -2,7 +2,7 @@ from typing import Type, TypeVar, Optional, List, Generic, Any
 
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,6 +123,39 @@ class BaseRepository(Generic[T]):
             if commit:
                 await session.rollback()
             raise
+
+    async def _apply_search_filter(
+            self,
+            query: Any,
+            search: str | None = None,
+            fields: list[str] | None = None,
+    ) -> Any:
+        if not search or not fields:
+            return query
+
+        search_query_list = [
+            getattr(self.model, key).ilike(f"%{search}%")
+            for key in fields
+            if isinstance(key, str) and hasattr(self.model, key)
+        ]
+
+        if search_query_list:
+            query = query.where(or_(*search_query_list))
+
+        return query
+
+    async def _apply_date_filter(
+            self,
+            query: Any,
+            from_date: Optional[str] = None,
+            to_date: Optional[str] = None,
+            field: str = "created_at",
+    ) -> Any:
+        if from_date and to_date and hasattr(self.model, field):
+            query = query.where(
+                getattr(self.model, field).between(from_date, to_date)
+            )
+        return query
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):
