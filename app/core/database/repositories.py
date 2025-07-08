@@ -1,4 +1,5 @@
-from typing import Type, TypeVar, Optional, List, Generic, Any
+from datetime import datetime
+from typing import Type, TypeVar, Optional, List, Generic, Any, Sequence, Union
 
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -124,37 +125,39 @@ class BaseRepository(Generic[T]):
                 await session.rollback()
             raise
 
-    async def _apply_search_filter(
+    def _apply_search_filter(
             self,
             query: Any,
-            search: str | None = None,
-            fields: list[str] | None = None,
+            search: Optional[str] = None,
+            fields: Optional[Sequence[Union[str, Any]]] = None,
     ) -> Any:
         if not search or not fields:
             return query
 
-        search_query_list = [
-            getattr(self.model, key).ilike(f"%{search}%")
-            for key in fields
-            if isinstance(key, str) and hasattr(self.model, key)
-        ]
+        search_query_list = []
+
+        for field in fields:
+            if isinstance(field, str) and hasattr(self.model, field):
+                search_query_list.append(
+                    getattr(self.model, field).ilike(f"%{search}%")
+                )
+            elif hasattr(field, "ilike"):
+                search_query_list.append(field.ilike(f"%{search}%"))
 
         if search_query_list:
             query = query.where(or_(*search_query_list))
 
         return query
 
-    async def _apply_date_filter(
+    def _apply_date_filter(
             self,
             query: Any,
-            from_date: Optional[str] = None,
-            to_date: Optional[str] = None,
+            from_date: Optional[datetime] = None,
+            to_date: Optional[datetime] = None,
             field: str = "created_at",
     ) -> Any:
         if from_date and to_date and hasattr(self.model, field):
-            query = query.where(
-                getattr(self.model, field).between(from_date, to_date)
-            )
+            query = query.where(getattr(self.model, field).between(from_date, to_date))
         return query
 
 
