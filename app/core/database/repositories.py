@@ -114,8 +114,8 @@ class BaseRepository(Generic[T]):
             result = await session.execute(query)
             instance = result.scalars().first()
             if instance:
+                await session.delete(instance)
                 if commit:
-                    await session.delete(instance)
                     await session.commit()
                 logger.info("%s deleted successfully.", self.model.__name__)
                 return instance
