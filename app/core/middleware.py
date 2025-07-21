@@ -1,4 +1,5 @@
 import re
+import time
 import traceback
 from typing import Callable, Awaitable
 
@@ -17,6 +18,33 @@ logger = get_logger(__name__)
 
 def register_middlewares(app: FastAPI) -> None:
     """Registers all custom middlewares in proper order"""
+
+    @app.middleware("http")
+    async def request_timing_middleware(
+            request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        start_time = time.perf_counter()
+        response = await call_next(request)
+        process_time = time.perf_counter() - start_time
+
+        if process_time < 0.5:
+            level = logger.info
+            category = "[FAST]"
+        elif process_time < 2:
+            level = logger.warning
+            category = "[MODERATE]"
+        else:
+            level = logger.error
+            category = "[SLOW]"
+
+        method = request.method
+        path = request.url.path
+        status_code = response.status_code
+        duration = f"{process_time:.3f}s"
+
+        level(f"{category} {method} {path} | {duration} | {status_code}")
+
+        return response
 
     @app.middleware("http")
     async def validation_error_middleware(request: Request,
