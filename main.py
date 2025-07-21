@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 import sentry_sdk
@@ -11,6 +12,7 @@ from app.core.routes import v1
 from app.core.settings import settings
 from loggers import get_logger
 
+logging.getLogger("uvicorn.access").disabled = True
 logger = get_logger(__name__)
 
 
@@ -56,7 +58,7 @@ def get_application() -> FastAPI:
 
     # CORS
     application.add_middleware(
-        CORSMiddleware, # noqa
+        CORSMiddleware,  # noqa
         allow_origins=settings.cors_allow_origins,
         allow_credentials=settings.cors_allow_credentials,
         allow_methods=settings.cors_allow_methods,
