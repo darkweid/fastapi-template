@@ -14,6 +14,8 @@ from starlette.responses import Response
 from loggers import get_logger
 
 logger = get_logger(__name__)
+timing_logger = get_logger("eld.request.timing", plain_format=True)
+
 
 
 def register_middlewares(app: FastAPI) -> None:
@@ -28,13 +30,13 @@ def register_middlewares(app: FastAPI) -> None:
         process_time = time.perf_counter() - start_time
 
         if process_time < 0.5:
-            level = logger.info
+            level = timing_logger.info
             category = "[FAST]"
         elif process_time < 2:
-            level = logger.warning
+            level = timing_logger.warning
             category = "[MODERATE]"
         else:
-            level = logger.error
+            level = timing_logger.error
             category = "[SLOW]"
 
         method = request.method

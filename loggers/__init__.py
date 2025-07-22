@@ -32,11 +32,23 @@ def get_stream_handler() -> StreamHandler:  # type: ignore
     return stream_handler
 
 
-def get_logger(name: Any) -> Logger:
+def get_logger(name: Any, *, plain_format: bool = False) -> Logger:
     logger = logging.getLogger(name)
-    if not logger.handlers:
-        logger.setLevel(log_level)
+
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(log_level)
+
+    if plain_format:
+        formatter = logging.Formatter("%(asctime)s [%(process)d]| %(message)s", time_logging_format)
+        stream_handler = StreamHandler()
+        stream_handler.setLevel(log_level)
+        stream_handler.setFormatter(formatter)
+        logger.addHandler(stream_handler)
+    else:
         logger.addHandler(get_file_handler())
         logger.addHandler(get_stream_handler())
-        logger.propagate = False
+
+    logger.propagate = False
     return logger
