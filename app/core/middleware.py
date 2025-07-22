@@ -14,7 +14,7 @@ from starlette.responses import Response
 from loggers import get_logger
 
 logger = get_logger(__name__)
-timing_logger = get_logger("eld.request.timing", plain_format=True)
+timing_logger = get_logger("app.request.timing", plain_format=True)
 
 
 
