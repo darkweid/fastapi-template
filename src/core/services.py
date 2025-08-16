@@ -3,9 +3,9 @@ from typing import Optional, Generic, TypeVar, List, Any
 from fastapi_pagination import Page
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database.models import Base as SQLAlchemyBase
-from app.core.database.repositories import BaseRepository
-from app.core.schemas import Base as PydanticBase
+from src.core.database.models import Base as SQLAlchemyBase
+from src.core.database.repositories import BaseRepository
+from src.core.schemas import Base as PydanticBase
 
 T = TypeVar("T", bound=SQLAlchemyBase)
 CreateSchema = TypeVar("CreateSchema", bound=PydanticBase)

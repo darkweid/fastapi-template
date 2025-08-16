@@ -3,7 +3,7 @@ from typing import List
 
 from pydantic import BaseModel
 
-from app.email.interfaces import AbstractMailer
+from src.core.email.interfaces import AbstractMailer
 
 
 class MockMailer(AbstractMailer):

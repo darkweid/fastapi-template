@@ -14,12 +14,12 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   app:
-    container_name: app
-    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
-    #    command: gunicorn -k uvicorn.workers.UvicornWorker -w 8 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 main:app
+    container_name: src
+    command: uvicorn main:src --host 0.0.0.0 --port 8001 --reload
+    #    command: gunicorn -k uvicorn.workers.UvicornWorker -w 8 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 main:src
     build: .
     volumes:
-      - .:/app
+      - .:/src
     ports:
       - 8001:8001
     depends_on:
@@ -32,7 +32,7 @@ services:
     build: .
     command: python -m celery -A celery_tasks.main worker --pool=solo --loglevel=info -E
     volumes:
-      - .:/app
+      - .:/src
     depends_on:
       - rabbitmq
       - redis
@@ -48,7 +48,7 @@ services:
     build: .
     command: python -m celery -A celery_tasks.main beat --loglevel=info
     volumes:
-      - .:/app
+      - .:/src
     depends_on:
       - rabbitmq
       - redis

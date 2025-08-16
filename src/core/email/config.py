@@ -1,6 +1,6 @@
 from pathlib import Path
 from fastapi_mail import ConnectionConfig
-from app.core.settings import settings
+from src.core.settings import settings
 
 
 def get_fastapi_mail_config() -> ConnectionConfig:

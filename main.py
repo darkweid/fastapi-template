@@ -7,9 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
-from app.core.middleware import register_middlewares
-from app.core.routes import v1
-from app.core.settings import settings
+from src.core.middleware import register_middlewares
+from src.core.routes import v1
+from src.core.settings import settings
 from loggers import get_logger
 
 logging.getLogger("uvicorn.access").disabled = True

@@ -1,4 +1,4 @@
-from app.core.schemas import Base
+from src.core.schemas import Base
 
 
 class MailTemplateDataBody(Base):

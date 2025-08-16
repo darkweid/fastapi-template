@@ -6,7 +6,7 @@ from typing import List, Union
 from fastapi_mail import MessageType
 from pydantic import EmailStr, ValidationError, TypeAdapter, BaseModel
 
-from app.email.interfaces import AbstractMailer
+from src.core.email.interfaces import AbstractMailer
 from loggers import get_logger
 
 logger = get_logger(__name__)

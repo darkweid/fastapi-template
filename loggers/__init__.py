@@ -3,7 +3,7 @@ import os
 from logging import Logger, FileHandler, StreamHandler
 from typing import Any
 
-from app.core.settings import settings
+from src.core.settings import settings
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 LOG_FILE = os.path.join(LOG_DIR, "debug.log")

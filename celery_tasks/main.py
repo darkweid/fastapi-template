@@ -1,6 +1,6 @@
 from celery import Celery
 
-from app.core.settings import settings
+from src.core.settings import settings
 from loggers import get_logger
 
 logger = get_logger(__name__)
@@ -22,6 +22,6 @@ celery_app.conf.update(
 
 celery_app.conf.update(
     include=[
-        "app.user.tasks",
+        "src.user.tasks",
     ],
 )

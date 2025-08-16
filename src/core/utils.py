@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import pytz
 from passlib.context import CryptContext
 
-from app.core.settings import settings
+from src.core.settings import settings
 from loggers import get_logger
 
 logger = get_logger(__name__)
