@@ -51,7 +51,7 @@ def get_application() -> FastAPI:
     )
 
     application.include_router(v1, prefix="/api/v1")
-    logger.info(f"Total endpoints: %s", len(application.routes) - 4)
+    logger.info("Total endpoints: %s", len(application.routes) - 4)
 
     # Register middlewares from core/middleware.py
     register_middlewares(application)

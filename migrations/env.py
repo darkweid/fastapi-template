@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 def include_object(object, name, type_, reflected, compare_to):
-    if name in ['spatial_ref_sys', 'idx_branch_location']:
+    if name in [
+        "spatial_ref_sys",
+    ]:
         return False
     return True
 

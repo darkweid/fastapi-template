@@ -13,7 +13,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 - [Features](#features)
 - [Architecture & Directory Structure](#architecture--directory-structure)
 - [Requirements](#requirements)
-- [Containers](#containers) 
+- [Containers](#containers)
 - [Deployment & Setup](#deployment--setup)
 - [Accessing the Application](#accessing-the-application)
 - [Contributing](#contributing)
@@ -109,28 +109,28 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 ---
 
 ## Containers
-- **Postgres:**  
+- **Postgres:**
   Hosts the PostgreSQL database with PostGIS capabilities. Built using `Dockerfile-postgis`, it uses environment variables for credentials and persists data in a dedicated volume.
 
-- **App:**  
+- **App:**
   Runs the main FastAPI application. It starts the server (using Uvicorn, or optionally Gunicorn with Uvicorn workers).
 
-- **Celery_worker:**  
+- **Celery_worker:**
   Executes background tasks using Celery.
 
-- **Celery_beat:**  
+- **Celery_beat:**
   Acts as the scheduler for periodic tasks.
 
-- **Flower:**  
+- **Flower:**
   Provides real-time monitoring for Celery tasks. Based on the official Flower image, it’s built to include your project code.
 
-- **Nginx:**  
+- **Nginx:**
   Serves as a reverse proxy that routes external HTTP requests to the FastAPI application.
 
-- **Redis:**  
+- **Redis:**
   Runs the Redis server for caching and as a Celery result backend. It is secured with a password and persists data in a Docker volume.
 
-- **RabbitMQ:**  
+- **RabbitMQ:**
   Functions as the message broker for Celery tasks. It uses the official RabbitMQ image with the management plugin enabled, exposing both AMQP (for messaging) and management (for UI) ports.
 
 ---
@@ -242,13 +242,13 @@ Other services (Celery Worker, Celery Beat, PostgreSQL, etc.) can be inspected u
 
 ### Accessing the Application
 
-- **FastAPI Application:**  
+- **FastAPI Application:**
   The API is exposed via Nginx on port **80** (You can easily change port in `nginx.conf` and `docker-compose.yml` files). Open your browser and navigate to [http://localhost](http://localhost).
 
-- **API Documentation:**  
+- **API Documentation:**
   Once the app is running, access Swagger UI at [http://localhost/docs](http://localhost/docs) or ReDoc at [http://localhost/redoc](http://localhost/redoc).
 
-- **Flower Monitoring:**  
+- **Flower Monitoring:**
   Monitor your Celery tasks at [http://localhost:5555](http://localhost:5555).
 
 ### Troubleshooting
@@ -281,4 +281,3 @@ Contributions are welcome! Please follow these steps:
 - [Flower](https://flower.readthedocs.io/)
 - [Docker](https://www.docker.com/)
 - [Pydantic](https://pydantic-docs.helpmanual.io/)
-

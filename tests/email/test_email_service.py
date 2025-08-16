@@ -18,7 +18,9 @@ def email_service(mock_mailer) -> EmailService:
 
 
 @pytest.mark.asyncio
-async def test_send_template_email_valid(email_service: EmailService, mock_mailer: MockMailer):
+async def test_send_template_email_valid(
+    email_service: EmailService, mock_mailer: MockMailer
+):
     body = MailTemplateDataBody(title="Welcome", link="https://example.com")
 
     await email_service.send_template_email(
@@ -34,7 +36,9 @@ async def test_send_template_email_valid(email_service: EmailService, mock_maile
 
 
 @pytest.mark.asyncio
-async def test_send_template_email_with_invalid_and_valid_emails(email_service: EmailService, mock_mailer: MockMailer):
+async def test_send_template_email_with_invalid_and_valid_emails(
+    email_service: EmailService, mock_mailer: MockMailer
+):
     body = MailTemplateDataBody(title="Info", link="https://site")
 
     await email_service.send_template_email(
@@ -63,7 +67,9 @@ async def test_send_template_email_all_invalid(email_service: EmailService):
 
 
 @pytest.mark.asyncio
-async def test_send_email_with_single_attachment(tmp_path: Path, email_service: EmailService, mock_mailer: MockMailer):
+async def test_send_email_with_single_attachment(
+    tmp_path: Path, email_service: EmailService, mock_mailer: MockMailer
+):
     file_path = tmp_path / "document.txt"
     file_path.write_text("Attachment content")
 
@@ -82,7 +88,9 @@ async def test_send_email_with_single_attachment(tmp_path: Path, email_service: 
 
 
 @pytest.mark.asyncio
-async def test_send_email_with_attachment_all_invalid(email_service: EmailService, tmp_path: Path):
+async def test_send_email_with_attachment_all_invalid(
+    email_service: EmailService, tmp_path: Path
+):
     file_path = tmp_path / "file.txt"
     file_path.write_text("data")
 
@@ -98,8 +106,9 @@ async def test_send_email_with_attachment_all_invalid(email_service: EmailServic
 
 
 @pytest.mark.asyncio
-async def test_send_email_with_multiple_attachments(tmp_path: Path, email_service: EmailService,
-                                                    mock_mailer: MockMailer):
+async def test_send_email_with_multiple_attachments(
+    tmp_path: Path, email_service: EmailService, mock_mailer: MockMailer
+):
     file1 = tmp_path / "doc1.pdf"
     file2 = tmp_path / "doc2.csv"
     file1.write_text("PDF content")
@@ -119,7 +128,9 @@ async def test_send_email_with_multiple_attachments(tmp_path: Path, email_servic
 
 
 @pytest.mark.asyncio
-async def test_send_template_email_recipient_as_string(email_service: EmailService, mock_mailer: MockMailer):
+async def test_send_template_email_recipient_as_string(
+    email_service: EmailService, mock_mailer: MockMailer
+):
     body = MailTemplateBodyFile(title="Report", file="report.pdf")
 
     await email_service.send_template_email(
@@ -134,8 +145,9 @@ async def test_send_template_email_recipient_as_string(email_service: EmailServi
 
 
 @pytest.mark.asyncio
-async def test_send_email_with_attachment_unusual_file_types(tmp_path: Path, email_service: EmailService,
-                                                             mock_mailer: MockMailer):
+async def test_send_email_with_attachment_unusual_file_types(
+    tmp_path: Path, email_service: EmailService, mock_mailer: MockMailer
+):
     file_path = tmp_path / "strange_type.xyz"
     file_path.write_text("Content of an unknown type")
 

@@ -41,7 +41,9 @@ def get_logger(name: Any, *, plain_format: bool = False) -> Logger:
     logger.setLevel(log_level)
 
     if plain_format:
-        formatter = logging.Formatter("%(asctime)s [%(process)d]| %(message)s", time_logging_format)
+        formatter = logging.Formatter(
+            "%(asctime)s [%(process)d]| %(message)s", time_logging_format
+        )
         stream_handler = StreamHandler()
         stream_handler.setLevel(log_level)
         stream_handler.setFormatter(formatter)

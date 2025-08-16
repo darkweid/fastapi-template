@@ -2,9 +2,8 @@ import asyncio
 import inspect
 import random
 import time
-from datetime import datetime, date, time
+from datetime import datetime, date
 from functools import wraps
-from typing import Optional, Tuple, Union
 from zoneinfo import ZoneInfo
 
 import pytz
@@ -20,7 +19,7 @@ pwd_context = CryptContext(
     deprecated="auto",
     argon2__memory_cost=65536,  # 64 MB
     argon2__time_cost=3,
-    argon2__parallelism=2
+    argon2__parallelism=2,
 )
 
 
@@ -59,9 +58,9 @@ LOCAL_TZ = pytz.timezone(str(settings.tz))
 
 
 def parse_date_range(
-        from_date: Optional[Union[str, date, datetime]],
-        to_date: Optional[Union[str, date, datetime]]
-) -> Tuple[Optional[datetime], Optional[datetime]]:
+    from_date: str | date | datetime | None,
+    to_date: str | date | datetime | None,
+) -> tuple[datetime | None, datetime | None]:
     """If only `to_date` is provided, both `from_date` and `to_date` will be set to the start and end of that day.
     If both `from_date` and `to_date` are provided, they will be converted to datetime objects
     representing the start and end of their respective days.
@@ -71,18 +70,24 @@ def parse_date_range(
     :return: Tuple (from_date, to_date) with datetime objects or (None, None) if both are None
     """
 
-    def to_utc(input_date: Union[str, date, datetime], is_end: bool = False) -> datetime:
+    def to_utc(input_date: str | date | datetime, is_end: bool = False) -> datetime:
         """Convert local time to UTC"""
         if isinstance(input_date, str):
             _date = list(map(int, input_date.split("-")))
             time_part = time.max if is_end else time.min
-            local_dt = LOCAL_TZ.localize(datetime.combine(date(_date[0], _date[1], _date[2]), time_part))
-        elif isinstance(input_date, date):
-            local_dt = LOCAL_TZ.localize(datetime.combine(input_date, time.max if is_end else time.min))
+            local_dt = LOCAL_TZ.localize(
+                datetime.combine(date(_date[0], _date[1], _date[2]), time_part)
+            )
         elif isinstance(input_date, datetime):
             local_dt = input_date.astimezone(LOCAL_TZ)
+
+        elif isinstance(input_date, date):
+            local_dt = LOCAL_TZ.localize(
+                datetime.combine(input_date, time.max if is_end else time.min)
+            )
+
         else:
-            return None
+            raise TypeError("Invalid date type")
         return local_dt.astimezone(pytz.utc)  # convert to UTC
 
     if to_date and not from_date:
@@ -146,13 +151,16 @@ def with_retries(max_retries=3, delay=2):
 
     def decorator(func):
         if inspect.iscoroutinefunction(func):
+
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
                 for attempt in range(1, max_retries + 1):
                     try:
                         return await func(*args, **kwargs)
                     except Exception as e:
-                        logger.warning(f"[RETRY] Async function '{func.__name__}' attempt {attempt} failed: {e}")
+                        logger.warning(
+                            f"[RETRY] Async function '{func.__name__}' attempt {attempt} failed: {e}"
+                        )
                         if attempt < max_retries:
                             await asyncio.sleep(delay * attempt)
                         else:
@@ -160,13 +168,16 @@ def with_retries(max_retries=3, delay=2):
 
             return async_wrapper
         else:
+
             @wraps(func)
             def sync_wrapper(*args, **kwargs):
                 for attempt in range(1, max_retries + 1):
                     try:
                         return func(*args, **kwargs)
                     except Exception as e:
-                        logger.warning(f"[RETRY] Sync function '{func.__name__}' attempt {attempt} failed: {e}")
+                        logger.warning(
+                            f"[RETRY] Sync function '{func.__name__}' attempt {attempt} failed: {e}"
+                        )
                         if attempt < max_retries:
                             time.sleep(delay * attempt)
                         else:
@@ -177,7 +188,9 @@ def with_retries(max_retries=3, delay=2):
     return decorator
 
 
-def with_retries_on_result(max_retries=3, delay=2, success_key=("result", "code"), expected_value="OK"):
+def with_retries_on_result(
+    max_retries=3, delay=2, success_key=("result", "code"), expected_value="OK"
+):
     """
     A decorator that retries an asynchronous function if the result does not contain an expected value
     at a specified key path.
@@ -220,7 +233,9 @@ def with_retries_on_result(max_retries=3, delay=2, success_key=("result", "code"
                     else:
                         raise ValueError(f"Unexpected result: {result}")
                 except Exception as e:
-                    logger.warning(f"[RETRY] Function '{func.__name__}' attempt {attempt} failed: {e}")
+                    logger.warning(
+                        f"[RETRY] Function '{func.__name__}' attempt {attempt} failed: {e}"
+                    )
                     if attempt < max_retries:
                         await asyncio.sleep(delay * attempt)
                     else:

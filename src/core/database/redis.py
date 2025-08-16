@@ -7,5 +7,5 @@ redis_client = Redis(
     port=settings.redis_port,
     password=settings.redis_password,
     db=settings.redis_database,
-    decode_responses=True
+    decode_responses=True,
 )
