@@ -66,7 +66,11 @@ clean-resources-hard:
 # Alembic: Create a new migration
 .PHONY: migration
 migration:
-	$(DOCKER_COMPOSE_EXEC) $(APP_CONTAINER) alembic revision --autogenerate --message "$(message)"
+	@read -p "Enter migration message: " MSG; \
+	if [ -z "$$MSG" ]; then \
+	  echo "Migration message cannot be empty"; exit 1; \
+	fi; \
+	$(DOCKER_COMPOSE_EXEC) $(ELD_CONTAINER) alembic revision --autogenerate --message "$$MSG"
 
 # Alembic: Apply migrations
 .PHONY: migrate
@@ -110,35 +114,66 @@ logs-celery-beat:
 logs-postgres:
 	$(DOCKER_COMPOSE) logs -f $(POSTGRES_CONTAINER)
 
+.PHONY: lint
+lint:
+	pre-commit run --all-files
+
+.PHONY: check-lint
+check-lint:
+	pre-commit run --all-files --hook-stage push --verbose
+
 .PHONY: test
 test:
 	pytest
 
 .PHONY: info
 info:
-	@echo "================== FastAPI Template Info =================="
-	@echo "Project based on FastAPI template"
+	@echo "╔══════════════════════════════════════════════════════════╗"
+	@echo "║                  FastAPI Template Info                   ║"
+	@echo "╚══════════════════════════════════════════════════════════╝"
 	@echo ""
-	@echo "Containers status:"
+	@echo "🐋 Container Status:"
 	@$(DOCKER_COMPOSE) ps
 	@echo ""
-	@echo "Useful commands:"
-	@echo "  make build              # Build all containers"
-	@echo "  make up                 # Start containers"
-	@echo "  make run                # Build and start containers"
-	@echo "  make down               # Stop and remove containers"
-	@echo "  make restart            # Restart all running containers"
-	@echo "  make clean              # Remove containers, volumes, orphans"
-	@echo "  make clean-resources    # Remove all unused Docker resources"
-	@echo "  make shell              # Enter bash inside the app container"
-	@echo "  make migrate            # Apply Alembic migrations"
-	@echo "  make migration          # Create Alembic migration (use: make migration message='msg')"
-	@echo "  make celery-worker      # Start Celery worker"
-	@echo "  make stop-celery        # Stop Celery worker"
-	@echo "  make logs               # Show all logs"
-	@echo "  make logs-app           # Show logs from the app container"
-	@echo "  make logs-celery        # Show logs from the celery_worker container"
-	@echo "  make logs-celery-beat   # Show logs from the celery_beat container"
-	@echo "  make logs-postgres      # Show logs from the postgres container"
+	@echo "📦 Environment:"
+	@echo "   • Docker Compose: $(DOCKER_COMPOSE)"
+	@echo "   • App Container: $(APP_CONTAINER)"
+	@echo "   • Database: $(POSTGRES_CONTAINER)"
+	@echo "   • Cache: $(REDIS_CONTAINER)"
+	@echo "   • Task Queue: $(CELERY_CONTAINER), $(CELERY_BEAT_CONTAINER)"
 	@echo ""
-	@echo "==========================================================="
+	@echo "🚀 Development Commands:"
+	@echo "   • make build              # Build all containers"
+	@echo "   • make up                 # Start containers"
+	@echo "   • make run                # Build and start containers"
+	@echo "   • make down               # Stop and remove containers"
+	@echo "   • make restart            # Restart all running containers"
+	@echo "   • make deploy-dev         # Build, start containers and migrate DB"
+	@echo "   • make deploy-prod        # Production deployment sequence"
+	@echo ""
+	@echo "🔧 Maintenance Commands:"
+	@echo "   • make clean              # Remove containers, volumes, orphans"
+	@echo "   • make clean-resources    # Remove unused Docker resources"
+	@echo "   • make clean-resources-hard # Aggressively clean all Docker resources"
+	@echo ""
+	@echo "🛠️  Database Commands:"
+	@echo "   • make migrate            # Apply Alembic migrations"
+	@echo "   • make migration message='msg' # Create new Alembic migration"
+	@echo ""
+	@echo "🔍 Debugging & Monitoring:"
+	@echo "   • make shell              # Enter bash inside the app container"
+	@echo "   • make logs               # Show all logs"
+	@echo "   • make logs-app           # Show logs from the app container"
+	@echo "   • make logs-celery        # Show logs from the celery_worker container"
+	@echo "   • make logs-celery-beat   # Show logs from the celery_beat container"
+	@echo "   • make logs-postgres      # Show logs from the postgres container"
+	@echo ""
+	@echo "⚙️  Task Queue:"
+	@echo "   • make celery-worker      # Start Celery worker"
+	@echo "   • make stop-celery        # Stop Celery worker"
+	@echo ""
+	@echo "🧪 Testing & Quality:"
+	@echo "   • make test               # Run all tests"
+	@echo "   • make lint               # Run linting on all files"
+	@echo "   • make check-lint         # Check linting during push"
+	@echo ""
