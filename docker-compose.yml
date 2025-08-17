@@ -14,12 +14,16 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   app:
-    container_name: src
-    command: uvicorn main:src --host 0.0.0.0 --port 8001 --reload
-    #    command: gunicorn -k uvicorn.workers.UvicornWorker -w 8 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 main:src
+    container_name: app
+    command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 src.main.web:app
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/health/" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     build: .
     volumes:
-      - .:/src
+      - .:/app
     ports:
       - 8001:8001
     depends_on:

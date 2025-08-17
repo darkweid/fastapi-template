@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.strategy_options import _AbstractLoad
 
 from src.core.database.models import Base as SQLAlchemyBase
-from src.core.utils import get_utc_now
+from src.core.utils.datetime_utils import get_utc_now
 from loggers import get_logger
 
 logger = get_logger(__name__)

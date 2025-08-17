@@ -1,0 +1,37 @@
+import logging
+
+from fastapi import FastAPI
+from redis import asyncio as redis
+
+from src.main.config import config
+
+logger = logging.getLogger(__name__)
+
+
+def create_redis_pool(
+    connection_url,
+) -> redis.Redis:
+    try:
+        pool = redis.ConnectionPool.from_url(connection_url)
+        return redis.Redis(connection_pool=pool)
+    except Exception as e:
+        logger.exception(f"An error occurred when trying to create a new pool: {e}")
+        raise
+
+
+def get_redis_pool(app: FastAPI) -> redis.Redis:
+    pool = getattr(app.state, "redis_pool", None)
+
+    if pool is None:
+        raise RuntimeError("Redis Pool does not found in app.state")
+
+    return pool
+
+
+redis_client = redis.Redis(
+    host=config.redis.REDIS_HOST,
+    port=config.redis.REDIS_PORT,
+    password=config.redis.REDIS_PASSWORD,
+    db=config.redis.REDIS_CELERY_DATABASE,
+    decode_responses=True,
+)
