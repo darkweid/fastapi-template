@@ -1,9 +1,8 @@
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import sessionmaker
 
 from src.core.settings import settings
 from .models import Base
@@ -19,12 +18,10 @@ engine = create_async_engine(
     pool_recycle=60 * 30,  # Restart the pool after 30 minutes
 )
 
-async_session = sessionmaker(
-    bind=engine, class_=AsyncSession, expire_on_commit=False  # type: ignore
-)
+async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 
-async def init_models():
+async def init_models() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

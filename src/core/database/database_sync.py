@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.core.database import Base  # noqa
+from src.core.database.models import Base  # noqa
 from src.core.settings import settings
 
 DATABASE_URL_SYNC = settings.build_postgres_dsn_sync()

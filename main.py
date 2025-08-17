@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
 
 import sentry_sdk
 from fastapi import FastAPI
@@ -17,7 +18,7 @@ logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(application: FastAPI):
+async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     pass
     try:
         logger.info("Lifespan started")

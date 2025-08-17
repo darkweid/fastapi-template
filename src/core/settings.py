@@ -1,6 +1,8 @@
+import datetime
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pytz import timezone
+import pytz
 from sqlalchemy import URL
+from typing import cast
 
 
 class Settings(BaseSettings):
@@ -57,9 +59,9 @@ class Settings(BaseSettings):
     s3_sample_url: str
 
     @property
-    def tz(self):
-        """Return timezone-aware object."""
-        return timezone(self.timezone)
+    def tz(self) -> datetime.tzinfo:
+        """Return a timezone-aware object."""
+        return cast(datetime.tzinfo, pytz.timezone(self.timezone))
 
     def build_postgres_dsn_async(self) -> URL:
         return URL.create(
