@@ -2,8 +2,10 @@ import asyncio
 import inspect
 import random
 import time
-from datetime import datetime, date
+from datetime import datetime, date, time as datetime_time
 from functools import wraps
+from typing import Any, TypeVar, cast
+from collections.abc import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 import pytz
@@ -74,7 +76,7 @@ def parse_date_range(
         """Convert local time to UTC"""
         if isinstance(input_date, str):
             _date = list(map(int, input_date.split("-")))
-            time_part = time.max if is_end else time.min
+            time_part = datetime_time.max if is_end else datetime_time.min
             local_dt = LOCAL_TZ.localize(
                 datetime.combine(date(_date[0], _date[1], _date[2]), time_part)
             )
@@ -83,22 +85,25 @@ def parse_date_range(
 
         elif isinstance(input_date, date):
             local_dt = LOCAL_TZ.localize(
-                datetime.combine(input_date, time.max if is_end else time.min)
+                datetime.combine(
+                    input_date, datetime_time.max if is_end else datetime_time.min
+                )
             )
 
-        else:
-            raise TypeError("Invalid date type")
         return local_dt.astimezone(pytz.utc)  # convert to UTC
 
+    result_from_date: datetime | None = None
+    result_to_date: datetime | None = None
+
     if to_date and not from_date:
-        from_date = to_utc(to_date, is_end=False)  # Local 00:00 → UTC
-        to_date = to_utc(to_date, is_end=True)  # Local 23:59:59 → UTC
+        result_from_date = to_utc(to_date, is_end=False)  # Local 00:00 → UTC
+        result_to_date = to_utc(to_date, is_end=True)  # Local 23:59:59 → UTC
 
     elif from_date and to_date:
-        from_date = to_utc(from_date, is_end=False)
-        to_date = to_utc(to_date, is_end=True)
+        result_from_date = to_utc(from_date, is_end=False)
+        result_to_date = to_utc(to_date, is_end=True)
 
-    return from_date, to_date
+    return result_from_date, result_to_date
 
 
 def get_utc_now() -> datetime:
@@ -114,7 +119,10 @@ def get_utc_now() -> datetime:
     return datetime.now(ZoneInfo("UTC"))
 
 
-def with_retries(max_retries=3, delay=2):
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def with_retries(max_retries: int = 3, delay: int = 2) -> Callable[[F], F]:
     """
     A universal retry decorator for both asynchronous and synchronous functions.
 
@@ -132,10 +140,10 @@ def with_retries(max_retries=3, delay=2):
         delay (int): Base delay in seconds between retries. Default is 2.
 
     Returns:
-        The result of the function if it eventually succeeds within the retry limit.
+        The decorator function that wraps the target function with retry logic.
 
     Raises:
-        The last exception encountered if all retry attempts fail.
+        The last exception is encountered if all retry attempts fail.
 
     Notes:
         Automatically detects whether the wrapped function is async or sync and handles retries accordingly.
@@ -149,11 +157,11 @@ def with_retries(max_retries=3, delay=2):
         def read_file(): ...
     """
 
-    def decorator(func):
+    def decorator(func: F) -> F:
         if inspect.iscoroutinefunction(func):
 
             @wraps(func)
-            async def async_wrapper(*args, **kwargs):
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 for attempt in range(1, max_retries + 1):
                     try:
                         return await func(*args, **kwargs)
@@ -166,11 +174,11 @@ def with_retries(max_retries=3, delay=2):
                         else:
                             raise
 
-            return async_wrapper
+            return cast(F, async_wrapper)
         else:
 
             @wraps(func)
-            def sync_wrapper(*args, **kwargs):
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 for attempt in range(1, max_retries + 1):
                     try:
                         return func(*args, **kwargs)
@@ -183,14 +191,22 @@ def with_retries(max_retries=3, delay=2):
                         else:
                             raise
 
-            return sync_wrapper
+            return cast(F, sync_wrapper)
 
     return decorator
 
 
+T = TypeVar("T")
+
+
 def with_retries_on_result(
-    max_retries=3, delay=2, success_key=("result", "code"), expected_value="OK"
-):
+    max_retries: int = 3,
+    delay: int = 2,
+    success_key: tuple[str, ...] = ("result", "code"),
+    expected_value: str = "OK",
+) -> Callable[
+    [Callable[..., Awaitable[dict[str, Any]]]], Callable[..., Awaitable[dict[str, Any]]]
+]:
     """
     A decorator that retries an asynchronous function if the result does not contain an expected value
     at a specified key path.
@@ -214,20 +230,23 @@ def with_retries_on_result(
 
     Raises:
         ValueError if the expected value is not found.
-        The last exception raised if all retries fail.
+        The last exception is raised if all retries fail.
     """
 
-    def decorator(func):
+    def decorator(
+        func: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> Callable[..., Awaitable[dict[str, Any]]]:
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
             for attempt in range(1, max_retries + 1):
                 try:
                     result = await func(*args, **kwargs)
-                    current = result
+                    current: Any = result
                     for key in success_key:
-                        current = current.get(key)
-                        if current is None:
+                        if not isinstance(current, dict) or key not in current:
+                            current = None
                             break
+                        current = current.get(key)
                     if current == expected_value:
                         return result
                     else:
@@ -240,6 +259,8 @@ def with_retries_on_result(
                         await asyncio.sleep(delay * attempt)
                     else:
                         raise
+            # This line should not be reachable, but mypy requires it
+            raise RuntimeError("Unreachable code")
 
         return wrapper
 

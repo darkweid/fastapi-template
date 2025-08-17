@@ -25,5 +25,9 @@ pytz
 redis
 sentry-sdk
 sqlalchemy
+
+# dev-only
+types-passlib
+types-pytz
 uvicorn
 websockets

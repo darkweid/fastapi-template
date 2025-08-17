@@ -1,4 +1,4 @@
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from fastapi_pagination import Page
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,8 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
         data: CreateSchema,
     ) -> T:
         """Create a new record."""
-        return await self.repository.create(session=session, data=data.model_dump())
+        result = await self.repository.create(session=session, data=data.model_dump())
+        return cast(T, result)
 
     async def get_single(
         self,
