@@ -1,19 +1,25 @@
+# This docker-compose file defines services for the FastAPI application stack
+# It includes web application, database, cache, message queues, and monitoring services
+
 services:
   app-builder:
+    container_name: app-builder
     build:
       context: .
       dockerfile: docker/Dockerfile
     image: app-image:latest
-
+    networks:
+      - app-network
 
   postgres:
+    container_name: postgres
     build:
       context: .
       dockerfile: postgres/Dockerfile-postgis
     image: app/postgres-postgis:17.2
     restart: always
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -23,38 +29,54 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - ${POSTGRES_PORT}:5432
+      - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/postgresql.conf:/custom-config/postgresql.conf:ro
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
   app:
     container_name: app
     image: app-image:latest
     command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 src.main.web:app
+    restart: on-failure
     healthcheck:
-      test: [ "CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/health/" ]
+      test: ["CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/health/"]
       interval: 10s
       timeout: 5s
       retries: 5
     volumes:
       - .:/app
     ports:
-      - ${APP_BACKEND_PORT}:${APP_BACKEND_PORT}
+      - "${APP_BACKEND_PORT}:${APP_BACKEND_PORT}"
     depends_on:
       postgres:
         condition: service_healthy
       app-builder:
         condition: service_completed_successfully
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
 
   celery_worker:
     container_name: celery_worker
     image: app-image:latest
     env_file: .env
     command: python -m celery -A celery_tasks.main worker --pool=solo --loglevel=info -E
+    restart: unless-stopped
     volumes:
-      - '.:/src'
-      - 'celery-state:/data'
+      - .:/app
+      - celery-state:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -62,14 +84,23 @@ services:
         condition: service_healthy
       app-builder:
         condition: service_completed_successfully
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
   celery_beat:
     container_name: celery_beat
     image: app-image:latest
     env_file: .env
     command: python -m celery -A celery_tasks.main beat --loglevel=info
+    restart: unless-stopped
     volumes:
-      - '/tmp:/tmp'
+      - .:/app
+      - /tmp:/tmp
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -77,7 +108,15 @@ services:
         condition: service_healthy
       app-builder:
         condition: service_completed_successfully
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
+  # Flower for Celery monitoring
   flower:
     container_name: flower
     image: mher/flower:latest
@@ -86,7 +125,7 @@ services:
       dockerfile: docker/Dockerfile
     restart: always
     healthcheck:
-      test: [ "CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:5555" ]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:5555"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -99,26 +138,40 @@ services:
         condition: service_healthy
       celery_worker:
         condition: service_started
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   nginx:
-    image: nginx:latest
     container_name: nginx
+    image: nginx:latest
     restart: always
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "80:80"
     depends_on:
       app:
         condition: service_healthy
-
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   redis:
+    container_name: redis
     image: 'redis:7.4'
     restart: unless-stopped
     env_file: .env
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -126,15 +179,22 @@ services:
     ports:
       - "${REDIS_PORT}:6379"
     volumes:
-      - ./redis.conf:/etc/redis/redis.conf
+      - ./redis.conf:/etc/redis/redis.conf:ro
       - redis-data:/data
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
   rabbitmq:
-    image: rabbitmq:3.12-management
     container_name: rabbitmq
+    image: rabbitmq:3.12-management
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "check_running" ]
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -143,10 +203,25 @@ services:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
     ports:
-      - ${RABBITMQ_PORT}:5672
+      - "${RABBITMQ_PORT}:5672"
       - "15672:15672"
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
 volumes:
   postgres-data:
+    name: app-postgres-data
   redis-data:
+    name: app-redis-data
   celery-state:
+    name: app-celery-state
+
+networks:
+  app-network:
+    name: app-network
+    driver: bridge
