@@ -250,7 +250,7 @@ def find_project_root_robust(
         "pyproject.toml": 90,
         "setup.py": 80,
         "setup.cfg": 75,
-        "requirements.txt": 70,
+        "requirements": 70,
         "Pipfile": 70,
         "poetry.lock": 70,
         "README.md": 50,

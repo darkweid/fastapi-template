@@ -1,33 +1,7 @@
-alembic
-alembic-postgresql-enum
-asyncpg
-black
-celery
-email-validator
-fastapi
-fastapi-pagination
-fastapi_mail
-flower
-GeoAlchemy2
-gunicorn
-httpx
-loguru
-passlib
-pre-commit
-pydantic
-pydantic-settings
-pyjwt
-pytest
-pytest-asyncio
-python-dotenv
-python-multipart
-pytz
-redis
-sentry-sdk
-sqlalchemy
+# This file is a convenience wrapper for environment-specific requirements
+# To install dependencies for a specific environment:
+#   - Production: pip install -r requirements/prod.txt
+#   - Development: pip install -r requirements/dev.txt
 
-# dev-only
-types-passlib
-types-pytz
-uvicorn
-websockets
+# By default, install development dependencies
+-r requirements/dev.txt

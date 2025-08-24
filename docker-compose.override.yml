@@ -1,12 +1,19 @@
 # Do not deploy this file on server, it is only for local development
 
 services:
-  app:
-    command: uvicorn src.main.web:app --host 0.0.0.0 --port ${APP_BACKEND_PORT} --reload
+  app-builder:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    image: app-dev-image:latest
 
+  app:
+    image: app-dev-image:latest
+    command: uvicorn src.main.web:app --host 0.0.0.0 --port ${APP_BACKEND_PORT} --reload
     volumes:
       - .:/app
       - /app/.venv
+
   nginx:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
