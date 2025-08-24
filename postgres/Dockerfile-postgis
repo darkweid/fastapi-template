@@ -1,0 +1,12 @@
+FROM postgres:17.2
+
+RUN apt-get update && \
+    apt-get install -y postgis postgresql-17-postgis-3
+
+COPY postgres/init-postgis.sh /docker-entrypoint-initdb.d/
+RUN chmod +x /docker-entrypoint-initdb.d/init-postgis.sh
+
+# Custom config
+COPY postgres/postgresql.conf /custom-config/postgresql.conf
+
+CMD ["postgres", "-c", "config_file=/custom-config/postgresql.conf"]

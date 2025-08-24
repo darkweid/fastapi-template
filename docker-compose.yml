@@ -2,7 +2,7 @@ services:
   postgres:
     build:
       context: .
-      dockerfile: Dockerfile-postgis
+      dockerfile: postgres/Dockerfile-postgis
     restart: always
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -12,6 +12,7 @@ services:
       - ${POSTGRES_PORT}:5432
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgresql.conf:/custom-config/postgresql.conf:ro
 
   app:
     container_name: app
@@ -21,7 +22,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     volumes:
       - .:/app
     ports:
@@ -33,7 +36,9 @@ services:
 
   celery_worker:
     container_name: celery_worker
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     command: python -m celery -A celery_tasks.main worker --pool=solo --loglevel=info -E
     volumes:
       - .:/src
@@ -49,7 +54,9 @@ services:
 
   celery_beat:
     container_name: celery_beat
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     command: python -m celery -A celery_tasks.main beat --loglevel=info
     volumes:
       - .:/src
@@ -63,7 +70,9 @@ services:
   flower:
     container_name: flower
     image: mher/flower:latest
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     restart: always
     env_file: .env
     ports:
@@ -80,7 +89,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
     ports:
-      - 80:80
+      - "80:80"
     depends_on:
       - app
 
@@ -102,7 +111,7 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
       - ${RABBITMQ_PORT}:5672
-      - 15672:15672
+      - "15672:15672"
 
 volumes:
   postgres-data:
