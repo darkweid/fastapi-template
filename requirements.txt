@@ -1,28 +1,7 @@
-black
-fastapi
-fastapi-pagination
-fastapi_mail
-uvicorn
-gunicorn
-sqlalchemy
-GeoAlchemy2
-alembic
-asyncpg
-psycopg2
-redis
-celery
-pydantic
-pydantic-settings
-email-validator
-pyjwt
-passlib
-python-dotenv
-httpx
-loguru
-websockets
-sentry-sdk
-python-multipart
-pytest
-pytest-asyncio
-pytz
-flower
+# This file is a convenience wrapper for environment-specific requirements
+# To install dependencies for a specific environment:
+#   - Production: pip install -r requirements/prod.txt
+#   - Development: pip install -r requirements/dev.txt
+
+# By default, install development dependencies
+-r requirements/dev.txt

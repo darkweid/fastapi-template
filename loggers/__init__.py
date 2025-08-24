@@ -3,7 +3,7 @@ import os
 from logging import Logger, FileHandler, StreamHandler
 from typing import Any
 
-from src.core.settings import settings
+from src.main.config import config
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 LOG_FILE = os.path.join(LOG_DIR, "debug.log")
@@ -14,8 +14,8 @@ if not os.path.exists(LOG_DIR):
 logging_format = "%(asctime)s [%(levelname)s]|[%(process)d]| %(name)s: %(message)s"
 time_logging_format = "%Y-%m-%d %H:%M:%S"
 
-log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
-file_log_level = getattr(logging, settings.log_level_file.upper(), logging.WARNING)
+log_level = getattr(logging, config.app.LOG_LEVEL.upper(), logging.INFO)
+file_log_level = getattr(logging, config.app.LOG_LEVEL_FILE.upper(), logging.WARNING)
 
 
 def get_file_handler() -> FileHandler:
@@ -41,7 +41,9 @@ def get_logger(name: Any, *, plain_format: bool = False) -> Logger:
     logger.setLevel(log_level)
 
     if plain_format:
-        formatter = logging.Formatter("%(asctime)s [%(process)d]| %(message)s", time_logging_format)
+        formatter = logging.Formatter(
+            "%(asctime)s [%(process)d]| %(message)s", time_logging_format
+        )
         stream_handler = StreamHandler()
         stream_handler.setLevel(log_level)
         stream_handler.setFormatter(formatter)

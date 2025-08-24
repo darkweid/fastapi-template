@@ -1,0 +1,64 @@
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi_pagination import add_pagination
+from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
+
+from src.core.middleware import register_middlewares
+from src.main.config import config
+from src.main.lifespan import lifespan
+from src.main.presentation import include_exceptions_handlers, include_routers
+from loggers import get_logger
+
+logging.getLogger("uvicorn.access").disabled = True
+logger = get_logger(__name__)
+
+
+def get_application() -> FastAPI:
+    application = FastAPI(
+        title=config.app.PROJECT_NAME,
+        debug=config.app.DEBUG,
+        version=config.app.VERSION,
+        lifespan=lifespan,
+    )
+
+    # Register custom middlewares
+    register_middlewares(application)
+
+    # CORS
+    application.add_middleware(
+        CORSMiddleware,  # noqa
+        allow_origins=config.app.CORS_ALLOWED_ORIGINS,
+        allow_credentials=config.app.CORS_ALLOW_CREDENTIALS,
+        allow_methods=config.app.CORS_ALLOWED_METHODS,
+        allow_headers=config.app.CORS_ALLOWED_HEADERS,
+        expose_headers=config.app.CORS_EXPOSE_HEADERS,
+    )
+
+    # Custom exceptions
+    include_exceptions_handlers(application)
+
+    # Routers
+    include_routers(application)
+
+    # Filter out FastAPI's built-in documentation routes using route name pattern
+    custom_endpoints = [
+        route
+        for route in application.routes
+        if not getattr(route, "name", "").startswith("openapi")
+        and getattr(route, "name", "") != "swagger_ui_html"
+        and getattr(route, "name", "") != "swagger_ui_redirect"
+        and getattr(route, "name", "") != "redoc_html"
+    ]
+    logger.info("Total endpoints: %s", len(custom_endpoints))
+
+    # Sentry middleware for error tracking
+    application.add_middleware(SentryAsgiMiddleware)
+
+    add_pagination(application)
+
+    return application
+
+
+app = get_application()

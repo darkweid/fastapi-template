@@ -1,12 +1,11 @@
 import contextlib
 import os
 from pathlib import Path
-from typing import List, Union
 
 from fastapi_mail import MessageType
 from pydantic import EmailStr, ValidationError, TypeAdapter, BaseModel
 
-from src.core.email.interfaces import AbstractMailer
+from src.core.email_service.interfaces import AbstractMailer
 from loggers import get_logger
 
 logger = get_logger(__name__)
@@ -19,17 +18,21 @@ class EmailService:
         self._mailer = mailer
 
     async def send_template_email(
-            self,
-            subject: str,
-            recipients: Union[str, List[str]],
-            template_name: str,
-            template_body: BaseModel,
-            subtype: MessageType = MessageType.html,
+        self,
+        subject: str,
+        recipients: str | list[str],
+        template_name: str,
+        template_body: BaseModel,
+        subtype: MessageType = MessageType.html,
     ) -> None:
         normalized = self._normalize_and_validate_recipients(recipients)
         try:
             await self._mailer.send_template(
-                subject, [str(e) for e in normalized], template_name, template_body, subtype.value
+                subject,
+                [str(e) for e in normalized],
+                template_name,
+                template_body,
+                subtype.value,
             )
             logger.info("Email '%s' sent to %s", template_name, normalized)
         except Exception as e:
@@ -37,12 +40,12 @@ class EmailService:
             raise
 
     async def send_email_with_attachments(
-            self,
-            subject: str,
-            recipients: Union[str, List[str]],
-            body_text: str,
-            file_paths: List[Path],
-            subtype: MessageType = MessageType.plain,
+        self,
+        subject: str,
+        recipients: str | list[str],
+        body_text: str,
+        file_paths: list[Path],
+        subtype: MessageType = MessageType.plain,
     ) -> None:
         try:
             validated_recipients = self._normalize_and_validate_recipients(recipients)
@@ -66,12 +69,12 @@ class EmailService:
                     os.unlink(file_path)
 
     async def send_email_with_single_attachment(
-            self,
-            subject: str,
-            recipients: Union[str, List[str]],
-            body_text: str,
-            file_path: Path,
-            subtype: MessageType = MessageType.plain,
+        self,
+        subject: str,
+        recipients: str | list[str],
+        body_text: str,
+        file_path: Path,
+        subtype: MessageType = MessageType.plain,
     ) -> None:
         """
         Send an email with a single attachment.
@@ -91,7 +94,9 @@ class EmailService:
             subtype=subtype,
         )
 
-    def _normalize_and_validate_recipients(self, recipients: Union[str, List[str]]) -> List[EmailStr]:
+    def _normalize_and_validate_recipients(
+        self, recipients: str | list[str]
+    ) -> list[EmailStr]:
         """
         Normalize and validate email recipients.
 

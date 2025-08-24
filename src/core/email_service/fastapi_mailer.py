@@ -1,10 +1,9 @@
 from pathlib import Path
-from typing import List
 
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import EmailStr, BaseModel
 
-from src.core.email.interfaces import AbstractMailer
+from src.core.email_service.interfaces import AbstractMailer
 
 
 class FastAPIMailer(AbstractMailer):
@@ -12,12 +11,12 @@ class FastAPIMailer(AbstractMailer):
         self._mailer = FastMail(config)
 
     async def send_template(
-            self,
-            subject: str,
-            recipients: List[EmailStr],
-            template_name: str,
-            template_data: BaseModel,
-            subtype: MessageType = MessageType.html,
+        self,
+        subject: str,
+        recipients: list[EmailStr],
+        template_name: str,
+        template_data: BaseModel,
+        subtype: str = "html",
     ) -> None:
         """
         Send an email based on a Jinja2 template.
@@ -38,13 +37,12 @@ class FastAPIMailer(AbstractMailer):
         await self._mailer.send_message(message, template_name=template_name)
 
     async def send_with_attachments(
-            self,
-            subject: str,
-            recipients: List[EmailStr],
-            body_text: str,
-            file_paths: List[Path],
-            subtype: MessageType = MessageType.plain,
-
+        self,
+        subject: str,
+        recipients: list[EmailStr],
+        body_text: str,
+        file_paths: list[Path],
+        subtype: str = "plain",
     ) -> None:
         message = MessageSchema(
             subject=subject,

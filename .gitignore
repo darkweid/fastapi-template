@@ -164,8 +164,8 @@ cython_debug/
 # Linter cache files
 
 # TEST files
-client.py
+
 
 # Migration files
-migrations/versions/*.py
-!migrations/versions/__init__.py
+#migrations/versions/*.py
+#!migrations/versions/__init__.py

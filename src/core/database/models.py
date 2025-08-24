@@ -14,7 +14,7 @@ class Base(DeclarativeBase):
             "uq": "uq_%(table_name)s_%(column_0_name)s",
             "ck": "ck_%(table_name)s_%(constraint_name)s",
             "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-            "pk": "pk_%(table_name)s"
+            "pk": "pk_%(table_name)s",
         }
     )
 
@@ -25,11 +25,15 @@ class TimestampMixin:
     created_at: DateTime, oncreate trigger
     updated_at: DateTime, onupdate trigger
     """
+
     __abstract__ = True
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
-                                                 default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), onupdate=func.now()
+    )
 
 
 class UUIDIDMixin:
@@ -37,6 +41,7 @@ class UUIDIDMixin:
     Add a UUID column to a mapped class
     id: UUID
     """
+
     __abstract__ = True
 
     id: Mapped[PY_UUID] = mapped_column(
@@ -49,6 +54,7 @@ class IntegerIDMixin:
     Add an autoincrement column to a mapped class
     id: Integer
     """
+
     __abstract__ = True
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -60,6 +66,7 @@ class SoftDeleteMixin:
     deleted_at: DateTime
     is_deleted: Boolean
     """
+
     __abstract__ = True
 
     deleted_at: Mapped[datetime | None] = mapped_column(

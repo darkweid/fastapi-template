@@ -24,6 +24,11 @@ up:
 run:
 	$(DOCKER_COMPOSE) up --build -d
 
+# Run Docker containers in development mode with auto-reload
+.PHONY: run-dev
+run-dev:
+	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.override.yml up --build -d
+	docker restart nginx
 # Stop the Docker containers
 .PHONY: down
 down:
@@ -35,7 +40,7 @@ deploy-prod:
 
 .PHONY: deploy-dev
 deploy-dev:
-	make run && make migrate
+	make run-dev && make migrate
 
 # Restart containers
 .PHONY: restart
@@ -146,9 +151,10 @@ info:
 	@echo "   • make build              # Build all containers"
 	@echo "   • make up                 # Start containers"
 	@echo "   • make run                # Build and start containers"
+	@echo "   • make run-dev            # Build and start containers with auto-reload (development mode)"
 	@echo "   • make down               # Stop and remove containers"
 	@echo "   • make restart            # Restart all running containers"
-	@echo "   • make deploy-dev         # Build, start containers and migrate DB"
+	@echo "   • make deploy-dev         # Build, start containers with auto-reload and migrate DB"
 	@echo "   • make deploy-prod        # Production deployment sequence"
 	@echo ""
 	@echo "🔧 Maintenance Commands:"

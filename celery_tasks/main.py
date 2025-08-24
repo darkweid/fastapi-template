@@ -1,12 +1,13 @@
 from celery import Celery
 
-from src.core.settings import settings
+from src.main.config import config
 from loggers import get_logger
 
 logger = get_logger(__name__)
 
-redis_url = settings.build_redis_dsn()
-rabbitmq_url = settings.build_rabbitmq_dsn()
+
+redis_url = config.redis.dsn
+rabbitmq_url = config.rabbitmq.dsn
 
 celery_app = Celery(__name__, broker=rabbitmq_url, backend=redis_url)
 

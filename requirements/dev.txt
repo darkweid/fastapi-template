@@ -1,0 +1,15 @@
+-r base.txt
+
+# Development tools
+black
+pre-commit
+
+# Testing dependencies
+pytest
+pytest-asyncio
+
+# Type stubs
+types-passlib
+types-pytz
+uvicorn
+websockets

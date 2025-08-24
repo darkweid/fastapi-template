@@ -1,0 +1,105 @@
+name: CD
+
+# This workflow is triggered after the CI workflow completes successfully
+on:
+  workflow_run:
+    workflows: [ "CI" ]
+    types:
+      - completed
+
+
+env:
+  # Deployment directory on the target server - adjust as needed for your environment
+  APP_DIR: /root/app
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Set up SSH for secure connection to the deployment server
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
+          chmod 600 ~/.ssh/id_deploy_key
+          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
+
+      # Deploy the application to the target server
+      - name: SSH deploy
+        id: deploy
+        run: |
+          ssh -i ~/.ssh/id_deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} "\
+              cd $APP_DIR && \
+              git pull origin main && \
+              python3 scripts/check_env.py || { echo '❌ Environment file validation failed!'; exit 1; } && \
+              make deploy-prod && \
+              make clean-resources"
+
+      - name: Restart Nginx
+        if: steps.deploy.outcome == 'success'
+        run: |
+          ssh -i ~/.ssh/id_deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} "docker restart nginx"
+
+      # Check out the exact commit that triggered this workflow
+      - name: Checkout correct commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_commit.id }}
+
+      # Send deployment status notification to Telegram
+      - name: Telegram notification
+        if: always()
+        run: |
+          sanitize_html() {
+            echo "$1" \
+              | sed 's/&/\&amp;/g' \
+              | sed 's/</\&lt;/g' \
+              | sed 's/>/\&gt;/g' \
+              | sed 's/"/\&quot;/g' \
+              | sed "s/'/\&#39;/g"
+          }
+
+          if [ "${{ steps.deploy.outcome }}" = "success" ]; then
+            STATUS="✅ <b>SUCCESS</b>"
+          else
+            STATUS="❌ <b>FAILED</b>"
+          fi
+
+          START_TS=$(git log -1 --pretty=format:'%ct')
+          END_TS=$(date +%s)
+          DURATION=$((END_TS - START_TS))
+
+          if [ "$DURATION" -gt 60 ]; then
+            DURATION_HUMAN="$(($DURATION / 60)) min $(($DURATION % 60)) sec"
+          else
+            DURATION_HUMAN="${DURATION} sec"
+          fi
+
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
+          AUTHOR=$(git log -1 --pretty=format:'%an')
+          PROJECT=$(sanitize_html "${{ github.repository }}")
+          PIPELINE_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          MESSAGE="${STATUS}
+          🚀 <b>Project</b>: ${PROJECT}
+          🔖 <b>Version</b>: <code>${{ github.sha }}</code>
+          👤 <b>Author</b>: ${AUTHOR}
+          ⏱️ <b>Duration</b>: ${DURATION_HUMAN}
+          🔗 <b>Pipeline</b>: <a href=\"${PIPELINE_URL}\">Open</a>
+          📝 <b>Commit</b>: ${COMMIT_MSG}"
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.ALERT_BOT_TOKEN }}/sendMessage" \
+            --data-urlencode "chat_id=${{ secrets.ALERT_CHAT_ID }}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=${MESSAGE}"

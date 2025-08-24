@@ -1,7 +1,7 @@
 import re
 import time
 import traceback
-from typing import Callable, Awaitable
+from collections.abc import Callable, Awaitable
 
 import sentry_sdk
 from fastapi import FastAPI, Request
@@ -17,13 +17,12 @@ logger = get_logger(__name__)
 timing_logger = get_logger("src.request.timing", plain_format=True)
 
 
-
 def register_middlewares(app: FastAPI) -> None:
     """Registers all custom middlewares in proper order"""
 
     @app.middleware("http")
     async def request_timing_middleware(
-            request: Request, call_next: Callable[[Request], Awaitable[Response]]
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         start_time = time.perf_counter()
         response = await call_next(request)
@@ -49,9 +48,9 @@ def register_middlewares(app: FastAPI) -> None:
         return response
 
     @app.middleware("http")
-    async def validation_error_middleware(request: Request,
-                                          call_next: Callable[[Request],
-                                          Awaitable[Response]]) -> Response:
+    async def validation_error_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         try:
             return await call_next(request)
         except ValidationError as e:
@@ -59,15 +58,12 @@ def register_middlewares(app: FastAPI) -> None:
             sentry_sdk.capture_exception(e)
 
             safe_detail = jsonable_encoder(e.errors())
-            return JSONResponse(
-                status_code=422,
-                content={"detail": safe_detail}
-            )
+            return JSONResponse(status_code=422, content={"detail": safe_detail})
 
     @app.middleware("http")
-    async def database_error_middleware(request: Request,
-                                        call_next: Callable[[Request],
-                                        Awaitable[Response]]) -> Response:
+    async def database_error_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         try:
             return await call_next(request)
         except IntegrityError as e:
@@ -76,25 +72,28 @@ def register_middlewares(app: FastAPI) -> None:
             return handle_postgresql_error(e)
 
         except OperationalError as e:
-            logger.error(f"Database connection error at {request.url.path}: {str(e.orig)}")
+            logger.error(
+                f"Database connection error at {request.url.path}: {str(e.orig)}"
+            )
             sentry_sdk.capture_exception(e)
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Database connection error. Please try again later."}
+                content={
+                    "detail": "Database connection error. Please try again later."
+                },
             )
 
         except ProgrammingError as e:
             logger.error(f"SQL syntax error at {request.url.path}: {str(e.orig)}")
             sentry_sdk.capture_exception(e)
             return JSONResponse(
-                status_code=500,
-                content={"detail": "Database query error."}
+                status_code=500, content={"detail": "Database query error."}
             )
 
     @app.middleware("http")
-    async def unexpected_error_middleware(request: Request,
-                                          call_next: Callable[[Request],
-                                          Awaitable[Response]]) -> Response:
+    async def unexpected_error_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         try:
             return await call_next(request)
         except Exception as e:
@@ -106,10 +105,7 @@ def register_middlewares(app: FastAPI) -> None:
                 error_traceback,
             )
             sentry_sdk.capture_exception(e)
-            return JSONResponse(
-                status_code=500,
-                content={"detail": "Unexpected error"}
-            )
+            return JSONResponse(status_code=500, content={"detail": "Unexpected error"})
 
 
 def handle_postgresql_error(error: IntegrityError) -> JSONResponse:
@@ -126,7 +122,7 @@ def handle_postgresql_error(error: IntegrityError) -> JSONResponse:
             detail_message = "No additional details provided."
 
     if sqlstate == "23505":  # UniqueViolation
-        match = re.search(r'\(([^)]+)\)', detail_message)
+        match = re.search(r"\(([^)]+)\)", detail_message)
         if match:
             first_value = match.group(1)
         else:
