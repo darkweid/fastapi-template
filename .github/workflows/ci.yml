@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache virtualenv
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            venv-${{ runner.os }}-
+
+      - name: Set up virtualenv and install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create .env file from GitHub Secret
+        run: |
+          cat > .env <<EOF
+          ${{ secrets.DOT_ENV_FILE }}
+          EOF
+
+      - name: Cache pre-commit
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
+      - name: Run linter
+        run: |
+          source .venv/bin/activate
+          make check-lint
+
+      - name: Check migration HEADs
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH=$(pwd)
+          echo "--- Alembic heads ---"
+          alembic heads
+          HEADS_COUNT=$(alembic heads | wc -l)
+          if [ "$HEADS_COUNT" -gt 1 ]; then
+            echo "❌ ERROR: Multiple Alembic heads detected ($HEADS_COUNT)."
+            echo "Run 'alembic heads' locally and resolve with 'alembic merge ...'"
+            exit 1
+          else
+            echo "✅ OK: Only one Alembic head found."
+          fi
+
+      - name: Run unit tests
+        run: |
+          source .venv/bin/activate
+          make test
