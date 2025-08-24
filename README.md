@@ -31,75 +31,147 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 - **Docker & Docker Compose:** Containerized setup for consistent development, testing, and production deployments.
 - **Nginx Reverse Proxy:** Configured to route external HTTP requests to your FastAPI application.
 - **Pydantic Settings:** Centralized configuration management using Pydantic (via `pydantic-settings`).
+- **Email Service:** Built-in email functionality with templating support.
+- **Redis Caching:** Advanced caching system with Redis backend support.
+- **Error Handling:** Comprehensive exception handling with custom exception types and handlers.
+- **Rate Limiting:** Built-in rate limiting capabilities to protect your API endpoints.
+- **Testing Framework:** Ready-to-use testing structure for unit and integration tests.
 
 ---
 
 ## Architecture & Directory Structure
 
 ```
-├── app/                                  # Application source code
-│   ├── admin/                            # Admin functionality (authentication, domain-specific logic)
-│   │   ├── auth/                         # Authentication logic for admin users
-│   │   ├── domain/                       # Admin-specific domain logic
-│   │   ├── dependencies.py               # Admin dependencies
-│   │   ├── exceptions.py                 # Admin-specific exceptions
-│   │   ├── models.py                     # Admin data models (ORM)
-│   │   ├── repositories.py               # Admin data repository layer
-│   │   ├── routers.py                    # Admin API endpoints
-│   │   ├── schemas.py                    # Admin Pydantic schemas for data validation
-│   │   └── services.py                   # Admin business logic services
+├── docker/                              # Docker configuration files
+│   ├── Dockerfile                       # Production Dockerfile (multi-stage build)
+│   └── Dockerfile.dev                   # Development Dockerfile with hot-reload
+│
+├── migrations/                          # Alembic migrations for database schema management
+│   ├── versions/                        # Migration version files
+│   ├── env.py                           # Alembic environment configuration
+│   ├── script.py.mako                   # Alembic migration script template
+│   └── README                           # Instructions for migrations
+│
+├── postgres/                            # PostgreSQL configuration
+│   ├── Dockerfile-postgis               # Dockerfile for PostgreSQL with PostGIS
+│   ├── init-postgis.sh                  # Initialization script
+│   └── postgresql.conf                  # PostgreSQL configuration
+│
+├── requirements/                        # Python dependencies for different environments
+│   ├── base.txt                         # Base dependencies used in all environments
+│   ├── dev.txt                          # Development environment dependencies
+│   ├── test.txt                         # Testing environment dependencies
+│   └── prod.txt                         # Production environment dependencies
+│
+├── scripts/                             # Utility scripts for the application
+│   ├── __init__.py                      # Package initialization
+│   └── check_env.py                     # Environment validation script
+│
+├── src/                                 # Application source code
+│   ├── admin/                           # Admin functionality
+│   │   ├── auth/                        # Authentication logic for admin users
+│   │   ├── dependencies.py              # Admin dependencies
+│   │   ├── exceptions.py                # Admin-specific exceptions
+│   │   ├── models.py                    # Admin data models (ORM)
+│   │   ├── repositories.py              # Admin data repository layer
+│   │   ├── routers.py                   # Admin API endpoints
+│   │   ├── schemas.py                   # Admin Pydantic schemas
+│   │   └── services.py                  # Admin business logic services
 │   │
-│   ├── core/                             # Core components shared across the application
-│   │   ├── database/                     # Database connection and ORM setup
-│   │   │   ├── database_async.py         # Async database setup
-│   │   │   ├── database_sync.py          # Sync database setup
-│   │   │   ├── models.py                 # Declarative Base and Mixins
-│   │   │   ├── redis.py                  # Redis connection utilities
-│   │   │   └── repositories.py           # Core data repositories
-│   │   ├── middleware.py                 # Application middleware setup
-│   │   ├── routes.py                     # Core API routes
-│   │   ├── schemas.py                    # Core data validation schemas
-│   │   ├── services.py                   # Core services shared across modules
-│   │   ├── settings.py                   # Application configuration settings
-│   │   ├── utils.py                      # Utility functions
-│   │   └── validations.py                # Data validation utilities
+│   ├── core/                            # Core components shared across the application
+│   │   ├── database/                    # Database connection and ORM setup
+│   │   │   ├── database_async.py        # Async database setup
+│   │   │   ├── models.py                # Declarative Base and Mixins
+│   │   │   ├── redis.py                 # Redis connection utilities
+│   │   │   └── repositories.py          # Core data repositories
+│   │   │
+│   │   ├── email_service/               # Email service functionality
+│   │   │   ├── config.py                # Email configuration
+│   │   │   ├── dependencies.py          # Email dependencies
+│   │   │   ├── fastapi_mailer.py        # FastAPI-Mail integration
+│   │   │   ├── interfaces.py            # Email service interfaces
+│   │   │   ├── schemas.py               # Email data schemas
+│   │   │   ├── service.py               # Email service implementation
+│   │   │   ├── tasks.py                 # Celery tasks for email
+│   │   │   └── templates/               # Email templates
+│   │   │
+│   │   ├── errors/                      # Error handling
+│   │   │   ├── exceptions.py            # Custom exception classes
+│   │   │   └── handlers.py              # Exception handlers
+│   │   │
+│   │   ├── limiter/                     # Rate limiting functionality
+│   │   │   ├── depends.py               # Dependencies for rate limiting
+│   │   │   └── script.py                # Rate limiting implementation
+│   │   │
+│   │   ├── patterns/                    # Design patterns
+│   │   │   └── singleton.py             # Singleton pattern implementation
+│   │   │
+│   │   ├── redis/                       # Redis caching system
+│   │   │   ├── cache/                   # Caching implementation
+│   │   │   │   ├── backend/             # Cache backends
+│   │   │   │   ├── coder/               # Data encoding/decoding
+│   │   │   │   ├── manager/             # Cache management
+│   │   │   │   ├── decorators.py        # Cache decorators
+│   │   │   │   ├── lifecycle.py         # Cache lifecycle management
+│   │   │   │   └── tags.py              # Cache tagging system
+│   │   │   ├── core.py                  # Redis core functionality
+│   │   │   └── lifecycle.py             # Redis lifecycle management
+│   │   │
+│   │   ├── utils/                       # Utility functions
+│   │   │   ├── datetime_utils.py        # Date and time utilities
+│   │   │   ├── retry.py                 # Retry mechanism
+│   │   │   └── security.py              # Security utilities
+│   │   │
+│   │   ├── middleware.py                # Application middleware setup
+│   │   ├── routes.py                    # Core API routes
+│   │   ├── schemas.py                   # Core data validation schemas
+│   │   ├── services.py                  # Core services shared across modules
+│   │   └── validations.py               # Data validation utilities
 │   │
-│   └── user/                             # User functionality (authentication, domain-specific logic)
-│       ├── auth/                         # Authentication logic for regular users
-│       ├── domain/                       # User-specific domain logic
-│       ├── dependencies.py               # User dependencies
-│       ├── exceptions.py                 # User-specific exceptions
-│       ├── models.py                     # User data models (ORM)
-│       ├── repositories.py               # User data repository layer
-│       ├── routers.py                    # User API endpoints
-│       ├── schemas.py                    # User Pydantic schemas for data validation
-│       ├── services.py                   # User business logic services
-│       └── tasks.py                      # Celery tasks for users
+│   ├── main/                            # Application entry points
+│   │   ├── config.py                    # Application configuration settings
+│   │   ├── lifespan.py                  # Application lifecycle management
+│   │   ├── presentation.py              # API presentation layer
+│   │   └── web.py                       # FastAPI application setup
+│   │
+│   ├── system/                          # System-level functionality
+│   │   └── routers.py                   # System API endpoints (health, time)
+│   │
+│   └── user/                            # User functionality
+│       ├── auth/                        # Authentication logic for regular users
+│       ├── dependencies.py              # User dependencies
+│       ├── exceptions.py                # User-specific exceptions
+│       ├── models.py                    # User data models (ORM)
+│       ├── repositories.py              # User data repository layer
+│       ├── routers.py                   # User API endpoints
+│       ├── schemas.py                   # User Pydantic schemas
+│       ├── services.py                  # User business logic services
+│       └── tasks.py                     # Celery tasks for users
 │
-├── celery_tasks/                         # Celery task management
-│   └── main.py                           # Celery application setup
+├── tests/                               # Test suite
+│   └── email/                           # Tests for email functionality
+│       ├── mocks.py                     # Mock objects for testing
+│       └── test_email_service.py        # Tests for email service
 │
-├── loggers/                              # Logging configurations
-│   └── __init__.py                       # Logger setup
+├── celery_tasks/                        # Celery task management
+│   └── main.py                          # Celery application setup
 │
-├── migrations/                           # Alembic migrations for database schema management
-│   ├── versions/                         # Migration version files
-│   ├── env.py                            # Alembic environment configuration
-│   ├── script.py.mako                    # Alembic migration script template
-│   └── README                            # Instructions for migrations
+├── loggers/                             # Logging configurations
+│   └── __init__.py                      # Logger setup
 │
-├── scripts/                              # Utility scripts for the application
-├── .idea/                                # PyCharm IDE configuration files
-├── celery_tasks/                         # Celery background task definitions
-├── loggers/                              # Logging setup and configuration
-├── Dockerfile                            # Dockerfile for building the application container
-├── Dockerfile-postgis                    # Dockerfile for a container with PostGIS
-├── Makefile                              # Makefile with predefined commands for project management
-├── alembic.ini                           # Alembic configuration file
-├── docker-compose.yml                    # Docker Compose configuration file for local deployment (not included, recommended)
-├── pre-commit-config.yaml                # Pre-commit hooks configuration for code quality checks
-├── requirements.txt                      # Python dependencies
-└── main.py                               # Entry point of the FastAPI application
+├── models/                              # Shared data models
+│   └── __init__.py                      # Models package initialization
+│
+├── Makefile                             # Makefile with predefined commands
+├── alembic.ini                          # Alembic configuration file
+├── docker-compose.yml                   # Docker Compose configuration
+├── docker-compose.override.yml          # Docker Compose overrides for development
+├── nginx.conf                           # Nginx configuration
+├── redis.conf                           # Redis configuration
+├── requirements.txt                     # Main requirements file
+├── pytest.ini                           # PyTest configuration
+├── mypy.ini                             # MyPy configuration
+└── main.py                              # Application entry point
 ```
 
 ---
@@ -110,7 +182,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 
 ## Containers
 - **Postgres:**
-  Hosts the PostgreSQL database with PostGIS capabilities. Built using `Dockerfile-postgis`, it uses environment variables for credentials and persists data in a dedicated volume.
+  Hosts the PostgreSQL database with PostGIS capabilities. Built using `Dockerfile-postgis` in the postgres directory, it uses environment variables for credentials and persists data in a dedicated volume.
 
 - **App:**
   Runs the main FastAPI application. It starts the server (using Uvicorn, or optionally Gunicorn with Uvicorn workers).
@@ -180,6 +252,19 @@ This command will:
 - Build the images as necessary.
 - Start all services defined in the `docker-compose.yml` file.
 
+#### Running in Development Mode with Auto-Reload
+
+For development with auto-reload functionality (hot reloading when code changes), use:
+
+```bash
+make run-dev
+```
+
+This command will:
+- Build development images that include development dependencies like uvicorn.
+- Start services with the configurations from both `docker-compose.yml` and `docker-compose.override.yml`.
+- Enable auto-reload for the FastAPI application.
+
 #### Viewing Logs
 
 To view logs for all services:
@@ -238,6 +323,38 @@ Other services (Celery Worker, Celery Beat, PostgreSQL, etc.) can be inspected u
     make migrate
     ```
 
+#### Development and Production Deployment
+
+For simplified deployment workflows, use:
+
+- Development deployment:
+
+  ```bash
+  make deploy-dev
+  ```
+
+- Production deployment:
+
+  ```bash
+  make deploy-prod
+  ```
+
+#### Resource Cleanup
+
+To clean up Docker resources:
+
+- Basic cleanup (keeps build cache):
+
+  ```bash
+  make clean-resources
+  ```
+
+- Aggressive cleanup (removes all unused resources):
+
+  ```bash
+  make clean-resources-hard
+  ```
+
 ---
 
 ### Accessing the Application
@@ -259,8 +376,6 @@ Other services (Celery Worker, Celery Beat, PostgreSQL, etc.) can be inspected u
 - If you encounter issues with database migrations, make sure the PostgreSQL container is running and accessible.
 
 ---
-
-
 
 ## Contributing
 
