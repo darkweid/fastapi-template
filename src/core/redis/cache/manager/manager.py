@@ -1,7 +1,7 @@
 import hashlib
 from functools import wraps
 from types import FunctionType
-from typing import cast
+from typing import Any, cast
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
@@ -20,9 +20,9 @@ logger = get_logger(__name__)
 class CacheManager(BaseCacheManager, AbstractCacheManager):
 
     @staticmethod
-    async def key_builder(
-        func: Callable,
-        **filtered_kwargs,
+    async def key_builder(  # type: ignore
+        func: Callable[..., Any],
+        **filtered_kwargs: Any,
     ) -> str:
         excluded_args = {"session", "self", "cls"}
         filtered_kwargs = {
@@ -38,11 +38,13 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
         return f"cache:{cache_key}"
 
     @staticmethod
-    def _extract_session(**filtered_kwargs) -> AsyncSession | None:
+    def _extract_session(**filtered_kwargs: Any) -> AsyncSession | None:
         return filtered_kwargs.get("session")
 
     @staticmethod
-    def _parse_filters(filters: dict, **filtered_kwargs) -> dict | None:
+    def _parse_filters(
+        filters: dict[str, Any], **filtered_kwargs: Any
+    ) -> dict[str, Any] | None:
         parsed_filters = {}
         for key, value in filters.items():
             if value not in filtered_kwargs:
@@ -59,9 +61,9 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
     async def _get_identity(
         session: AsyncSession,
         model: Base,
-        field: InstrumentedAttribute | str,
-        **filters,
-    ) -> str:
+        field: InstrumentedAttribute[Any] | str,
+        **filters: Any,
+    ) -> str | None:
         field = (
             field if isinstance(field, InstrumentedAttribute) else getattr(model, field)
         )
@@ -71,18 +73,22 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
         if order_by is None:
             order_by = getattr(model, "id", None)
 
-        query = select(field).filter_by(**filters).order_by(order_by.desc())
+        # Handle the case where order_by might be None
+        query = select(field).filter_by(**filters)
+        if order_by is not None:
+            query = query.order_by(order_by.desc())
 
         result = await session.execute(query)
         return result.scalars().first()
 
-    def decorator(
+    def decorator(  # type: ignore
         self,
+        *,
         ttl: int = 3600,
         tags: list[str] | list[CacheTags] | None = None,
-        identity_field: InstrumentedAttribute | str | None = None,
+        identity_field: InstrumentedAttribute[Any] | str | None = None,
         identity_model: Base | None = None,
-        **filters,
+        **filters: Any,
     ) -> Callable[[Callable[..., Awaitable[R]]], Callable[..., Awaitable[R]]]:
         """
         Decorator to cache the result of a function call.
@@ -101,9 +107,9 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
         if tags is None:
             tags = []
 
-        def wrapper(func: Callable) -> Callable[..., Awaitable[R]]:
+        def wrapper(func: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
             @wraps(func)
-            async def inner(*args, **kwargs) -> R:
+            async def inner(*args: Any, **kwargs: Any) -> R:
                 if not self.backend.is_initialized():
                     raise RuntimeError("Cache backend is not initialized")
 
@@ -112,8 +118,12 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
                 local_tags = tags.copy()
 
                 filtered_kwargs = self._filter_arguments(func, *args, **kwargs)
+                str_tags = [
+                    str(tag) if isinstance(tag, CacheTags) else tag
+                    for tag in local_tags
+                ]
                 local_tags = self._extend_tags_using_params(
-                    tags=local_tags, **filtered_kwargs
+                    tags=str_tags, **filtered_kwargs
                 )
 
                 cache_key = await self.key_builder(func, **filtered_kwargs)

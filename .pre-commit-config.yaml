@@ -46,27 +46,27 @@ repos:
       - id: pyupgrade
         args: ["--py311-plus"]
 
-#  - repo: https://github.com/pre-commit/mirrors-mypy
-#    rev: v1.17.1
-#    hooks:
-#      - id: mypy
-#        args: [
-#          "--install-types",
-#          "--non-interactive",
-#          "--config-file=mypy.ini"
-#        ]
-#        exclude: ^(tests/|migrations/|scripts/)
-#        additional_dependencies:
-#          - fastapi
-#          - pydantic
-#          - sqlalchemy
-#          - celery
-#          - sentry-sdk
-#          - pydantic-settings
-#          - redis
-#          - pytest
-#          - alembic
-#          - fastapi-mail
-#          - fastapi-pagination
-#          - types-passlib
-#          - types-pytz
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.17.1
+    hooks:
+      - id: mypy
+        args: [
+          "--install-types",
+          "--non-interactive",
+          "--config-file=mypy.ini"
+        ]
+        exclude: ^(tests/|migrations/|scripts/)
+        additional_dependencies:
+          - fastapi
+          - pydantic
+          - sqlalchemy
+          - celery
+          - sentry-sdk
+          - pydantic-settings
+          - redis
+          - pytest
+          - alembic
+          - fastapi-mail
+          - fastapi-pagination
+          - types-passlib
+          - types-pytz

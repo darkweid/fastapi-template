@@ -17,7 +17,7 @@ class AbstractCacheManager(ABC):
         self.coder = coder
 
     @abstractmethod
-    async def key_builder(self, *args, **kwargs) -> str:
+    async def key_builder(self, *args: object, **kwargs: object) -> str:
         """
         Abstract method to build a cache key based on the request and optional identity ID.
         """
@@ -33,7 +33,7 @@ class AbstractCacheManager(ABC):
         *,
         ttl: int = 3600,
         tags: list[str] | list[CacheTags] | None = None,
-        **kwargs,
+        **kwargs: object,
     ) -> Callable[
         [Callable[..., Awaitable[R]]], Callable[..., Awaitable[R | Response]]
     ]:

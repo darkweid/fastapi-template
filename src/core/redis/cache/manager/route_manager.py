@@ -2,7 +2,7 @@ import hashlib
 import json
 from functools import wraps
 from inspect import Parameter, Signature
-from typing import cast
+from typing import Any, cast
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response, status
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 
 class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
-    def __init__(self, backend, coder) -> None:
+    def __init__(self, backend: Any, coder: Any) -> None:
         super().__init__(backend=backend, coder=coder)
         self.cache_status_header = "X-Cache-Status"
         self.cache_control_header = "Cache-Control"
@@ -25,7 +25,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
         self.if_none_header = "If-None-Match"
 
     @staticmethod
-    async def key_builder(
+    async def key_builder(  # type: ignore
         request: Request,
         identity_id: str | None = None,
     ) -> str:
@@ -59,7 +59,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
         return tags
 
     async def _set_tags(
-        self, *, tags: list[str] | list[CacheTags], cache_key: str, **kwargs
+        self, *, tags: list[str] | list[CacheTags], cache_key: str, **kwargs: Any
     ) -> None:
         request = kwargs.get("request")
         if request is not None:
@@ -100,11 +100,13 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
             parameters=[*parameters, *extra, *variadic_keyword_params]
         )
 
-    def decorator(
+    def decorator(  # type: ignore
         self,
+        *,
         ttl: int = 3600,
         tags: list[str] | list[CacheTags] | None = None,
-        identity: Callable[[Request], Awaitable[str | None]] = None,
+        identity: Callable[[Request], Awaitable[str | None]] | None = None,
+        **kwargs: Any,
     ) -> Callable[
         [Callable[..., Awaitable[R]]], Callable[..., Awaitable[R | Response]]
     ]:
@@ -122,7 +124,9 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
             kind=Parameter.KEYWORD_ONLY,
         )
 
-        def wrapper(func: Callable) -> Callable[..., Awaitable[R | Response]]:
+        def wrapper(
+            func: Callable[..., Awaitable[R]],
+        ) -> Callable[..., Awaitable[R | Response]]:
             wrapped_signature = get_typed_signature(func)
             to_inject: list[Parameter] = []
             request_param = self._locate_param(
@@ -133,7 +137,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
             )
 
             @wraps(func)
-            async def inner(*args, **kwargs) -> R | Response:
+            async def inner(*args: Any, **kwargs: Any) -> R | Response:
                 if not self.backend.is_initialized():
                     raise RuntimeError("Cache backend is not initialized")
 
@@ -143,8 +147,13 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                 )  # avoid mutating shared list across decorator calls
 
                 filtered_kwargs = self._filter_arguments(func, *args, **kwargs)
+                # Convert to list[str] to match the expected parameter type
+                str_tags = [
+                    str(tag) if isinstance(tag, CacheTags) else tag
+                    for tag in local_tags
+                ]
                 local_tags = self._extend_tags_using_params(
-                    tags=local_tags, **filtered_kwargs
+                    tags=str_tags, **filtered_kwargs
                 )
 
                 request = kwargs.pop(request_param.name, None) or next(
@@ -221,7 +230,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
 
                 return result
 
-            inner.__signature__ = self._augment_signature(wrapped_signature, *to_inject)
+            inner.__signature__ = self._augment_signature(wrapped_signature, *to_inject)  # type: ignore
             return inner
 
         return wrapper

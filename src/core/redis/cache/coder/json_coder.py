@@ -30,7 +30,7 @@ class JsonEncoder(json.JSONEncoder):
             return jsonable_encoder(o)
 
 
-def object_hook(obj: Any) -> Any:
+def object_hook(obj: dict[str, Any]) -> Any:
     _spec_type = obj.get("_spec_type")
     if not _spec_type:
         return obj
@@ -46,7 +46,10 @@ class JsonCoder(Coder):
     def encode(cls, value: Any) -> bytes:
         """Encode a value into bytes for storage in the cache using json."""
         if isinstance(value, JSONResponse):
-            return value.body
+            body = value.body
+            if isinstance(body, memoryview):
+                return bytes(body)
+            return body
         return json.dumps(value, cls=JsonEncoder).encode()
 
     @classmethod

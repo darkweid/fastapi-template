@@ -7,7 +7,7 @@ from src.core.redis.core import create_redis_pool
 logger = logging.getLogger("redis")
 
 
-async def on_redis_startup(app: FastAPI, connection_url):
+async def on_redis_startup(app: FastAPI, connection_url: str) -> None:
     redis_pool = create_redis_pool(connection_url=connection_url)
 
     app.state.redis_pool = redis_pool
@@ -15,7 +15,7 @@ async def on_redis_startup(app: FastAPI, connection_url):
     logger.info("Redis pool created successfully.")
 
 
-async def on_redis_shutdown(app: FastAPI):
+async def on_redis_shutdown(app: FastAPI) -> None:
     pool_to_close = getattr(app.state, "redis_pool", None)
 
     if pool_to_close:

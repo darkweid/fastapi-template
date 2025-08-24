@@ -1,16 +1,20 @@
 from functools import wraps
+from typing import Any, TypeVar, cast
+from collections.abc import Callable
+
+T = TypeVar("T")
 
 
-def singleton(cls):
+def singleton(cls: type[T]) -> Callable[..., T]:
     """
     A decorator to make a class a singleton
     """
-    instances = {}
+    instances: dict[type[Any], Any] = {}
 
     @wraps(cls)
-    def get_instance(*args, **kwargs):
+    def get_instance(*args: Any, **kwargs: Any) -> T:
         if cls not in instances:
             instances[cls] = cls(*args, **kwargs)
-        return instances[cls]
+        return cast(T, instances[cls])
 
     return get_instance

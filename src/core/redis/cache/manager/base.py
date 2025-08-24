@@ -1,6 +1,8 @@
 import inspect
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
+from collections.abc import Iterable
 
 from fastapi import Response
 from fastapi_pagination import Page
@@ -24,7 +26,7 @@ class BaseCacheManager(AbstractCacheManager):
         )
 
     async def _set_tags(
-        self, *, tags: list[str] | list[CacheTags], cache_key: str, **kwargs
+        self, *, tags: list[str] | list[CacheTags], cache_key: str, **kwargs: Any
     ) -> None:
         logger.debug("Setting tags for key '%s': '%s'", cache_key, tags)
 
@@ -47,27 +49,32 @@ class BaseCacheManager(AbstractCacheManager):
 
     @staticmethod
     def _extend_tags_using_result(tags: list[str], result: R) -> list[str]:
-        new_tags = set()
+        new_tags: set[Any] = set()
         if isinstance(result, dict):
             new_tags = {v for k, v in result.items() if "id" in k.lower()}
         elif isinstance(result, PydanticBase):
             data = result.model_dump(exclude_none=True, exclude_unset=True)
             new_tags = {v for k, v in data.items() if "id" in k.lower()}
         elif isinstance(result, SQLAlchemyBase):
-            new_tags = (
+            # Convert generator to set
+            new_tags = {
                 getattr(result, key)
                 for key in vars(result)
                 if "id" in key.lower() and not key.startswith("_")
-            )
+            }
         elif (
             isinstance(result, list)
             or isinstance(result, set)
             or isinstance(result, Page)
         ):
+            # Extract items to process based on result type
             if isinstance(result, Page):
-                result = result.items
+                items_to_process: Iterable[Any] = result.items
+            else:
+                items_to_process = cast(Iterable[Any], result)
+
             new_tags = set()
-            for item in result:
+            for item in items_to_process:
                 if isinstance(item, PydanticBase):
                     item = item.model_dump(exclude_none=True, exclude_unset=True)
                 elif isinstance(item, SQLAlchemyBase):
@@ -95,8 +102,8 @@ class BaseCacheManager(AbstractCacheManager):
         return tags
 
     @staticmethod
-    def _extend_tags_using_params(tags: list[str], **kwargs) -> list[str]:
-        new_tags = set()
+    def _extend_tags_using_params(tags: list[str], **kwargs: Any) -> list[str]:
+        new_tags: set[Any] = set()
         for key, value in kwargs.items():
             if "id" in key.lower() and value is not None:
                 new_tags.add(value)
@@ -107,7 +114,9 @@ class BaseCacheManager(AbstractCacheManager):
         return tags
 
     @staticmethod
-    def _filter_arguments(func: Callable, *args, **kwargs) -> dict:
+    def _filter_arguments(
+        func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         sig = inspect.signature(func)
         bound = sig.bind_partial(*args, **kwargs)
         bound.apply_defaults()
@@ -127,7 +136,11 @@ class BaseCacheManager(AbstractCacheManager):
         if key_sets:
             keys = set.intersection(*key_sets)
             if excluded_key_sets:
-                keys = keys - set.union(*excluded_key_sets)
+                # Convert to list of sets first, then use set.union
+                excluded_keys: set[str] = set()
+                for key_set in excluded_key_sets:
+                    excluded_keys = excluded_keys.union(key_set)
+                keys = keys - excluded_keys
             logger.debug("Invalidating keys: %s for tags: %s", keys, tags)
             await self.backend.invalidate_keys(list(keys))
 
@@ -137,7 +150,7 @@ class BaseCacheManager(AbstractCacheManager):
         *,
         ttl: int = 3600,
         tags: list[str] | list[CacheTags] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Callable[
         [Callable[..., Awaitable[R]]], Callable[..., Awaitable[R | Response]]
     ]:

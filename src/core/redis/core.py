@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_redis_pool(
-    connection_url,
+    connection_url: str,
 ) -> redis.Redis:
     try:
         pool = redis.ConnectionPool.from_url(connection_url)
@@ -25,7 +25,7 @@ def get_redis_pool(app: FastAPI) -> redis.Redis:
     if pool is None:
         raise RuntimeError("Redis Pool does not found in app.state")
 
-    return pool
+    return redis.Redis(connection_pool=pool)
 
 
 redis_client = redis.Redis(
