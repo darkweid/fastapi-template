@@ -34,11 +34,9 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create .env file from GitHub Secret
+      - name: Create .env file from .env.example
         run: |
-          cat > .env <<EOF
-          ${{ secrets.DOT_ENV_FILE }}
-          EOF
+          cp .env.example .env
 
       - name: Cache pre-commit
         uses: actions/cache@v3
