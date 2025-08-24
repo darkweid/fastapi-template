@@ -1,3 +1,4 @@
+import alembic_postgresql_enum  # noqa
 import asyncio
 import logging
 
@@ -6,28 +7,14 @@ from alembic.config import Config
 from sqlalchemy import MetaData
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+import models  # noqa
 
-from src.core.database.models import Base  # noqa
+from src.core.database.models import Base
 from src.main.config import config as app_config
 
-# ===== add model imports here ===== #
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
 config: Config = context.config
-
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-
 target_metadata: MetaData = Base.metadata
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option('my_important_option')
-# ... etc.
-
 logger = logging.getLogger(__name__)
 
 

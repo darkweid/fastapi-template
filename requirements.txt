@@ -1,4 +1,5 @@
 alembic
+alembic-postgresql-enum
 asyncpg
 black
 celery
