@@ -1,11 +1,11 @@
 from redis.asyncio import Redis
 
-from src.core.settings import settings
+from src.main.config import config
 
 redis_client = Redis(
-    host=settings.redis_host,
-    port=settings.redis_port,
-    password=settings.redis_password,
-    db=settings.redis_database,
+    host=config.redis.REDIS_HOST,
+    port=config.redis.REDIS_PORT,
+    password=config.redis.REDIS_PASSWORD,
+    db=config.redis.REDIS_DATABASE,
     decode_responses=True,
 )

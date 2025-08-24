@@ -4,6 +4,12 @@
 default_language_version:
   python: python3.11
 repos:
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.20.0
+    hooks:
+      - id: pyupgrade
+        args: [ "--py311-plus" ]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -19,8 +25,6 @@ repos:
       - id: check-merge-conflict
       - id: requirements-txt-fixer
       - id: check-json
-
-
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.9
@@ -39,12 +43,6 @@ repos:
     hooks:
       - id: autoflake
         args: [ --remove-all-unused-imports, --remove-unused-variables ]
-
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
-    hooks:
-      - id: pyupgrade
-        args: ["--py311-plus"]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.17.1

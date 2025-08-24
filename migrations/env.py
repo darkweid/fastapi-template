@@ -8,7 +8,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from src.core.database.models import Base  # noqa
-from src.core.settings import settings
+from src.main.config import config as app_config
 
 # ===== add model imports here ===== #
 
@@ -41,8 +41,7 @@ def include_object(object, name, type_, reflected, compare_to):
 
 def _get_postgres_dsn() -> str:
     try:
-        dsn = settings.build_postgres_dsn_async()
-        logger.info(f"Got DSN: {dsn}")
+        dsn = app_config.postgres.dsn_async
         return dsn
     except Exception as e:
         logger.error(f"An error occurred while getting DSN: {e}")

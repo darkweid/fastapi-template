@@ -6,12 +6,12 @@ import pytz
 
 from src.core.errors.exceptions import InstanceProcessingException
 
-from src.core.settings import settings
+from src.main.config import config
 from loggers import get_logger
 
 logger = get_logger(__name__)
 
-LOCAL_TZ = pytz.timezone(str(settings.tz))
+LOCAL_TZ = pytz.timezone(str(config.app.LOCAL_TIMEZONE))
 
 
 def get_utc_now() -> datetime:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, FastAPI
 
 # Import routers here
-from src.healthcheck import routers as healthcheck_routers
+from src.system import routers as system_routers
 from src.core.errors.exceptions import (
     AccessForbiddenException,
     CoreException,
@@ -30,7 +30,7 @@ def include_routers(app: FastAPI) -> None:
     v1_router = APIRouter()
 
     app.include_router(v1_router, prefix="/v1")
-    app.include_router(healthcheck_routers.router, tags=["System"])
+    app.include_router(system_routers.router, tags=["System"])
 
 
 def include_exceptions_handlers(app: FastAPI) -> None:

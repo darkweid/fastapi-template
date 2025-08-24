@@ -13,7 +13,6 @@ httpx
 loguru
 passlib
 pre-commit
-psycopg2
 pydantic
 pydantic-settings
 pyjwt

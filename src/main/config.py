@@ -29,6 +29,7 @@ class BroadcastingConfig(BaseModel):
     EMAIL_PORT: int = Field(alias="EMAIL_PORT")
     EMAIL_PASSWORD: str = Field(alias="EMAIL_PASSWORD")
     EMAIL_USER: str = Field(alias="EMAIL_USER")
+    EMAIL_FROM_NAME: str = Field(alias="EMAIL_FROM_NAME")
     EMAIL_USE_TLS: bool = Field(alias="EMAIL_USE_TLS")
     EMAIL_STARTTLS: bool = Field(alias="EMAIL_STARTTLS")
     VALIDATE_CERTS: bool = Field(alias="VALIDATE_CERTS")

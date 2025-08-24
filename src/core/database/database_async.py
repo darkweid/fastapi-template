@@ -4,14 +4,14 @@ from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from src.core.settings import settings
+from src.main.config import config
 from .models import Base
 
-DATABASE_URL = settings.build_postgres_dsn_async()
+DATABASE_URL = config.postgres.dsn_async
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=settings.db_echo,
+    echo=config.postgres.DB_ECHO,
     pool_size=10,
     max_overflow=10,
     pool_timeout=30,
