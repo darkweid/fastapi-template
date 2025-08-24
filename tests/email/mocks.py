@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from src.core.email.interfaces import AbstractMailer
+from src.core.email_service.interfaces import AbstractMailer
 
 
 class MockMailer(AbstractMailer):

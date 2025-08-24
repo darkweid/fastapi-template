@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import EmailStr, BaseModel
 
-from src.core.email.interfaces import AbstractMailer
+from src.core.email_service.interfaces import AbstractMailer
 
 
 class FastAPIMailer(AbstractMailer):
