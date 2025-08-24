@@ -12,7 +12,7 @@ services:
       - ${POSTGRES_PORT}:5432
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgresql.conf:/custom-config/postgresql.conf:ro
+      - ./postgres/postgresql.conf:/custom-config/postgresql.conf:ro
 
   app:
     container_name: app

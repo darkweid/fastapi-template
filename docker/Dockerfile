@@ -1,5 +1,5 @@
 # --- Build stage ---
-FROM python:3.11-bullseye AS builder
+FROM python:3.11-slim-bullseye AS builder
 
 WORKDIR /app
 
@@ -10,8 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libffi-dev \
-    gcc \
-    g++ \
+    libpq-dev \
+    make \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -30,7 +30,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/install/lib/python3.11/site-packages"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libffi-dev \
+    libpq5 \
+    wget \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /install
