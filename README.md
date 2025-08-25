@@ -16,6 +16,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 - [Containers](#containers)
 - [Deployment & Setup](#deployment--setup)
 - [Accessing the Application](#accessing-the-application)
+- [CI/CD Pipelines](#cicd-pipelines)
 - [Contributing](#contributing)
 - [Acknowledgements](#acknowledgements)
 
@@ -374,6 +375,51 @@ To clean up Docker resources:
 - Verify that your `.env` file is correctly configured.
 - Use `make logs` or specific log commands (e.g., `make logs-app`) to check for error messages.
 - If you encounter issues with database migrations, make sure the PostgreSQL container is running and accessible.
+
+---
+
+## CI/CD Pipelines
+
+This template includes robust CI/CD workflows implemented with GitHub Actions to automate testing, building, and deployment processes. The CI/CD configuration prioritizes both reliability and performance through strategic optimizations.
+
+### Continuous Integration (CI)
+
+The CI pipeline (`.github/workflows/ci.yml`) automatically runs on each pull request and push to the main branch:
+
+- **Caching System:** The pipeline implements multiple caching layers to significantly improve execution speed:
+  - **Python Virtual Environment:** Caches the entire virtual environment based on `requirements.txt` hash
+  - **Pre-commit Cache:** Stores pre-commit hook environments to avoid redundant installations
+  - **Dependency Resolution:** Uses cached dependencies when possible while ensuring up-to-date packages
+
+- **Code Quality Checks:**
+  - **Linting:** Enforces code standards with flake8, black, and isort via `make check-lint`
+  - **Migration Validation:** Verifies Alembic migration heads to prevent multiple head conflicts
+
+- **Testing:**
+  - **Test Environment Setup:** Automatically creates a test environment from `.env.example`
+  - **Unit Tests:** Runs the pytest suite through `make test` command
+
+### Continuous Deployment (CD)
+
+The CD pipeline (`.github/workflows/deploy.yml`) triggers automatically after successful CI completion:
+
+- **Deployment Protection:**
+  - **Branch Filtering:** Only deploys successful builds from the main branch
+  - **Concurrency Control:** Prevents simultaneous deployments to avoid conflicts
+  - **Environment Validation:** Verifies environment configuration with `check_env.py` script
+
+- **Deployment Process:**
+  - **Secure SSH Connection:** Establishes secure connection to the deployment server
+  - **Application Update:** Pulls latest code and deploys using `make deploy-prod`
+  - **Resource Management:** Cleans up resources post-deployment with `make clean-resources`
+  - **Nginx Restart:** Ensures web server configuration is updated
+
+- **Notification System:**
+  - **Deployment Status:** Sends detailed deployment notifications to Telegram
+  - **Performance Metrics:** Includes duration time and version information
+  - **Quick Access:** Provides links to the GitHub pipeline for troubleshooting
+
+To use these pipelines for your project, configure the necessary secrets in your GitHub repository settings (SSH keys, server IP, Telegram tokens, etc.).
 
 ---
 
