@@ -29,6 +29,7 @@ run:
 run-dev:
 	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.override.yml up --build -d
 	docker restart nginx
+
 # Stop the Docker containers
 .PHONY: down
 down:

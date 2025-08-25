@@ -25,7 +25,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 
 - **FastAPI & Asynchronous Endpoints:** Leverage the performance and ease-of-use of FastAPI for building modern APIs.
 - **Modular Architecture:** Organized codebase with a clear separation between core functionalities and domain-specific modules.
-- **Database Integration:** Asynchronous PostgreSQL+PostGis connectivity using SQLAlchemy with separate modules for async and sync operations.
+- **Database Integration:** Asynchronous PostgreSQL+PostGis connectivity using SQLAlchemy for async operations.
 - **Celery for Background Tasks:** Background job processing powered by Celery with RabbitMQ as the broker and Redis as the backend.
 - **Task Monitoring with Flower:** Monitor your Celery tasks in real time using Flower.
 - **Docker & Docker Compose:** Containerized setup for consistent development, testing, and production deployments.
@@ -289,7 +289,7 @@ Other services (Celery Worker, Celery Beat, PostgreSQL, etc.) can be inspected u
   make down
   ```
 
-- To remove containers, networks, volumes, and local images (and clean up orphaned containers):
+- To remove containers, networks, ***volumes***, and local images (and clean up orphaned containers):
 
   ```bash
   make clean
