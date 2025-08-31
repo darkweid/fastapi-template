@@ -2,28 +2,16 @@ import uuid
 from datetime import datetime
 from uuid import UUID as PY_UUID
 
-from sqlalchemy import MetaData, func, DateTime, Integer
+from sqlalchemy import func, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
-
-
-class Base(DeclarativeBase):
-    metadata = MetaData(
-        naming_convention={
-            "ix": "ix_%(column_0_label)s",
-            "uq": "uq_%(table_name)s_%(column_0_name)s",
-            "ck": "ck_%(table_name)s_%(constraint_name)s",
-            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-            "pk": "pk_%(table_name)s",
-        }
-    )
+from sqlalchemy.orm import Mapped, mapped_column
 
 
 class TimestampMixin:
     """
     Add columns to a mapped class
-    created_at: DateTime, oncreate trigger
-    updated_at: DateTime, onupdate trigger
+    created_at: DateTime, `on create` trigger
+    updated_at: DateTime, `on update` trigger
     """
 
     __abstract__ = True
@@ -52,7 +40,7 @@ class UUIDIDMixin:
 class IntegerIDMixin:
     """
     Add an autoincrement column to a mapped class
-    id: Integer
+    id: Integer, autoincrement
     """
 
     __abstract__ = True

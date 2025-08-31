@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
-from src.core.database.models import Base
+from src.core.database.base import Base
 from src.core.redis.cache.manager.base import BaseCacheManager
 from src.core.redis.cache.manager.interface import AbstractCacheManager, R
 from src.core.redis.cache.tags import CacheTags
