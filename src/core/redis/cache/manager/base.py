@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from fastapi import Response
 from fastapi_pagination import Page
 
-from src.core.database.models import Base as SQLAlchemyBase
+from src.core.database.base import Base as SQLAlchemyBase
 from src.core.redis.cache.backend.interface import CacheBackend
 from src.core.redis.cache.coder.interface import Coder
 from src.core.redis.cache.manager.interface import AbstractCacheManager, R

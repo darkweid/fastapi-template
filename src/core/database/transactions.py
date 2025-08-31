@@ -1,34 +1,7 @@
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.ext.asyncio import create_async_engine
-
-from src.main.config import config
-from .models import Base
-
-DATABASE_URL = config.postgres.dsn_async
-
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=config.postgres.DB_ECHO,
-    pool_size=10,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=60 * 30,  # Restart the pool after 30 minutes
-)
-
-async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
-
-
-async def init_models() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async with async_session() as session:
-        yield session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @asynccontextmanager

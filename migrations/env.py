@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 import models  # noqa
 
-from src.core.database.models import Base
+from src.core.database.base import Base
 from src.main.config import config as app_config
 
 
