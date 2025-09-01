@@ -21,7 +21,7 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
     phone_number: Mapped[str] = mapped_column(String(20))
     password: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(
-        SQLEnum(UserRole), nullable=False, default=UserRole.VIEWER
+        SQLEnum(UserRole), nullable=False, default=UserRole.ADMIN
     )
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -31,6 +31,20 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
 
     @validates("password")
     def validate_password(self, _: str, value: str) -> str:
+        """
+        Validates and processes the 'password' field. Ensures the provided value is correctly hashed if it does not match
+        the existing password or has been updated.
+
+        Args:
+            _: str
+                Unused parameter
+            value: str
+                The new or updated password value provided for validation.
+
+        Returns:
+            str
+                The validated and potentially hashed password value.
+        """
         if value != self.password:
             value = hash_password(value)
         return value
