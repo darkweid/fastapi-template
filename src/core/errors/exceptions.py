@@ -9,13 +9,16 @@ class CoreException(Exception):
         self.additional_info = additional_info
 
 
-class InstanceNotFoundException(CoreException): ...
+class InstanceNotFoundException(CoreException):
+    pass
 
 
-class InstanceAlreadyExistsException(CoreException): ...
+class InstanceAlreadyExistsException(CoreException):
+    pass
 
 
-class InstanceProcessingException(CoreException): ...
+class InstanceProcessingException(CoreException):
+    pass
 
 
 class FilteringError(CoreException):
