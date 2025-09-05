@@ -23,10 +23,21 @@ from src.core.errors.handlers import (
     NotAcceptableExceptionHandler,
     PermissionDeniedExceptionHandler,
     UnauthorizedExceptionHandler,
+    as_exception_handler,
 )
 
 
 def include_routers(app: FastAPI) -> None:
+    """
+    Includes API routers into the FastAPI application.
+
+    Parameters:
+        app (FastAPI): The FastAPI application instance to which routers will
+        be added.
+
+    Returns:
+        None
+    """
     v1_router = APIRouter()
 
     app.include_router(v1_router, prefix="/v1")
@@ -34,25 +45,47 @@ def include_routers(app: FastAPI) -> None:
 
 
 def include_exceptions_handlers(app: FastAPI) -> None:
+    """
+    Registers exception handlers for various custom exceptions with the provided FastAPI
+    application instance.
+
+    Parameters:
+        app (FastAPI): The FastAPI application instance to which the exception handlers
+        will be added.
+
+    Returns:
+        None
+    """
     app.add_exception_handler(
-        InstanceNotFoundException, InstanceNotFoundExceptionHandler()
+        InstanceNotFoundException,
+        as_exception_handler(InstanceNotFoundExceptionHandler()),
     )
     app.add_exception_handler(
-        InstanceAlreadyExistsException, InstanceAlreadyExistsExceptionHandler()
+        InstanceAlreadyExistsException,
+        as_exception_handler(InstanceAlreadyExistsExceptionHandler()),
     )
     app.add_exception_handler(
-        InstanceProcessingException, InstanceProcessingExceptionHandler()
+        InstanceProcessingException,
+        as_exception_handler(InstanceProcessingExceptionHandler()),
     )
-    app.add_exception_handler(FilteringError, FilteringErrorHandler())
+    app.add_exception_handler(
+        FilteringError, as_exception_handler(FilteringErrorHandler())
+    )
     app.add_exception_handler(
         CoreException,
-        CoreExceptionHandler(),
+        as_exception_handler(CoreExceptionHandler()),
     )
     app.add_exception_handler(
-        AccessForbiddenException, AccessForbiddenExceptionHandler()
+        AccessForbiddenException,
+        as_exception_handler(AccessForbiddenExceptionHandler()),
     )
-    app.add_exception_handler(UnauthorizedException, UnauthorizedExceptionHandler())
-    app.add_exception_handler(NotAcceptableException, NotAcceptableExceptionHandler())
     app.add_exception_handler(
-        PermissionDeniedException, PermissionDeniedExceptionHandler()
+        UnauthorizedException, as_exception_handler(UnauthorizedExceptionHandler())
+    )
+    app.add_exception_handler(
+        NotAcceptableException, as_exception_handler(NotAcceptableExceptionHandler())
+    )
+    app.add_exception_handler(
+        PermissionDeniedException,
+        as_exception_handler(PermissionDeniedExceptionHandler()),
     )
