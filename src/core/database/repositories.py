@@ -7,7 +7,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.strategy_options import _AbstractLoad
+from sqlalchemy.orm import Load
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.utils.datetime_utils import get_utc_now
@@ -47,7 +47,7 @@ class BaseRepository(Generic[T]):
     async def get_single(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: Sequence[Load] | None = None,
         **filters: Any,
     ) -> T | None:
         """Retrieve a single record using the provided session."""
@@ -57,12 +57,12 @@ class BaseRepository(Generic[T]):
             query = query.options(*eager)
 
         result = await session.execute(query)
-        return result.scalars().first()
+        return result.unique().scalars().first()
 
     async def get_list(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: Sequence[Load] | None = None,
         **filters: Any,
     ) -> list[T]:
         """Retrieve a list of records using the provided session without pagination."""
@@ -77,12 +77,12 @@ class BaseRepository(Generic[T]):
             query = query.order_by(order_by.desc())
 
         result = await session.execute(query)
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def get_paginated_list(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: Sequence[Load] | None = None,
         **filters: Any,
     ) -> Page[T]:
         """Retrieve a paginated list of records using the provided session."""
@@ -186,7 +186,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def get_single(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: Sequence[Load] | None = None,
         **filters: Any,
     ) -> T | None:
         """Retrieve a single record where is_deleted flag is False, using the provided session and filters."""
@@ -196,7 +196,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def get_list(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: Sequence[Load] | None = None,
         **filters: Any,
     ) -> list[T]:
         """Retrieve a list of records where is_deleted flag is False, using the provided session and filters."""
@@ -206,7 +206,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def get_paginated_list(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: Sequence[Load] | None = None,
         **filters: Any,
     ) -> Page[T]:
         """Retrieve a list of records where is_deleted flag is False, using the filters,
