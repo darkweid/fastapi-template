@@ -1,5 +1,7 @@
 alembic
 alembic-postgresql-enum
+argon2-cffi
+asgiref
 asyncpg
 celery
 email-validator

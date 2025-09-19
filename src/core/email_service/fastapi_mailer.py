@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import Any
 
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
-from pydantic import EmailStr, BaseModel
+from pydantic import BaseModel
 
 from src.core.email_service.interfaces import AbstractMailer
 
@@ -13,9 +14,9 @@ class FastAPIMailer(AbstractMailer):
     async def send_template(
         self,
         subject: str,
-        recipients: list[EmailStr],
+        recipients: list[str],
         template_name: str,
-        template_data: BaseModel,
+        template_data: BaseModel | dict[str, Any],
         subtype: str = "html",
     ) -> None:
         """
@@ -23,15 +24,22 @@ class FastAPIMailer(AbstractMailer):
 
         Args:
             subject (str): The subject of the email.
-            recipients (List[EmailStr]): List of recipient email addresses.
+            recipients (list[str]): List of recipient email addresses.
             template_name (str): Name of the Jinja2 template file.
-            template_data (dict): Context data to render inside the template.
-            subtype (MessageType, optional): Email content type (html or plain). Defaults to html.
+            template_data (BaseModel | dict): Context data to render inside the template.
+            subtype (str, optional): Email content type (html or plain). Defaults to html.
         """
+        # Handle both BaseModel and dict types
+        template_body = (
+            template_data
+            if isinstance(template_data, dict)
+            else template_data.model_dump()
+        )
+
         message = MessageSchema(
             subject=subject,
             recipients=recipients,
-            template_body=template_data.model_dump(),
+            template_body=template_body,
             subtype=subtype,
         )
         await self._mailer.send_message(message, template_name=template_name)
@@ -39,7 +47,7 @@ class FastAPIMailer(AbstractMailer):
     async def send_with_attachments(
         self,
         subject: str,
-        recipients: list[EmailStr],
+        recipients: list[str],
         body_text: str,
         file_paths: list[Path],
         subtype: str = "plain",

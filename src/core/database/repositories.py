@@ -28,7 +28,7 @@ class BaseRepository(Generic[T]):
             raise NotImplementedError("Subclasses must define class variable 'model'")
 
     async def create(
-        self, session: AsyncSession, data: dict[str, Any], commit: bool = True
+        self, session: AsyncSession, data: dict[str, Any], commit: bool = False
     ) -> T:
         """Create a new record using the provided session."""
         try:
@@ -102,7 +102,7 @@ class BaseRepository(Generic[T]):
         self,
         session: AsyncSession,
         data: dict[str, Any],
-        commit: bool = True,
+        commit: bool = False,
         **filters: Any,
     ) -> T | None:
         """Update a record using the provided session."""
@@ -125,7 +125,7 @@ class BaseRepository(Generic[T]):
             raise
 
     async def delete(
-        self, session: AsyncSession, commit: bool = True, **filters: Any
+        self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
         """Delete a record using the provided session."""
         try:
@@ -218,7 +218,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         self,
         session: AsyncSession,
         data: dict[str, Any],
-        commit: bool = True,
+        commit: bool = False,
         **filters: Any,
     ) -> T | None:
         """Update a record where is_deleted flag is False, using the filters."""
@@ -226,7 +226,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         return await super().update(session, data, commit, **filters)
 
     async def delete(
-        self, session: AsyncSession, commit: bool = True, **filters: Any
+        self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
         """Soft delete a record, using the filters."""
         filters.setdefault("is_deleted", False)

@@ -103,6 +103,12 @@ class JWTConfig(BaseModel):
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(alias="REFRESH_TOKEN_EXPIRE_MINUTES")
+    VERIFICATION_TOKEN_EXPIRE_MINUTES: int = Field(
+        alias="VERIFICATION_TOKEN_EXPIRE_MINUTES"
+    )
+    RESET_PASSWORD_TOKEN_EXPIRE_MINUTES: int = Field(
+        alias="RESET_PASSWORD_TOKEN_EXPIRE_MINUTES"
+    )
 
     model_config = ConfigDict(extra="ignore")
 

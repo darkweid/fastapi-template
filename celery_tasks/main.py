@@ -1,4 +1,6 @@
 from celery import Celery
+from celery.schedules import crontab
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from src.main.config import config
 from loggers import get_logger
@@ -8,6 +10,10 @@ logger = get_logger(__name__)
 
 redis_url = config.redis.dsn
 rabbitmq_url = config.rabbitmq.dsn
+
+# Async DB engine and session
+engine = create_async_engine(config.postgres.dsn_async)
+local_async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 celery_app = Celery(__name__, broker=rabbitmq_url, backend=redis_url)
 
@@ -24,5 +30,16 @@ celery_app.conf.update(
 celery_app.conf.update(
     include=[
         "src.user.tasks",
+        "src.core.email_service.tasks",
     ],
+    timezone="UTC",
+    enable_utc=True,
 )
+
+celery_app.conf.beat_schedule = {
+    "cleanup_unverified_users_every_10_hours": {
+        "task": "cleanup_unverified_users",
+        # "schedule": crontab(minute=0, hour="*/10"),
+        "schedule": crontab(minute="*/1"),
+    },
+}

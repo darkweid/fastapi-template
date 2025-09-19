@@ -1,8 +1,23 @@
-<!DOCTYPE html>
-<html>
-  <body>
-    <h2>{{ title }}</h2>
-    <p>Click this link to verify:</p>
-    <a href="{{ link }}">{{ link }}</a>
-  </body>
-</html>
+{% extends 'base.html' %}
+
+{% block title %}{{ title }}{% endblock title %}
+
+{% block content %}
+
+{% set message %}
+Hi {{ name }},
+Thanks for signing up!
+
+To complete your registration, please confirm your email address by clicking the button below.
+
+<span style="color: grey; font-size: 14px">If you did not create an account, just ignore this email.</span>
+{% endset %}
+{% set button_text = "Confirm email" %}
+
+{% include 'components/_title.html' with context %}
+
+{% include 'components/_message.html' with context %}
+
+{% include 'components/_button.html' with context %}
+
+{% endblock content %}

@@ -1,0 +1,17 @@
+<tr>
+  <td style="padding-bottom: 24px">
+    <p style="
+        font-family: Quicksand, Arial, Helvetica, sans-serif;
+        line-height: 24px;
+        font-weight: 500;
+        font-style: normal;
+        font-size: 16px;
+        text-align: left;
+        color: #183153;
+        margin: 0;
+        {{ message_styles }}
+    ">
+        {{ message | replace("\n", "<br>") | safe }}
+    </p>
+  </td>
+</tr>
