@@ -10,6 +10,7 @@ from src.main.config import config
 from src.main.lifespan import lifespan
 from src.main.presentation import include_exceptions_handlers, include_routers
 from loggers import get_logger
+from src.main.route_logging import log_routes_summary
 
 logging.getLogger("uvicorn.access").disabled = True
 logger = get_logger(__name__)
@@ -41,17 +42,7 @@ def get_application() -> FastAPI:
 
     # Routers
     include_routers(application)
-
-    # Filter out FastAPI's built-in documentation routes using route name pattern
-    custom_endpoints = [
-        route
-        for route in application.routes
-        if not getattr(route, "name", "").startswith("openapi")
-        and getattr(route, "name", "") != "swagger_ui_html"
-        and getattr(route, "name", "") != "swagger_ui_redirect"
-        and getattr(route, "name", "") != "redoc_html"
-    ]
-    logger.info("Total endpoints: %s", len(custom_endpoints))
+    log_routes_summary(application, include_debug_list=config.app.DEBUG)
 
     # Sentry middleware for error tracking
     application.add_middleware(SentryAsgiMiddleware)
