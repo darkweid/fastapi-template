@@ -104,7 +104,7 @@ class RateLimiter:
         FastAPI-compatible call method that applies rate limiting.
 
         Raises:
-            HTTPException 429 if limit is exceeded
+            HTTPException 429 if the limit is exceeded
         """
         if not FastAPILimiter.is_initialized():
             raise RuntimeError("FastAPILimiter must be initialized before use.")
@@ -120,3 +120,6 @@ class RateLimiter:
                 f"[RateLimiter] Limit exceeded for key: {key}, will retry after {pexpire}ms"
             )
             await self.callback(request, response, pexpire)
+
+        # Explicitly return None to ensure FastAPI continues to the next dependency
+        return None

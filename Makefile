@@ -76,7 +76,7 @@ migration:
 	if [ -z "$$MSG" ]; then \
 	  echo "Migration message cannot be empty"; exit 1; \
 	fi; \
-	$(DOCKER_COMPOSE_EXEC) $(ELD_CONTAINER) alembic revision --autogenerate --message "$$MSG"
+	$(DOCKER_COMPOSE_EXEC) $(APP_CONTAINER) alembic revision --autogenerate --message "$$MSG"
 
 # Alembic: Apply migrations
 .PHONY: migrate

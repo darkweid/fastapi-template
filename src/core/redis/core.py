@@ -3,7 +3,6 @@ import logging
 from fastapi import FastAPI
 from redis import asyncio as redis
 
-from src.main.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +25,3 @@ def get_redis_pool(app: FastAPI) -> redis.Redis:
         raise RuntimeError("Redis Pool does not found in app.state")
 
     return redis.Redis(connection_pool=pool)
-
-
-redis_client = redis.Redis(
-    host=config.redis.REDIS_HOST,
-    port=config.redis.REDIS_PORT,
-    password=config.redis.REDIS_PASSWORD,
-    db=config.redis.REDIS_CELERY_DATABASE,
-    decode_responses=True,
-)

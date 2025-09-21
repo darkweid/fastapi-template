@@ -1,7 +1,9 @@
-from typing import TypeVar
+from typing import Any, TypeVar, cast
+from collections.abc import Callable, Awaitable
 
-from fastapi import Request, FastAPI
+from fastapi import Request
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from src.core.errors.exceptions import (
     CoreException,
@@ -9,126 +11,228 @@ from src.core.errors.exceptions import (
     InstanceAlreadyExistsException,
     InstanceNotFoundException,
     InstanceProcessingException,
-    UnauthorizedException,
-    AccessForbiddenException,
-    NotAcceptableException,
-    PermissionDeniedException,
 )
+from loggers import get_logger
 
-T = TypeVar("T", bound=CoreException)
+response_logger = get_logger("app.request.4xxresponse", plain_format=True)
 
-# Error configuration mapping
-ERROR_CONFIG: dict[type[CoreException], tuple[int, str]] = {
-    # Base exception
-    CoreException: (400, "Unknown server error"),
-    # Specific exceptions
-    InstanceNotFoundException: (404, "Instance not found"),
-    InstanceAlreadyExistsException: (409, "Instance already exists"),
-    InstanceProcessingException: (400, "Instance processing error"),
-    FilteringError: (400, "Filtering error"),
-    UnauthorizedException: (401, "Unauthorized"),
-    AccessForbiddenException: (403, "Forbidden"),
-    NotAcceptableException: (406, "Not Acceptable"),
-    PermissionDeniedException: (423, "Permission Denied"),
-}
+# Type for exception handler
+ExcType = TypeVar("ExcType", bound=Exception)
+HandlerCallable = Callable[[Request, Exception], Awaitable[Response]]
 
 
-def create_exception_handler(
-    exception_class: type[T], status_code: int, error_message: str
-) -> type:
+def as_exception_handler(handler: Any) -> HandlerCallable:
     """
-    Factory function to create exception handlers.
+    Convert a handler class instance to a compatible exception handler callable.
+    This helps mypy understand the correct typing for FastAPI exception handlers.
 
     Args:
-        exception_class: The exception class this handler will handle
-        status_code: HTTP status code to return
-        error_message: Human-readable error message
+        handler: An instance of an exception handler class with __call__ method
 
     Returns:
-        A new exception handler class
+        A callable with the correct type signature for FastAPI exception handlers
     """
-
-    class ExceptionHandler:
-        async def __call__(self, request: Request, exc: T) -> JSONResponse:
-            return JSONResponse(
-                status_code=status_code,
-                content={"error": error_message, "detail": exc.message},
-            )
-
-    # Set a descriptive name for better debugging
-    ExceptionHandler.__name__ = f"{exception_class.__name__}Handler"
-
-    return ExceptionHandler
+    return cast(HandlerCallable, handler.__call__)
 
 
-def generate_error_response(exc: CoreException) -> JSONResponse:
+def format_error_response(error_type: str, message: str | None) -> dict[str, Any]:
     """
-    Generate a JSON response for an exception without needing a handler class.
+    Format error response content for JSONResponse
 
     Args:
-        exc: The exception to handle
+        error_type: Type of error (e.g., "Unauthorized", "Instance not found")
+        message: Detailed error message
 
     Returns:
-        JSONResponse with appropriate status code and error details
+        Dictionary with error information
     """
-    exc_class = exc.__class__
-    status_code, error_message = ERROR_CONFIG.get(
-        exc_class, ERROR_CONFIG[CoreException]
-    )
-
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": error_message, "detail": exc.message},
-    )
+    return {
+        "error": error_type,
+        "message": message or "No additional details available",
+    }
 
 
-def register_exception_handlers(app: FastAPI) -> None:
+def format_log_message(
+    request: Request,
+    error_type: str,
+    message: str | None,
+    additional_info: dict[str, Any] | None = None,
+    include_request_path: bool = False,
+) -> str:
     """
-    Register all exception handlers with a FastAPI app.
+    Format error message for logging
 
     Args:
-        app: The FastAPI application instance
+        request: FastAPI Request object
+        error_type: Type of error
+        message: Error message
+        additional_info: Additional context information for logs only (not shown to clients)
+        include_request_path: Include request path and method in the log message
+
+    Returns:
+        Formatted log message
     """
-    for exception_class, (status_code, error_message) in ERROR_CONFIG.items():
-        handler_class = create_exception_handler(
-            exception_class, status_code, error_message
+    # Normalize message text and length
+    raw_msg = message or "No additional details available"
+    msg = " ".join(raw_msg.split())
+    if len(msg) > 500:
+        msg = msg[:497] + "..."
+
+    # Safely capitalize an error type
+    et = (error_type or "").strip()
+    err = (et[:1].upper() + et[1:]) if et else "Error"
+
+    request_id = request.headers.get("x-request-id") or getattr(
+        getattr(request, "state", object()), "request_id", None
+    )
+
+    prefix = f"[{request_id}] " if request_id else ""
+    log_msg = f"{prefix}[{err}] {msg}"
+
+    if include_request_path:
+        endpoint = request.url.path
+        method = request.method
+        log_msg = f"{prefix}[{err}] {method} {endpoint} | {msg}"
+
+    if additional_info:
+        sensitive = {
+            "authorization",
+            "token",
+            "password",
+            "secret",
+            "api_key",
+            "api-key",
+        }
+
+        def mask(k: str, v: Any) -> str:
+            return "***" if k.lower() in sensitive else repr(v)
+
+        additional_str = ", ".join(
+            f"{k}={mask(k, additional_info[k])}" for k in sorted(additional_info)
         )
-        app.add_exception_handler(exception_class, handler_class().__call__)
+        log_msg = f"{log_msg} | Additional info: {additional_str}"
+
+    return log_msg
 
 
-# For backward compatibility, keep the individual handler classes
-CoreExceptionHandler = create_exception_handler(
-    CoreException, *ERROR_CONFIG[CoreException]
-)
+class CoreExceptionHandler:
+    async def __call__(self, request: Request, exc: CoreException) -> JSONResponse:
+        error_type = "Bad request"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.info(log_msg)
+        return JSONResponse(
+            status_code=400,
+            content=format_error_response(error_type, exc.message),
+        )
 
-InstanceNotFoundExceptionHandler = create_exception_handler(
-    InstanceNotFoundException, *ERROR_CONFIG[InstanceNotFoundException]
-)
 
-InstanceAlreadyExistsExceptionHandler = create_exception_handler(
-    InstanceAlreadyExistsException, *ERROR_CONFIG[InstanceAlreadyExistsException]
-)
+class InstanceNotFoundExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: InstanceNotFoundException
+    ) -> JSONResponse:
+        error_type = "Instance not found"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.info(log_msg)
+        return JSONResponse(
+            status_code=404,
+            content=format_error_response(error_type, exc.message),
+        )
 
-InstanceProcessingExceptionHandler = create_exception_handler(
-    InstanceProcessingException, *ERROR_CONFIG[InstanceProcessingException]
-)
 
-FilteringErrorHandler = create_exception_handler(
-    FilteringError, *ERROR_CONFIG[FilteringError]
-)
+class InstanceAlreadyExistsExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: InstanceAlreadyExistsException
+    ) -> JSONResponse:
+        error_type = "Instance already exists"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.info(log_msg)
+        return JSONResponse(
+            status_code=409,
+            content=format_error_response(error_type, exc.message),
+        )
 
-UnauthorizedExceptionHandler = create_exception_handler(
-    UnauthorizedException, *ERROR_CONFIG[UnauthorizedException]
-)
 
-AccessForbiddenExceptionHandler = create_exception_handler(
-    AccessForbiddenException, *ERROR_CONFIG[AccessForbiddenException]
-)
+class InstanceProcessingExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: InstanceProcessingException
+    ) -> JSONResponse:
+        error_type = "Instance processing error"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.info(log_msg)
+        return JSONResponse(
+            status_code=400,
+            content=format_error_response(error_type, exc.message),
+        )
 
-NotAcceptableExceptionHandler = create_exception_handler(
-    NotAcceptableException, *ERROR_CONFIG[NotAcceptableException]
-)
 
-PermissionDeniedExceptionHandler = create_exception_handler(
-    PermissionDeniedException, *ERROR_CONFIG[PermissionDeniedException]
-)
+class FilteringErrorHandler:
+    async def __call__(self, request: Request, exc: FilteringError) -> JSONResponse:
+        error_type = "Filtering error"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.warning(log_msg)
+        return JSONResponse(
+            status_code=400,
+            content=format_error_response(error_type, exc.message),
+        )
+
+
+class UnauthorizedExceptionHandler:
+    async def __call__(self, request: Request, exc: CoreException) -> JSONResponse:
+        error_type = "Unauthorized"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.warning(log_msg)
+        return JSONResponse(
+            status_code=401,
+            content=format_error_response(error_type, exc.message),
+        )
+
+
+class AccessForbiddenExceptionHandler:
+    async def __call__(self, request: Request, exc: CoreException) -> JSONResponse:
+        error_type = "Forbidden"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.warning(log_msg)
+        return JSONResponse(
+            status_code=403,
+            content=format_error_response(error_type, exc.message),
+        )
+
+
+class NotAcceptableExceptionHandler:
+    async def __call__(self, request: Request, exc: CoreException) -> JSONResponse:
+        error_type = "Not Acceptable"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.info(log_msg)
+        return JSONResponse(
+            status_code=406,
+            content=format_error_response(error_type, exc.message),
+        )
+
+
+class PermissionDeniedExceptionHandler:
+    async def __call__(self, request: Request, exc: CoreException) -> JSONResponse:
+        error_type = "Permission Denied"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.warning(log_msg)
+        return JSONResponse(
+            status_code=423,
+            content=format_error_response(error_type, exc.message),
+        )

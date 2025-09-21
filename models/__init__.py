@@ -6,3 +6,5 @@ table relationships effectively.
 """
 
 # Import all models here
+
+from src.user.models import User as User  # Re-export the User model explicitly

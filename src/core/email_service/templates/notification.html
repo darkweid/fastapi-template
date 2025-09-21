@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }}{% endblock title %}
+
+{% block content %}
+
+{% include 'components/_title.html' with context %}
+
+{% include 'components/_message.html' with context %}
+
+{% endblock content %}

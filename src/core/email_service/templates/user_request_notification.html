@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }}{% endblock title %}
+
+{% block content %}
+
+{% set message %}
+{% if is_approved %}
+Congratulations, {{ name }}!
+Your account has been <span style='font-weight: bold; color: #28a745;'>approved</span> and is now active on our platform.
+Now you can log in and start using our services.
+{% else %}
+Hello, {{ name }}.
+We regret to inform you that your account registration has been <span style='font-weight: bold; color: #dc3545;'>denied</span>.
+Reason: {{ reason }}.
+If you have any questions, please contact support.
+{% endif %}
+{% endset %}
+
+{% include 'components/_title.html' with context %}
+
+{% include 'components/_message.html' with context %}
+
+{% endblock content %}

@@ -2,9 +2,9 @@ from typing import Any, Generic, TypeVar, cast
 
 from fastapi_pagination import Page
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.strategy_options import _AbstractLoad
+from sqlalchemy.orm import Load
 
-from src.core.database.models import Base as SQLAlchemyBase
+from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.repositories import BaseRepository
 from src.core.schemas import Base as PydanticBase
 
@@ -32,7 +32,7 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
     async def get_single(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: list[Load] | None = None,
         **filters: Any,
     ) -> T | None:
         """Retrieve a single record matching the filters."""
@@ -42,7 +42,7 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
     async def get_list(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: list[Load] | None = None,
         **filters: Any,
     ) -> list[T]:
         """Retrieve a list of records matching the filters."""
@@ -51,7 +51,7 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
     async def get_paginated_list(
         self,
         session: AsyncSession,
-        eager: list[_AbstractLoad] | None = None,
+        eager: list[Load] | None = None,
         **filters: Any,
     ) -> Page[T]:
         """Retrieve a paginated list of records matching the filters."""

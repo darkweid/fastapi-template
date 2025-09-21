@@ -1,11 +1,17 @@
 import contextlib
 import os
 from pathlib import Path
+from typing import Any, cast
 
 from fastapi_mail import MessageType
-from pydantic import EmailStr, ValidationError, TypeAdapter, BaseModel
+from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
+from celery_tasks.types import CeleryTask
 from src.core.email_service.interfaces import AbstractMailer
+from src.core.email_service.tasks import (
+    send_email_task,
+    send_email_with_file_task,
+)
 from loggers import get_logger
 
 logger = get_logger(__name__)
@@ -22,7 +28,7 @@ class EmailService:
         subject: str,
         recipients: str | list[str],
         template_name: str,
-        template_body: BaseModel,
+        template_body: BaseModel | dict[str, Any],
         subtype: MessageType = MessageType.html,
     ) -> None:
         normalized = self._normalize_and_validate_recipients(recipients)
@@ -34,10 +40,58 @@ class EmailService:
                 template_body,
                 subtype.value,
             )
-            logger.info("Email '%s' sent to %s", template_name, normalized)
+            logger.debug("Email '%s' sent to %s", template_name, normalized)
         except Exception as e:
             logger.error("Failed to send template email: %s", e)
             raise
+
+    async def send_template_email_with_delay(
+        self,
+        subject: str,
+        recipients: str | list[str],
+        template_name: str,
+        template_body: BaseModel | dict[str, Any],
+        subtype: MessageType = MessageType.html,
+    ) -> None:
+        normalized = self._normalize_and_validate_recipients(recipients)
+        try:
+            # Handle both BaseModel and dict types
+            template_data = (
+                template_body
+                if isinstance(template_body, dict)
+                else template_body.model_dump()
+            )
+            task = cast(CeleryTask, send_email_task)
+            task.delay(
+                subject,
+                [str(e) for e in normalized],
+                template_name,
+                template_data,
+                subtype.value,
+            )
+            logger.debug("Email task queued for %s", normalized)
+        except Exception as e:
+            logger.error("Failed to queue template email task: %s", e)
+            raise
+
+    async def send_file_to_email_with_delay(
+        self,
+        subject: str,
+        recipients: str | list[str],
+        attachments: list[Path],
+        subtype: MessageType = MessageType.plain,
+    ) -> None:
+        validated_recipients = self._normalize_and_validate_recipients(recipients)
+
+        task = cast(CeleryTask, send_email_with_file_task)
+        task.delay(
+            subject,
+            [str(e) for e in validated_recipients],
+            [str(path) for path in attachments],
+            subtype.value,
+        )
+
+        logger.debug("Attachment email task queued for %s", validated_recipients)
 
     async def send_email_with_attachments(
         self,
@@ -57,7 +111,7 @@ class EmailService:
                 file_paths,
                 subtype.value,
             )
-            logger.info("Email with attachments sent to %s", validated_recipients)
+            logger.debug("Email with attachments sent to %s", validated_recipients)
 
         except Exception as e:
             logger.error("Failed to send email with attachments: %s", e)

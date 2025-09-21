@@ -4,7 +4,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 
 > **Note:** This project uses a simplified Repository Pattern to abstract data access. Unlike the full Domain-Driven Design (DDD) approach—which typically involves complex aggregate roots and domain entities—the repository implementation here serves as a straightforward abstraction layer to decouple business logic from persistence concerns without the additional overhead of DDD.
 >
-> This template uses a modular structure with core components and domain-specific folders (e.g., `user` and `admin`). The `core` folder contains common infrastructure (database connections, settings, middleware, models, and schemas) while domain modules provide placeholders for business logic and API endpoints.
+> This template uses a modular structure with core components and domain-specific folders (e.g., `user` and `admin`). The `core` folder contains common infrastructure (database connections, settings, middleware, models, and schemas). The `user` module is fully implemented with complete authentication, authorization, and profile management functionality, while the `admin` module provides placeholders for business logic and API endpoints.
 
 ---
 
@@ -26,7 +26,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 
 - **FastAPI & Asynchronous Endpoints:** Leverage the performance and ease-of-use of FastAPI for building modern APIs.
 - **Modular Architecture:** Organized codebase with a clear separation between core functionalities and domain-specific modules.
-- **Database Integration:** Asynchronous PostgreSQL+PostGis connectivity using SQLAlchemy for async operations.
+- **Database Integration:** Asynchronous PostgreSQL+PostGis connectivity using SQLAlchemy for async operations with Unit of Work pattern support for transaction management.
 - **Celery for Background Tasks:** Background job processing powered by Celery with RabbitMQ as the broker and Redis as the backend.
 - **Task Monitoring with Flower:** Monitor your Celery tasks in real time using Flower.
 - **Docker & Docker Compose:** Containerized setup for consistent development, testing, and production deployments.
@@ -37,6 +37,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 - **Error Handling:** Comprehensive exception handling with custom exception types and handlers.
 - **Rate Limiting:** Built-in rate limiting capabilities to protect your API endpoints.
 - **Testing Framework:** Ready-to-use testing structure for unit and integration tests.
+- **User Management System:** Complete user authentication, authorization, and profile management.
 
 ---
 
@@ -81,10 +82,13 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 │   │
 │   ├── core/                            # Core components shared across the application
 │   │   ├── database/                    # Database connection and ORM setup
-│   │   │   ├── database_async.py        # Async database setup
-│   │   │   ├── models.py                # Declarative Base and Mixins
-│   │   │   ├── redis.py                 # Redis connection utilities
-│   │   │   └── repositories.py          # Core data repositories
+│   │   │   ├── base.py                  # SQLAlchemy declarative base configuration
+│   │   │   ├── engine.py                # Async database engine setup
+│   │   │   ├── mixins.py                # Reusable model mixins (e.g., TimestampMixin, UUIDIDMixin)
+│   │   │   ├── repositories.py          # Generic repository pattern implementations
+│   │   │   ├── session.py               # Database session and dependency management
+│   │   │   ├── transactions.py          # Transaction management utilities
+│   │   │   └── uow.py                   # Unit of Work pattern implementation
 │   │   │
 │   │   ├── email_service/               # Email service functionality
 │   │   │   ├── config.py                # Email configuration
@@ -133,6 +137,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 │   │   ├── config.py                    # Application configuration settings
 │   │   ├── lifespan.py                  # Application lifecycle management
 │   │   ├── presentation.py              # API presentation layer
+│   │   ├── route_logging.py             # Utilite for logging routes summary
 │   │   └── web.py                       # FastAPI application setup
 │   │
 │   ├── system/                          # System-level functionality
@@ -140,6 +145,13 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 │   │
 │   └── user/                            # User functionality
 │       ├── auth/                        # Authentication logic for regular users
+│       │   ├── dependencies.py          # Authentication dependencies
+│       │   ├── permissions/             # Permission-based authorization
+│       │   ├── routers.py               # Authentication endpoints
+│       │   ├── schemas.py               # Authentication data schemas
+│       │   ├── security.py              # Token and security utilities
+│       │   ├── services/                # Authentication-related services
+│       │   └── usecases/                # Authentication use cases (login, register, etc.)
 │       ├── dependencies.py              # User dependencies
 │       ├── exceptions.py                # User-specific exceptions
 │       ├── models.py                    # User data models (ORM)
@@ -147,7 +159,8 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 │       ├── routers.py                   # User API endpoints
 │       ├── schemas.py                   # User Pydantic schemas
 │       ├── services.py                  # User business logic services
-│       └── tasks.py                     # Celery tasks for users
+│       ├── tasks.py                     # Celery tasks for users
+│       └── usecases/                    # User-related use cases
 │
 ├── tests/                               # Test suite
 │   └── email/                           # Tests for email functionality
@@ -177,6 +190,50 @@ A robust, production-ready FastAPI template designed to help you build scalable 
 
 ---
 
+## Core Architectural Patterns
+
+### Unit of Work (UoW) Pattern
+
+The template implements the **Unit of Work** pattern in `src/core/database/uow.py` to manage database transactions and repository access within a consistent boundary. The UoW pattern provides several benefits:
+
+- **Transaction Management**: Ensures that multiple database operations either all succeed or all fail together, maintaining data integrity.
+- **Repository Coordination**: Centralizes access to various repositories, allowing multiple data operations to be performed within a single transaction.
+- **Clean API Design**: Simplifies the application code by providing a consistent interface for transaction handling.
+
+The implementation includes:
+
+- **Abstract UnitOfWork**: Defines the contract with essential transaction operations (`commit`, `rollback`).
+- **SQLAlchemyUnitOfWork**: Concrete implementation using SQLAlchemy's AsyncSession for transaction handling.
+- **ApplicationUnitOfWork**: Application-specific implementation with repository factory methods.
+
+This pattern is particularly useful for complex business operations that span multiple repositories and require transactional integrity.
+
+### Main Module Architecture
+
+The **Main Module** (`src/main/`) serves as the application's foundation and orchestrates all other components. It follows a modular design that separates different aspects of application bootstrapping and configuration:
+
+- **Application Configuration** (`config.py`): Implements comprehensive configuration management using Pydantic settings. It defines configuration classes for all application components (database, Redis, RabbitMQ, JWT, etc.) and handles environment variable loading and validation.
+
+- **Application Lifecycle** (`lifespan.py`): Manages the application startup and shutdown events using FastAPI's lifespan context manager. It ensures proper initialization of resources (like Redis connections) at startup and their cleanup at shutdown.
+
+- **API Presentation** (`presentation.py`): Structures the API by organizing endpoints into logical domains with versioning support. It also registers custom exception handlers for consistent error responses throughout the application.
+
+- **Route Logging** (`route_logging.py`): Provides functionality for logging API route information. It analyzes registered routes, filters out documentation endpoints, and logs statistics about API endpoints categorized by HTTP methods and tags. This helps with debugging and monitoring.
+
+- **Application Setup** (`web.py`): Creates and configures the FastAPI instance with middleware (CORS, Sentry), exception handlers, and routers. It integrates the route logging functionality to provide insights into registered endpoints. It serves as the main entry point for the application.
+
+This architecture provides several benefits:
+
+- **Separation of Concerns**: Each file has a clear, distinct responsibility
+- **Modularity**: Easy to extend or modify specific aspects of the application
+- **Configuration Management**: Centralized and type-safe configuration
+- **Error Handling**: Consistent error responses across all endpoints
+- **Resource Management**: Proper initialization and cleanup of resources
+
+The main module is the central hub that connects domain-specific modules (like `user` and `admin`) with core infrastructure components, making it crucial for maintaining a clean architecture.
+
+---
+
 ## Requirements
 - Docker & Docker Compose
 ---
@@ -195,7 +252,7 @@ A robust, production-ready FastAPI template designed to help you build scalable 
   Acts as the scheduler for periodic tasks.
 
 - **Flower:**
-  Provides real-time monitoring for Celery tasks. Based on the official Flower image, it’s built to include your project code.
+  Provides real-time monitoring for Celery tasks. Based on the official Flower image, it's built to include your project code.
 
 - **Nginx:**
   Serves as a reverse proxy that routes external HTTP requests to the FastAPI application.
@@ -312,11 +369,12 @@ Other services (Celery Worker, Celery Beat, PostgreSQL, etc.) can be inspected u
 
 - **Database Migrations:**
 
-  - Create a new migration (replace `Your migration message` with an appropriate message):
+  - Create a new migration (with an appropriate message):
 
     ```bash
-    make migration message="Your migration message"
+    make migration
     ```
+    then enter the migration message when prompted.
 
   - Apply all migrations:
 
@@ -419,7 +477,23 @@ The CD pipeline (`.github/workflows/deploy.yml`) triggers automatically after su
   - **Performance Metrics:** Includes duration time and version information
   - **Quick Access:** Provides links to the GitHub pipeline for troubleshooting
 
-To use these pipelines for your project, configure the necessary secrets in your GitHub repository settings (SSH keys, server IP, Telegram tokens, etc.).
+#### Required GitHub Actions Secrets
+
+To use these pipelines for your project, you need to configure the following secrets in your GitHub repository settings:
+
+##### Server Access Secrets
+- **SSH_PRIVATE_KEY**: The private SSH key (in PEM format) that will be used to connect to your deployment server. Generate a dedicated deployment key for security.
+- **SERVER_IP**: The IP address of your deployment server.
+- **SSH_USER**: The SSH username used to connect to your deployment server, typically `root` or a user with sudo privileges.
+
+##### Notification Secrets
+- **ALERT_BOT_TOKEN**: Telegram Bot API token for sending deployment notifications. Create a bot through BotFather in Telegram to obtain this.
+- **ALERT_CHAT_ID**: The Telegram chat ID (user ID or channel ID) where deployment notifications should be sent. Use the Telegram Bot API to determine this.
+
+##### Application Environment
+Note that the actual application environment variables are not stored in GitHub Actions secrets but should be configured in the `.env` file on your deployment server.
+
+The deployment assumes that a properly configured `.env` file exists on the target server. The `check_env.py` script runs during deployment to verify the environment configuration.
 
 ---
 

@@ -1,0 +1,161 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html
+  lang="en"
+  xmlns="http://www.w3.org/1999/xhtml"
+  xmlns:v="urn:schemas-microsoft-com:vml"
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %} {% endblock title %}</title>
+    <style type="text/css">
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap");
+
+      table {
+        border-spacing: 0;
+        mso-cellspacing: 0;
+        mso-padding-alt: 0;
+      }
+
+      td {
+        padding: 0;
+      }
+
+      #outlook a {
+        padding: 0;
+      }
+
+      .team-text {
+        font-style: italic;
+        font-family: Quicksand, Arial, Helvetica, sans-serif;
+        color: #183153;
+        font-weight: 400;
+      }
+
+      @media screen and (max-width: 600px) {
+        p,
+        a {
+          font-size: 14px !important;
+        }
+      }
+    </style>
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;700&amp;display=swap"
+      rel="stylesheet"
+      type="text/css"
+    />
+  </head>
+  <body style="margin: 0; padding: 0; min-width: 100%; background-color: #f0f1f3">
+  {{ self }}
+    <center style="width: 100%; table-layout: fixed; background-color: #f0f1f3">
+      <div
+        style="
+          max-width: 1114px;
+          background-color: #f0f1f3;
+          padding: 50px 10px 31px 10px;
+        "
+      >
+        <table
+          border="0"
+          cellpadding="0"
+          cellspacing="0"
+          role="presentation"
+          style="
+            margin: 0;
+            font-family: Quicksand, Arial, Helvetica, sans-serif;
+            max-width: 546px;
+            background-color: #ffffff;
+            padding: 50px 50px 50px 50px;
+            border-radius: 24px 24px 24px 24px;
+            width: 100%;
+          "
+        >
+          <tr>
+            <td align="center" style="padding-bottom: 48px">
+              <table align="center">
+                <tr>
+                  <td>
+                    <img
+                      style="
+                        display: block;
+                        border: 0;
+                        height: auto;
+                        width: 100%;
+                        margin: 0;
+                        max-width: 140px;
+                      "
+                      width="140"
+                      height="45.714285714285715"
+                      alt=""
+                      src="{{ logo_url }}"
+                    />
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="left">
+              <table align="left">
+                {% block content %}
+                {% endblock content %}
+                <tr>
+                  <td>
+                    <p class="team-text">
+                      App Team
+{#                        ToDo: Place your team name here#}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+
+        <table
+          border="0"
+          cellpadding="0"
+          cellspacing="0"
+          role="presentation"
+          style="
+            margin: 0;
+            font-family: Quicksand, Arial, Helvetica, sans-serif;
+            max-width: 546px;
+            width: 100%;
+            padding-top: 31px;
+          "
+        >
+          <tr>
+            <td align="center">
+              <table align="center">
+                <tr>
+                  <td>
+                    <p
+                      style="
+                        font-family: Quicksand, Arial, Helvetica, sans-serif;
+                        line-height: 24px;
+                        font-weight: 500;
+                        font-style: normal;
+                        font-size: 16px;
+                        text-align: left;
+                        color: #183153;
+                        margin: 0;
+                      "
+                    >
+                      Copyright © {{ year }} App Name. All rights reserved.
+{#                        ToDo: Place your service name here#}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </center>
+  </body>
+</html>
