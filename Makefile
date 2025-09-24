@@ -132,6 +132,11 @@ check-lint:
 test:
 	pytest
 
+.PHONY: count-code-lines
+count-code-lines:
+	find . -path './.venv' -prune -o -type f -name '*.py' -print0 | xargs -0 wc -l | tail -1
+
+
 .PHONY: info
 info:
 	@echo "╔══════════════════════════════════════════════════════════╗"
@@ -157,6 +162,7 @@ info:
 	@echo "   • make restart            # Restart all running containers"
 	@echo "   • make deploy-dev         # Build, start containers with auto-reload and migrate DB"
 	@echo "   • make deploy-prod        # Production deployment sequence"
+	@echo "   • make count-code-lines   # Count code lines in Python files (exclude venv)"
 	@echo ""
 	@echo "🔧 Maintenance Commands:"
 	@echo "   • make clean              # Remove containers, volumes, orphans"

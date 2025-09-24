@@ -21,7 +21,7 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
     phone_number: Mapped[str] = mapped_column(String(20))
     password: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(
-        SQLEnum(UserRole), nullable=False, default=UserRole.ADMIN
+        SQLEnum(UserRole), nullable=False, default=UserRole.VIEWER
     )
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
