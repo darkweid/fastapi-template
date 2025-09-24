@@ -6,6 +6,7 @@ from sqlalchemy.orm import Load
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.repositories import BaseRepository
+from src.core.errors.exceptions import InstanceNotFoundException
 from src.core.schemas import Base as PydanticBase
 
 T = TypeVar("T", bound=SQLAlchemyBase)
@@ -15,7 +16,17 @@ RepoType = TypeVar("RepoType", bound=BaseRepository)  # type: ignore
 
 
 class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
-    """Base service with common CRUD operations using Pydantic models."""
+    """
+    Lightweight generic service that wraps a repository to perform straightforward CRUD operations.
+
+    Use this service only for simple, stateless cases without complicated custom business logic, cross-aggregate
+    coordination, or multi-step workflows. Write methods (create/update/delete) commit automatically,
+    so changes are persisted immediately.
+
+    For any non-trivial flows—transactional orchestration across multiple repositories, conditional
+    workflows, side effects (e.g., sending emails, cache updates, external API calls), or retries—
+    prefer the Unit of Work (UoW) pattern and dedicated use cases.
+    """
 
     def __init__(self, repository: RepoType):
         self.repository = repository
@@ -26,7 +37,9 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
         data: CreateSchema,
     ) -> T:
         """Create a new record."""
-        result = await self.repository.create(session=session, data=data.model_dump())
+        result = await self.repository.create(
+            session=session, data=data.model_dump(), commit=True
+        )
         return cast(T, result)
 
     async def get_single(
@@ -36,8 +49,18 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
         **filters: Any,
     ) -> T | None:
         """Retrieve a single record matching the filters."""
-
         return await self.repository.get_single(session=session, eager=eager, **filters)
+
+    async def get_single_or_404(
+        self, session: AsyncSession, eager: list[Load] | None = None, **filters: Any
+    ) -> T:
+        """Retrieve a single record matching the filters or raise a 404 error."""
+        obj = await self.repository.get_single(session=session, eager=eager, **filters)
+        if obj is None:
+            raise InstanceNotFoundException(
+                f"{self.repository.model.__name__} not found"
+            )
+        return cast(T, obj)
 
     async def get_list(
         self,
@@ -70,8 +93,9 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
             session=session,
             data=data.model_dump(exclude_unset=True),
             **filters,
+            commit=True,
         )
 
     async def delete(self, session: AsyncSession, **filters: Any) -> T | None:
         """Delete a record matching the filters."""
-        return await self.repository.delete(session=session, **filters)
+        return await self.repository.delete(session=session, **filters, commit=True)
