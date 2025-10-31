@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load
@@ -123,6 +123,17 @@ class BaseRepository(Generic[T]):
             query = query.order_by(order_by.desc())
 
         return await paginate(session, query)  # type: ignore
+
+    async def count(
+        self,
+        session: AsyncSession,
+        **filters: Any,
+    ) -> int:
+        """Count records matching the provided filters using the given session."""
+        query = select(func.count()).select_from(self.model).filter_by(**filters)
+        result = await session.execute(query)
+        count_value = result.scalar_one()
+        return int(count_value)
 
     async def update(
         self,
@@ -302,6 +313,15 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         with pagination."""
         filters.setdefault("is_deleted", False)
         return await super().get_paginated_list(session, eager=eager, **filters)
+
+    async def count(
+        self,
+        session: AsyncSession,
+        **filters: Any,
+    ) -> int:
+        """Count records matching the provided filters using the given session."""
+        filters.setdefault("is_deleted", False)
+        return await super().count(session, **filters)
 
     async def update(
         self,
