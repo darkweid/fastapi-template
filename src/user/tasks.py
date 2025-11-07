@@ -39,7 +39,7 @@ async def _soft_delete_unverified_users() -> int:
             )
             result = await session.execute(stmt)
             await session.commit()
-            deleted_count = result.rowcount or 0
+            deleted_count = result.rowcount if hasattr(result, "rowcount") else 0
             return deleted_count
         except (IntegrityError, SQLAlchemyError) as e:
             await session.rollback()

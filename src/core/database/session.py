@@ -10,14 +10,14 @@ from src.core.database.uow import get_uow, ApplicationUnitOfWork, RepositoryProt
 async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_session() -> AsyncGenerator[AsyncSession]:
     async with async_session() as session:
         yield session
 
 
 async def get_unit_of_work(
     session: AsyncSession = Depends(get_session),
-) -> AsyncGenerator[ApplicationUnitOfWork[RepositoryProtocol], None]:
+) -> AsyncGenerator[ApplicationUnitOfWork[RepositoryProtocol]]:
     """
     Dependency injection function that provides a Unit of Work instance.
 

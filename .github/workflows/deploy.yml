@@ -49,7 +49,7 @@ jobs:
         if: steps.deploy.outcome == 'success'
         run: |
           ssh -i ~/.ssh/id_deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} "docker restart nginx"
+            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} "docker restart template-nginx"
 
       # Check out the exact commit that triggered this workflow
       - name: Checkout correct commit

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @asynccontextmanager
-async def maybe_begin(session: AsyncSession) -> AsyncGenerator[None, None]:
+async def maybe_begin(session: AsyncSession) -> AsyncGenerator[None]:
     """
     Context manager that ensures an AsyncSession transaction is active.
 
@@ -24,7 +24,7 @@ async def maybe_begin(session: AsyncSession) -> AsyncGenerator[None, None]:
 
 
 @asynccontextmanager
-async def safe_begin(session: AsyncSession) -> AsyncGenerator[None, None]:
+async def safe_begin(session: AsyncSession) -> AsyncGenerator[None]:
     """
     Context manager that guarantees a transactional scope for ORM operations.
 

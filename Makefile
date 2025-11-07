@@ -28,7 +28,7 @@ run:
 .PHONY: run-dev
 run-dev:
 	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.override.yml up --build -d
-	docker restart nginx
+	docker restart template-nginx
 
 # Stop the Docker containers
 .PHONY: down
@@ -177,9 +177,9 @@ info:
 	@echo "   • make shell              # Enter bash inside the app container"
 	@echo "   • make logs               # Show all logs"
 	@echo "   • make logs-app           # Show logs from the app container"
-	@echo "   • make logs-celery        # Show logs from the celery_worker container"
-	@echo "   • make logs-celery-beat   # Show logs from the celery_beat container"
-	@echo "   • make logs-postgres      # Show logs from the postgres container"
+	@echo "   • make logs-celery        # Show logs from the template-celery-worker container"
+	@echo "   • make logs-celery-beat   # Show logs from the template-celery-beat container"
+	@echo "   • make logs-postgres      # Show logs from the template-postgres container"
 	@echo ""
 	@echo "⚙️  Task Queue:"
 	@echo "   • make celery-worker      # Start Celery worker"
