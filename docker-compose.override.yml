@@ -5,14 +5,21 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.dev
-    image: app-dev-image:latest
+    image: template-app-dev-image:latest
 
   app:
-    image: app-dev-image:latest
+    container_name: template-app
+    image: template-app-dev-image:latest
     command: uvicorn src.main.web:app --host 0.0.0.0 --port ${APP_BACKEND_PORT} --reload
     volumes:
       - .:/app
       - /app/.venv
+
+  celery_worker:
+    image: template-app-dev-image:latest
+
+  celery_beat:
+    image: template-app-dev-image:latest
 
   nginx:
     volumes:

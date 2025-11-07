@@ -271,6 +271,7 @@ This project is entirely containerized and must be deployed using Docker Compose
 
 ### Prerequisites
 
+- **Python 3.13:** Required for running local scripts, tests, and pre-commit hooks outside Docker. All containers and CI pipelines target Python 3.13.
 - **Docker:** [Install Docker](https://docs.docker.com/get-docker/)
 - **Docker Compose:** [Install Docker Compose](https://docs.docker.com/compose/install/)
 

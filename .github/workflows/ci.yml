@@ -12,61 +12,56 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
+          cache: 'pip'                     # built-in pip cache
+          cache-dependency-path: |
+            requirements.txt
+            requirements-*.txt
 
-      - name: Cache virtualenv
-        uses: actions/cache@v3
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            venv-${{ runner.os }}-
-
-      - name: Set up virtualenv and install dependencies
+      - name: Create venv and install deps
+        shell: bash
         run: |
           python -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/pip install -r requirements.txt
 
       - name: Create .env file from .env.example
-        run: |
-          cp .env.example .env
+        run: cp .env.example .env
 
       - name: Cache pre-commit
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            pre-commit-${{ runner.os }}-
+          restore-keys: pre-commit-${{ runner.os }}-
 
       - name: Run linter
+        shell: bash
         run: |
-          source .venv/bin/activate
+          export PATH="$PWD/.venv/bin:$PATH"
           make check-lint
 
       - name: Check migration HEADs
         run: |
-          source .venv/bin/activate
           export PYTHONPATH=$(pwd)
           echo "--- Alembic heads ---"
-          alembic heads
-          HEADS_COUNT=$(alembic heads | wc -l)
+          ./.venv/bin/alembic heads
+          HEADS_COUNT=$(.venv/bin/alembic heads | wc -l)
           if [ "$HEADS_COUNT" -gt 1 ]; then
             echo "❌ ERROR: Multiple Alembic heads detected ($HEADS_COUNT)."
-            echo "Run 'alembic heads' locally and resolve with 'alembic merge ...'"
             exit 1
           else
             echo "✅ OK: Only one Alembic head found."
           fi
 
       - name: Run unit tests
+        shell: bash
         run: |
-          source .venv/bin/activate
+          export PATH="$PWD/.venv/bin:$PATH"
           make test
