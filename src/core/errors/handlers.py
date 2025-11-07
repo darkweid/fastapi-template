@@ -233,6 +233,6 @@ class PermissionDeniedExceptionHandler:
         )
         response_logger.warning(log_msg)
         return JSONResponse(
-            status_code=423,
+            status_code=403,
             content=format_error_response(error_type, exc.message),
         )
