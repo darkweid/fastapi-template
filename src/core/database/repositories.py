@@ -1,10 +1,11 @@
 from datetime import datetime
-from typing import TypeVar, Generic, Any
+from typing import TypeVar, Generic, Any, cast
 from collections.abc import Sequence
 
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import select, or_, func
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load
@@ -77,7 +78,16 @@ class BaseRepository(Generic[T]):
         if eager:
             query = query.options(*eager)
         if for_update:
-            query = query.with_for_update()
+            # Limit lock scope to this table to avoid Postgres outer-join restriction
+            table = getattr(self.model, "__table__")
+            pk_columns = tuple(
+                cast("ColumnElement[Any]", column)
+                for column in table.primary_key.columns
+            )
+            if pk_columns:
+                query = query.with_for_update(of=pk_columns)
+            else:
+                query = query.with_for_update(of=(table,))
 
         result = await session.execute(query)
         return result.unique().scalars().first()
@@ -94,7 +104,16 @@ class BaseRepository(Generic[T]):
         if eager:
             query = query.options(*eager)
         if for_update:
-            query = query.with_for_update()
+            # Limit lock scope to this table to avoid Postgres outer-join restriction
+            table = getattr(self.model, "__table__")
+            pk_columns = tuple(
+                cast("ColumnElement[Any]", column)
+                for column in table.primary_key.columns
+            )
+            if pk_columns:
+                query = query.with_for_update(of=pk_columns)
+            else:
+                query = query.with_for_update(of=(table,))
 
         order_by = getattr(self.model, "created_at", None)
         if order_by is None:
