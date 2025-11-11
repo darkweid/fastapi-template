@@ -23,3 +23,4 @@ pytz
 redis
 sentry-sdk
 sqlalchemy
+uuid6
