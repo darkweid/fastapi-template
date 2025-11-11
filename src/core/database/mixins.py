@@ -2,6 +2,8 @@ import uuid
 from datetime import datetime
 from uuid import UUID as PY_UUID
 
+import uuid6
+
 from sqlalchemy import func, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,13 +29,33 @@ class TimestampMixin:
 class UUIDIDMixin:
     """
     Add a UUID column to a mapped class
-    id: UUID
+    id: UUID v4
     """
 
     __abstract__ = True
 
     id: Mapped[PY_UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+
+class UUID7IDMixin:
+    """
+    Add a UUID v7 column to a mapped class
+    id: UUID v7 (time-ordered)
+
+    Advantages:
+    - Monotonic ordering keeps inserts clustered and improves index locality.
+    - Still globally unique across nodes without coordination.
+
+    Disadvantages:
+    - Embeds a timestamp, which may leak limited creation timing information.
+    """
+
+    __abstract__ = True
+
+    id: Mapped[PY_UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid6.uuid7
     )
 
 
