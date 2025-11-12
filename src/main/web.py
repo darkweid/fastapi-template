@@ -2,7 +2,6 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 from src.core.middleware import register_middlewares
@@ -46,8 +45,6 @@ def get_application() -> FastAPI:
 
     # Sentry middleware for error tracking
     application.add_middleware(SentryAsgiMiddleware)
-
-    add_pagination(application)
 
     return application
 

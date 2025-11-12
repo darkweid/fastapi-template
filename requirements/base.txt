@@ -6,7 +6,6 @@ asyncpg
 celery
 email-validator
 fastapi
-fastapi-pagination
 fastapi_mail
 flower
 GeoAlchemy2

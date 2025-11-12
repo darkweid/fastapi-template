@@ -5,7 +5,6 @@ from typing import Any, cast
 from collections.abc import Iterable
 
 from fastapi import Response
-from fastapi_pagination import Page
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.redis.cache.backend.interface import CacheBackend
@@ -13,6 +12,7 @@ from src.core.redis.cache.coder.interface import Coder
 from src.core.redis.cache.manager.interface import AbstractCacheManager, R
 from src.core.redis.cache.tags import CacheTags
 from src.core.schemas import Base as PydanticBase
+from src.core.pagination import PaginatedResponse
 from loggers import get_logger
 
 logger = get_logger(__name__)
@@ -62,13 +62,9 @@ class BaseCacheManager(AbstractCacheManager):
                 for key in vars(result)
                 if "id" in key.lower() and not key.startswith("_")
             }
-        elif (
-            isinstance(result, list)
-            or isinstance(result, set)
-            or isinstance(result, Page)
-        ):
+        elif isinstance(result, (list, set, PaginatedResponse)):
             # Extract items to process based on result type
-            if isinstance(result, Page):
+            if isinstance(result, PaginatedResponse):
                 items_to_process: Iterable[Any] = result.items
             else:
                 items_to_process = cast(Iterable[Any], result)
