@@ -1,6 +1,5 @@
 from typing import Any, Generic, TypeVar, cast
 
-from fastapi_pagination import Page
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load
 
@@ -8,6 +7,11 @@ from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.repositories import BaseRepository
 from src.core.errors.exceptions import InstanceNotFoundException
 from src.core.schemas import Base as PydanticBase
+from src.core.pagination import (
+    PaginatedResponse,
+    PaginationParams,
+    make_paginated_response,
+)
 
 T = TypeVar("T", bound=SQLAlchemyBase)
 CreateSchema = TypeVar("CreateSchema", bound=PydanticBase)
@@ -74,13 +78,19 @@ class BaseService(Generic[T, CreateSchema, UpdateSchema, RepoType]):
     async def get_paginated_list(
         self,
         session: AsyncSession,
+        pagination: PaginationParams,
         eager: list[Load] | None = None,
         **filters: Any,
-    ) -> Page[T]:
+    ) -> PaginatedResponse[T]:
         """Retrieve a paginated list of records matching the filters."""
-        return await self.repository.get_paginated_list(
-            session=session, eager=eager, **filters
+        items, total = await self.repository.get_paginated_list(
+            session=session,
+            page=pagination.page,
+            size=pagination.size,
+            eager=eager,
+            **filters,
         )
+        return make_paginated_response(items=items, total=total, pagination=pagination)
 
     async def update(
         self,

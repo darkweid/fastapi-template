@@ -2,8 +2,6 @@ from datetime import datetime
 from typing import TypeVar, Generic, Any, cast
 from collections.abc import Sequence
 
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import select, or_, func
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -127,10 +125,17 @@ class BaseRepository(Generic[T]):
     async def get_paginated_list(
         self,
         session: AsyncSession,
+        page: int,
+        size: int,
         eager: Sequence[Load] | None = None,
         **filters: Any,
-    ) -> Page[T]:
-        """Retrieve a paginated list of records using the provided session."""
+    ) -> tuple[list[T], int]:
+        """Retrieve a paginated list of records using limit/offset pagination."""
+        if page < 1:
+            raise ValueError("page must be greater than or equal to 1")
+        if size < 1:
+            raise ValueError("size must be greater than or equal to 1")
+
         query = select(self.model).filter_by(**filters)
         if eager:
             query = query.options(*eager)
@@ -141,7 +146,17 @@ class BaseRepository(Generic[T]):
         if order_by is not None:
             query = query.order_by(order_by.desc())
 
-        return await paginate(session, query)  # type: ignore
+        offset = (page - 1) * size
+        query = query.offset(offset).limit(size)
+
+        result = await session.execute(query)
+        items = list(result.unique().scalars().all())
+
+        count_query = select(func.count()).select_from(self.model).filter_by(**filters)
+        total_result = await session.execute(count_query)
+        total = int(total_result.scalar_one())
+
+        return items, total
 
     async def count(
         self,
@@ -325,13 +340,17 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def get_paginated_list(
         self,
         session: AsyncSession,
+        page: int,
+        size: int,
         eager: Sequence[Load] | None = None,
         **filters: Any,
-    ) -> Page[T]:
+    ) -> tuple[list[T], int]:
         """Retrieve a list of records where is_deleted flag is False, using the filters,
         with pagination."""
         filters.setdefault("is_deleted", False)
-        return await super().get_paginated_list(session, eager=eager, **filters)
+        return await super().get_paginated_list(
+            session, page=page, size=size, eager=eager, **filters
+        )
 
     async def count(
         self,
