@@ -1,12 +1,11 @@
 from contextlib import AsyncExitStack
-from typing import Any, TypeVar, Self
+from typing import Any, Self, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.repositories import BaseRepository
 from src.core.database.transactions import safe_begin
 from src.core.database.uow.abstract import R, UnitOfWork
-
 
 # Type variable for repository instances
 RepositoryInstance = TypeVar("RepositoryInstance", bound=BaseRepository[Any])

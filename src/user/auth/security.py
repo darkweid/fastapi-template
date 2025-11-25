@@ -4,15 +4,14 @@ from uuid import uuid4
 
 import jwt
 
-from src.user.auth.jwt_payload_schema import JWTPayload
-
 from src.core.redis.client import redis_client
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
+from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.token_helpers import (
-    validate_token_structure,
-    validate_token_family,
     execute_token_rotation,
+    validate_token_family,
+    validate_token_structure,
 )
 
 

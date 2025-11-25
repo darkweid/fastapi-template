@@ -1,12 +1,12 @@
-from typing import Annotated, cast, Any
 from collections.abc import Awaitable, Callable
+from typing import Annotated, Any, cast
 
-import redis.exceptions as redisExc
 from fastapi import Request, Response
 from pydantic import Field
+import redis.exceptions as redisExc
 
-from src.core.limiter import FastAPILimiter
 from loggers import get_logger
+from src.core.limiter import FastAPILimiter
 
 logger = get_logger(__name__)
 

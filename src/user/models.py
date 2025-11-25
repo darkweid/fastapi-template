@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, Enum as SQLEnum, Index, text
+from sqlalchemy import Boolean, Enum as SQLEnum, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from src.core.database.base import Base
@@ -13,6 +13,20 @@ from src.user.enums import UserRole
 
 class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "users"
+    __table_args__ = (
+        Index(
+            "uq_users_email_active_not_deleted",
+            "email",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+        Index(
+            "uq_users_username_not_deleted",
+            "username",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
 
     first_name: Mapped[str] = mapped_column(String(50))
     last_name: Mapped[str] = mapped_column(String(50))
@@ -28,21 +42,6 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
 
     """relationships"""
     # Add relationships here
-
-    __table_args__ = (
-        Index(
-            "uq_users_email_active_not_deleted",
-            "email",
-            unique=True,
-            postgresql_where=text("is_deleted = false"),
-        ),
-        Index(
-            "uq_users_username_not_deleted",
-            "username",
-            unique=True,
-            postgresql_where=text("is_deleted = false"),
-        ),
-    )
 
     @validates("password")
     def validate_password(self, _: str, value: str) -> str:

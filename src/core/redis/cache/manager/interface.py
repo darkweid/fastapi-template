@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import TypeVar
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from fastapi import Response
 

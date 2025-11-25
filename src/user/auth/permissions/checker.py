@@ -1,14 +1,15 @@
-from typing import Annotated
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import Depends
+
 from src.core.errors.exceptions import (
     AccessForbiddenException,
     PermissionDeniedException,
 )
 from src.user.auth.dependencies import get_current_user
-from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
 from src.user.auth.permissions.enum import Permission
+from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
 from src.user.models import User
 
 

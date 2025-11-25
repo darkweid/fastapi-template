@@ -1,10 +1,9 @@
 import asyncio
+from collections.abc import Awaitable, Callable
+from functools import wraps
 import inspect
 import time
-from functools import wraps
 from typing import Any, TypeVar, cast
-from collections.abc import Awaitable, Callable
-
 
 from loggers import get_logger
 

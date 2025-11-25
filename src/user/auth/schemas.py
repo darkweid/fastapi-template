@@ -6,8 +6,8 @@ from src.core.schemas import (
     StrongPasswordValidationMixin,
 )
 from src.core.validations import (
-    PHONE_NUMBER_MIN_LENGTH,
     FULL_NAME_PATTERN,
+    PHONE_NUMBER_MIN_LENGTH,
     PHONE_NUMBER_REGEX,
     USERNAME_VALIDATOR,
 )

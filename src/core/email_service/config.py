@@ -1,5 +1,7 @@
 from pathlib import Path
+
 from fastapi_mail import ConnectionConfig
+
 from src.main.config import config
 
 email_config = config.broadcasting

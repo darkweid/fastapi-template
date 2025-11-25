@@ -2,17 +2,17 @@ from uuid import uuid4
 
 from fastapi import Depends
 
+from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import (
     InstanceProcessingException,
     PermissionDeniedException,
 )
-from src.core.utils.security import verify_password, mask_email
-from src.user.auth.schemas import LoginUserModel
 from src.core.schemas import TokenModel
+from src.core.utils.security import mask_email, verify_password
+from src.user.auth.schemas import LoginUserModel
 from src.user.auth.security import create_access_token, create_refresh_token
-from loggers import get_logger
 
 logger = get_logger(__name__)
 

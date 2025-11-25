@@ -1,15 +1,15 @@
-from asgiref.sync import async_to_sync
-from fastapi_mail import MessageType
 from pathlib import Path
 from typing import Any
 
+from asgiref.sync import async_to_sync
+from fastapi_mail import MessageType
+
 from celery_tasks.main import celery_app  # noqa: F401
 from celery_tasks.types import typed_shared_task
+from loggers import get_logger
 from src.core.email_service.config import get_fastapi_mail_config
 from src.core.email_service.fastapi_mailer import FastAPIMailer
 from src.core.email_service.interfaces import AbstractMailer
-from loggers import get_logger
-
 
 logger = get_logger(__name__)
 

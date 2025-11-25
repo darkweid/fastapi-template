@@ -5,8 +5,8 @@ This module contains utility functions for working with JWT tokens,
 including validation, family checking, and token invalidation.
 """
 
-from typing import cast
 from collections.abc import Awaitable
+from typing import cast
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.client import redis_client

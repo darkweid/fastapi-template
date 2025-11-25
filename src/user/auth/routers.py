@@ -3,20 +3,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 
 from src.core.limiter.depends import RateLimiter
-from src.core.schemas import SuccessResponse
+from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_user_id_from_token,
 )
-from src.core.schemas import TokenModel
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     CreateUserModel,
-    ResendVerificationModel,
     LoginUserModel,
-    SendResetPasswordRequestModel,
+    ResendVerificationModel,
     ResetPasswordModel,
+    SendResetPasswordRequestModel,
 )
 from src.user.auth.usecases.get_access_by_refresh import (
     GetTokensByRefreshUserUseCase,
@@ -29,16 +28,16 @@ from src.user.auth.usecases.resend_verification import (
     get_send_verification_use_case,
 )
 from src.user.auth.usecases.reset_password_confirm import (
-    get_reset_password_confirm_use_case,
     ResetPasswordConfirmUseCase,
+    get_reset_password_confirm_use_case,
 )
 from src.user.auth.usecases.reset_password_request import (
     ResetPasswordRequestUseCase,
     get_reset_password_request_use_case,
 )
 from src.user.auth.usecases.verify_email import (
-    get_verify_email_use_case,
     VerifyEmailUseCase,
+    get_verify_email_use_case,
 )
 from src.user.models import User
 from src.user.schemas import (

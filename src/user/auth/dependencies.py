@@ -1,8 +1,8 @@
 from typing import cast
 
-import jwt
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
+import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.session import get_session

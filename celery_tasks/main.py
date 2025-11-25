@@ -1,9 +1,9 @@
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.main.config import config
 from loggers import get_logger
+from src.main.config import config
 
 logger = get_logger(__name__)
 

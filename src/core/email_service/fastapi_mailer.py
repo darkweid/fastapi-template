@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from pydantic import BaseModel
 
 from src.core.email_service.interfaces import AbstractMailer

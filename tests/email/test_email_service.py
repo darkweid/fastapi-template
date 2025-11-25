@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.email_service.schemas import MailTemplateDataBody, MailTemplateBodyFile
+from src.core.email_service.schemas import MailTemplateBodyFile, MailTemplateDataBody
 from src.core.email_service.service import EmailService
 from tests.email.mocks import MockMailer
 

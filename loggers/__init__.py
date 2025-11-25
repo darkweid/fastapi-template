@@ -1,6 +1,6 @@
 import logging
+from logging import FileHandler, Logger, StreamHandler
 import os
-from logging import Logger, FileHandler, StreamHandler
 from typing import Any
 
 from src.main.config import config

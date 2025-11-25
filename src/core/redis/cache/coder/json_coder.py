@@ -1,10 +1,10 @@
+from collections.abc import Callable
 import datetime
-import json
 from decimal import Decimal
+import json
 from typing import (
     Any,
 )
-from collections.abc import Callable
 
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
