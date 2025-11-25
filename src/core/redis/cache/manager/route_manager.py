@@ -145,8 +145,13 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                 local_tags = (
                     tags.copy()
                 )  # avoid mutating shared list across decorator calls
+                sanitized_kwargs = dict(kwargs)
+                sanitized_kwargs.pop(request_param.name, None)
+                sanitized_kwargs.pop(response_param.name, None)
 
-                filtered_kwargs = self._filter_arguments(func, *args, **kwargs)
+                filtered_kwargs = self._filter_arguments(
+                    func, *args, **sanitized_kwargs
+                )
                 # Convert to list[str] to match the expected parameter type
                 str_tags = [
                     str(tag) if isinstance(tag, CacheTags) else tag
