@@ -114,16 +114,12 @@ async def get_user_id_from_token(request: Request) -> str:
             "Authentication token not found",
         )
 
-    await verify_jti(token)
+    payload = await verify_jti(token)
     try:
-        payload = jwt.decode(
-            token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
-        )
-        payload_typed = cast(JWTPayload, payload)
-        identifier = payload_typed["sub"]
+        identifier = payload["sub"]
 
         return identifier
-    except (jwt.PyJWTError, KeyError):
+    except KeyError:
         raise UnauthorizedException(
             "Invalid or expired token",
         )
@@ -180,7 +176,7 @@ async def verify_jti(token: str) -> JWTPayload:
     except KeyError:
         raise UnauthorizedException("Invalid token structure")
 
-    # Fixed order: first check for reuse
+    # Check for reuse
     if mode == "refresh_token":
         used_key = f"used:{user_id}:{jti}"
         is_used = await redis_client.exists(used_key)
@@ -194,7 +190,7 @@ async def verify_jti(token: str) -> JWTPayload:
                 "Token reuse detected. All sessions invalidated."
             )
 
-        # Added: token family validation
+        # Token family validation
         family = payload_typed.get("family")
         if family:
             family_key = f"family:{user_id}:{family}"
