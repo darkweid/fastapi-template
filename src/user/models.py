@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, Enum as SQLEnum, Index, text
+from sqlalchemy import Boolean, Enum as SQLEnum, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from src.core.database.base import Base

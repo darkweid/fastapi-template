@@ -1,16 +1,16 @@
-from datetime import datetime
-from typing import TypeVar, Generic, Any, cast
 from collections.abc import Sequence
+from datetime import datetime
+from typing import Any, Generic, TypeVar, cast
 
-from sqlalchemy import select, or_, func
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load
+from sqlalchemy.sql.elements import ColumnElement
 
+from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.utils.datetime_utils import get_utc_now
-from loggers import get_logger
 
 logger = get_logger(__name__)
 

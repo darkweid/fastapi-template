@@ -1,12 +1,11 @@
-import uuid
 from datetime import datetime
+import uuid
 from uuid import UUID as PY_UUID
 
-import uuid6
-
-from sqlalchemy import func, DateTime, Integer
+from sqlalchemy import DateTime, Integer, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
+import uuid6
 
 
 class TimestampMixin:

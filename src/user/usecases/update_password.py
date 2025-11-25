@@ -2,11 +2,11 @@ from uuid import UUID
 
 from fastapi import Depends
 
+from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
-from loggers import get_logger
 from src.user.auth.schemas import UserNewPassword
 from src.user.auth.security import invalidate_all_user_sessions
 

@@ -14,16 +14,16 @@ from src.user.auth.dependencies import (
     get_current_user,
     get_user_id_from_token,
 )
-from src.user.auth.permissions.enum import Permission
 from src.user.auth.permissions.checker import require_permission
+from src.user.auth.permissions.enum import Permission
 from src.user.auth.routers import router as auth_router
+from src.user.auth.schemas import UserNewPassword
 from src.user.dependencies import get_user_service
 from src.user.models import User
 from src.user.schemas import (
-    UserSummaryViewModel,
     UserProfileViewModel,
+    UserSummaryViewModel,
 )
-from src.user.auth.schemas import UserNewPassword
 from src.user.services import UserService
 from src.user.usecases.update_password import (
     UpdateUserPasswordUseCase,

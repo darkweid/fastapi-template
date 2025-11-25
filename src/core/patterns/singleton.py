@@ -1,6 +1,6 @@
+from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, cast
-from collections.abc import Callable
 
 T = TypeVar("T")
 

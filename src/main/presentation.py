@@ -1,8 +1,5 @@
 from fastapi import APIRouter, FastAPI
 
-# Import routers here
-from src.user import routers as user_routers
-from src.system import routers as system_routers
 from src.core.errors.exceptions import (
     AccessForbiddenException,
     CoreException,
@@ -26,6 +23,10 @@ from src.core.errors.handlers import (
     UnauthorizedExceptionHandler,
     as_exception_handler,
 )
+from src.system import routers as system_routers
+
+# Import routers here
+from src.user import routers as user_routers
 
 
 def include_routers(app: FastAPI) -> None:

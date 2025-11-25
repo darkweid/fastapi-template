@@ -7,12 +7,12 @@ from fastapi_mail import MessageType
 from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
 from celery_tasks.types import CeleryTask
+from loggers import get_logger
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.tasks import (
     send_email_task,
     send_email_with_file_task,
 )
-from loggers import get_logger
 
 logger = get_logger(__name__)
 

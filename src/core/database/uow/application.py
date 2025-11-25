@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.repositories import BaseRepository
 from src.core.database.uow import SQLAlchemyUnitOfWork
-from src.core.database.uow.abstract import RepositoryProtocol, R
+from src.core.database.uow.abstract import R, RepositoryProtocol
 from src.core.database.uow.sqlalchemy import RepositoryInstance
 from src.user.repositories import UserRepository
 

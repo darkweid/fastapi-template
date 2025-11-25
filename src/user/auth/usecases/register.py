@@ -2,16 +2,16 @@ from fastapi import Depends
 from httpx import URL
 from redis.asyncio import Redis
 
+from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.email_service.dependencies import get_email_service
 from src.core.email_service.service import EmailService
 from src.core.redis.client import redis_client
 from src.core.utils.security import build_email_throttle_key
+from src.user.auth.schemas import CreateUserModel
 from src.user.auth.services.verification_notifier import VerificationNotifier
 from src.user.schemas import UserProfileViewModel
-from src.user.auth.schemas import CreateUserModel
-from loggers import get_logger
 
 logger = get_logger(__name__)
 

@@ -1,18 +1,18 @@
-import hashlib
+from collections.abc import Awaitable, Callable
 from functools import wraps
+import hashlib
 from types import FunctionType
 from typing import Any, cast
-from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from loggers import get_logger
 from src.core.database.base import Base
 from src.core.redis.cache.manager.base import BaseCacheManager
 from src.core.redis.cache.manager.interface import AbstractCacheManager, R
 from src.core.redis.cache.tags import CacheTags
-from loggers import get_logger
 
 logger = get_logger(__name__)
 

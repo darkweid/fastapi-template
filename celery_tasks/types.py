@@ -1,6 +1,7 @@
-from celery import shared_task
 from collections.abc import Callable
-from typing import Any, TypeVar, cast, Protocol, overload
+from typing import Any, Protocol, TypeVar, cast, overload
+
+from celery import shared_task
 
 from celery_tasks.main import celery_app  # noqa: F401
 

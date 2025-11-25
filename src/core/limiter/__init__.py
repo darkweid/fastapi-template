@@ -1,12 +1,12 @@
-from math import ceil
 from collections.abc import Awaitable, Callable
+from math import ceil
 
-import redis.asyncio as aredis
 from fastapi import HTTPException, Request, Response, status
+import redis.asyncio as aredis
 
+from loggers import get_logger
 from src.core.limiter.script import lua_script
 from src.main.config import config
-from loggers import get_logger
 
 logger = get_logger(__name__)
 
