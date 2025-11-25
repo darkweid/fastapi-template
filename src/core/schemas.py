@@ -19,10 +19,6 @@ class TokenModel(Base):
     refresh_token: str
 
 
-class TokenRefreshModel(Base):
-    access_token: str
-
-
 class EmailNormalizationMixin(BaseModel):
     @field_validator("email", mode="before", check_fields=False)
     @classmethod

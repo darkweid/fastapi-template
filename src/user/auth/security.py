@@ -4,25 +4,33 @@ from uuid import uuid4
 
 import jwt
 
-from src.user.auth.dependencies import JWTPayload
+from src.user.auth.jwt_payload_schema import JWTPayload
 
 from src.core.redis.client import redis_client
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
+from src.user.auth.token_helpers import (
+    validate_token_structure,
+    validate_token_family,
+    execute_token_rotation,
+)
 
 
-async def create_access_token(data: dict[str, Any]) -> str:
+async def create_access_token(
+    data: dict[str, Any], session_id: str | None = None
+) -> str:
     """
     Create a new JWT access token
 
     Args:
         data: Dictionary containing token data (must include 'sub' key with user ID)
-
+        session_id: Optional session ID for tracking multiple sessions per user
     Returns:
         str: Encoded JWT access token
     """
     jti = str(uuid4())
-    session_id = str(uuid4())
+    if session_id is None:
+        session_id = str(uuid4())
     expire = get_utc_now() + timedelta(minutes=config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     payload: JWTPayload = {
@@ -49,18 +57,26 @@ async def create_access_token(data: dict[str, Any]) -> str:
     return str(encoded_jwt)
 
 
-async def create_refresh_token(data: dict[str, Any]) -> str:
+async def create_refresh_token(
+    data: dict[str, Any], session_id: str | None = None, family: str | None = None
+) -> str:
     """
     Create a new JWT refresh token
 
     Args:
         data: Dictionary containing token data (must include 'sub' key with user ID)
+        session_id: Optional session ID for tracking multiple sessions per user
+        family: Optional family ID for tracking token lineage
 
     Returns:
         str: Encoded JWT refresh token
     """
     jti = str(uuid4())
-    session_id = str(uuid4())
+    if session_id is None:
+        session_id = str(uuid4())
+    if family is None:
+        family = str(uuid4())
+
     expire = get_utc_now() + timedelta(minutes=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES)
 
     payload: JWTPayload = {
@@ -69,6 +85,7 @@ async def create_refresh_token(data: dict[str, Any]) -> str:
         "mode": "refresh_token",
         "jti": jti,
         "session_id": session_id,
+        "family": family,
     }
 
     # Add any additional data
@@ -83,6 +100,74 @@ async def create_refresh_token(data: dict[str, Any]) -> str:
         jti,
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
+
+    # Store family under family:user_id:family_id (not session-specific)
+    await redis_client.set(
+        f"family:{data['sub']}:{family}",
+        "active",
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+    return str(encoded_jwt)
+
+
+async def rotate_refresh_token(old_payload: JWTPayload) -> str:
+    """
+    Rotate a refresh token by creating a new one while invalidating the old one.
+
+    This function implements the token rotation pattern for refresh tokens:
+    1. Validate token structure and extract the necessary fields
+    2. Check token family validity
+    3. Atomically invalidate the old token and mark it as used
+    4. Create a new token in the same family
+    5. Update the family expiration time
+
+    Args:
+        old_payload: The payload from the old refresh token
+
+    Returns:
+        str: A new refresh token
+
+    Raises:
+        UnauthorizedException: If the token is invalid, has been reused, or has other security issues
+    """
+
+    # Extract and validate token fields
+    user_id, old_session_id, old_jti, family_id = await validate_token_structure(
+        old_payload
+    )
+
+    await validate_token_family(user_id, family_id)
+
+    await execute_token_rotation(user_id, old_session_id, old_jti)
+
+    # Create a new refresh token with a new session_id but in the same family
+    jti = str(uuid4())
+    session_id = str(uuid4())
+    expire = get_utc_now() + timedelta(minutes=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES)
+
+    payload: JWTPayload = {
+        "sub": user_id,
+        "exp": int(expire.timestamp()),
+        "mode": "refresh_token",
+        "jti": jti,
+        "session_id": session_id,
+        "family": family_id,
+    }
+
+    encoded_jwt = jwt.encode(
+        payload, config.jwt.JWT_USER_SECRET_KEY, config.jwt.ALGORITHM
+    )
+
+    await redis_client.set(
+        f"refresh:{user_id}:{session_id}",
+        jti,
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+    # Update the family TTL (extend the family's lifetime)
+    family_key = f"family:{user_id}:{family_id}"
+    await redis_client.expire(family_key, config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
 
     return str(encoded_jwt)
 
@@ -143,19 +228,3 @@ def create_reset_password_token(data: dict[str, Any]) -> str:
     )
 
     return str(encoded_jwt)
-
-
-async def invalidate_all_user_sessions(user_id: str) -> None:
-    """
-    Invalidates all sessions for a given user
-    """
-    access_pattern = f"access:{user_id}:*"
-    refresh_pattern = f"refresh:{user_id}:*"
-
-    access_keys = await redis_client.keys(access_pattern)
-    refresh_keys = await redis_client.keys(refresh_pattern)
-
-    if access_keys:
-        await redis_client.delete(*access_keys)
-    if refresh_keys:
-        await redis_client.delete(*refresh_keys)

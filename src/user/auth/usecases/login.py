@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi import Depends
 
 from src.core.database.session import get_unit_of_work
@@ -60,10 +62,17 @@ class LoginUserUseCase:
                 raise PermissionDeniedException("User is blocked")
 
             token_data = {"sub": str(user.id)}
-            # Invalidating all other sessions can be here :)
+
+            session_id = str(uuid4())
+            family = str(uuid4())
+
             return TokenModel(
-                access_token=await create_access_token(token_data),
-                refresh_token=await create_refresh_token(token_data),
+                access_token=await create_access_token(
+                    token_data, session_id=session_id
+                ),
+                refresh_token=await create_refresh_token(
+                    token_data, session_id=session_id, family=family
+                ),
             )
 
 

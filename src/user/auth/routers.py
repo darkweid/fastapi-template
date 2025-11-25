@@ -9,7 +9,8 @@ from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_user_id_from_token,
 )
-from src.core.schemas import TokenModel, TokenRefreshModel
+from src.core.schemas import TokenModel
+from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     CreateUserModel,
     ResendVerificationModel,
@@ -17,7 +18,10 @@ from src.user.auth.schemas import (
     SendResetPasswordRequestModel,
     ResetPasswordModel,
 )
-from src.user.auth.security import create_access_token
+from src.user.auth.usecases.get_access_by_refresh import (
+    GetTokensByRefreshUserUseCase,
+    get_tokens_by_refresh_user_use_case,
+)
 from src.user.auth.usecases.login import LoginUserUseCase, get_login_user_use_case
 from src.user.auth.usecases.register import RegisterUseCase, get_register_use_case
 from src.user.auth.usecases.resend_verification import (
@@ -113,7 +117,7 @@ async def login_user(
 
 @router.post(
     "/login/refresh",
-    response_model=TokenRefreshModel,
+    response_model=TokenModel,
     dependencies=[
         Depends(  # IP-based rate limiting
             RateLimiter(
@@ -131,14 +135,19 @@ async def login_user(
     ],
 )
 async def get_access_by_refresh(
-    current_user: Annotated[User, Depends(get_access_by_refresh_token)],
-) -> TokenRefreshModel:
+    user_and_payload: Annotated[
+        tuple[User, JWTPayload], Depends(get_access_by_refresh_token)
+    ],
+    use_case: Annotated[
+        GetTokensByRefreshUserUseCase, Depends(get_tokens_by_refresh_user_use_case)
+    ],
+) -> TokenModel:
     """
     Refresh the access token using a valid refresh token.
     """
-    return TokenRefreshModel(
-        access_token=await create_access_token({"sub": str(current_user.id)})
-    )
+    current_user, old_payload = user_and_payload
+
+    return await use_case.execute(user=current_user, old_token_payload=old_payload)
 
 
 @router.post(

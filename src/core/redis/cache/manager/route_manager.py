@@ -178,7 +178,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                     cached = None
 
                 if cached is None:
-                    # or request.headers.get("Cache-Control") == "no-cache" Если всё же будем header'ы учитывать
+                    # Or use request.headers.get("Cache-Control") == "no-cache" if headers are considered later
                     logger.debug("Cache miss for key: %s", cache_key)
 
                     result = await func(*args, **kwargs)
