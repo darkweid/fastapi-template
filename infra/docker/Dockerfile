@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY requirements/prod.txt requirements/base.txt ./requirements/
+COPY infra/requirements/prod.txt infra/requirements/base.txt ./requirements/
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir --user -r requirements/prod.txt
 

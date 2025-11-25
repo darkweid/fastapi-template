@@ -5,8 +5,8 @@ services:
   app-builder:
     container_name: template-app-builder
     build:
-      context: .
-      dockerfile: docker/Dockerfile
+      context: ..
+      dockerfile: infra/docker/Dockerfile
     image: template-app-image:latest
     networks:
       - app-network
@@ -14,8 +14,8 @@ services:
   postgres:
     container_name: template-postgres
     build:
-      context: .
-      dockerfile: postgres/Dockerfile-postgis
+      context: ..
+      dockerfile: infra/postgres/Dockerfile-postgis
     image: template-postgres-postgis:18
     restart: always
     healthcheck:
@@ -43,7 +43,7 @@ services:
   app:
     container_name: template-app
     image: template-app-image:latest
-    command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8001 --worker-connections 1000 --keep-alive 10 src.main.web:app
+    command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
     restart: on-failure
     healthcheck:
       test: ["CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/health/"]
@@ -51,7 +51,7 @@ services:
       timeout: 5s
       retries: 5
     volumes:
-      - .:/app
+      - ..:/app
     ports:
       - "${APP_BACKEND_PORT}:${APP_BACKEND_PORT}"
     depends_on:
@@ -70,11 +70,11 @@ services:
   celery_worker:
     container_name: template-celery-worker
     image: template-app-image:latest
-    env_file: .env
+    env_file: ../.env
     command: python -m celery -A celery_tasks.main worker --pool=solo --loglevel=info -E
     restart: unless-stopped
     volumes:
-      - .:/app
+      - ..:/app
       - celery-state:/data
     depends_on:
       rabbitmq:
@@ -94,11 +94,11 @@ services:
   celery_beat:
     container_name: template-celery-beat
     image: template-app-image:latest
-    env_file: .env
+    env_file: ../.env
     command: python -m celery -A celery_tasks.main beat --loglevel=info
     restart: unless-stopped
     volumes:
-      - .:/app
+      - ..:/app
       - /tmp:/tmp
     depends_on:
       rabbitmq:
@@ -120,15 +120,15 @@ services:
     container_name: template-flower
     image: template-flower:latest
     build:
-      context: .
-      dockerfile: docker/Dockerfile
+      context: ..
+      dockerfile: infra/docker/Dockerfile
     restart: always
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:5555"]
       interval: 10s
       timeout: 5s
       retries: 3
-    env_file: .env
+    env_file: ../.env
     ports:
       - "5555:5555"
     command: celery -A celery_tasks.main flower --port=5555 --broker=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672//
@@ -150,9 +150,10 @@ services:
     image: nginx:latest
     restart: always
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/main.conf:/etc/nginx/conf.d/00-main.conf:ro
+      - ./nginx/app.conf:/etc/nginx/conf.d/app.conf:ro
     ports:
-      - "80:80"
+      - "8000:8000"
     depends_on:
       app:
         condition: service_healthy
@@ -168,7 +169,7 @@ services:
     container_name: template-redis
     image: 'redis:7.4'
     restart: unless-stopped
-    env_file: .env
+    env_file: ../.env
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -197,7 +198,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    env_file: .env
+    env_file: ../.env
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
