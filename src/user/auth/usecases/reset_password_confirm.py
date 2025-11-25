@@ -8,7 +8,7 @@ from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.main.config import config
 from src.user.auth.schemas import ResetPasswordModel
-from src.user.auth.security import invalidate_all_user_sessions
+from src.user.auth.token_helpers import invalidate_all_user_sessions
 
 logger = get_logger(__name__)
 

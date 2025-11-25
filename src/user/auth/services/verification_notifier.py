@@ -22,7 +22,7 @@ class VerificationNotifier:
         email_service: EmailService,
         redis_client: Redis | None = None,
         throttle_ttl_sec: int = 60,
-        verify_path: str = "v1/user/auth/verify",
+        verify_path: str = "v1/users/auth/verify",
     ) -> None:
         self.email_service = email_service
         self.redis_client = redis_client

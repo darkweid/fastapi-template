@@ -1,4 +1,4 @@
-from typing import Literal, NotRequired, TypedDict, cast
+from typing import cast
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
@@ -9,21 +9,9 @@ from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.client import redis_client
 from src.main.config import config
+from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.models import User
 from src.user.repositories import UserRepository
-
-
-class JWTPayload(TypedDict):
-    """Type definition for JWT token payload"""
-
-    sub: str  # User ID
-    exp: int  # Expiration timestamp
-    mode: Literal[
-        "access_token", "refresh_token", "verification_token", "reset_password_token"
-    ]
-    jti: NotRequired[str]  # JWT ID for token tracking
-    session_id: NotRequired[str]  # Session identifier
-
 
 access_token_header = APIKeyHeader(name="Authorization", scheme_name="access-token")
 refresh_token_header = APIKeyHeader(name="Authorization", scheme_name="refresh-token")
@@ -73,7 +61,7 @@ async def get_current_user(
 async def get_access_by_refresh_token(
     refresh_token: str = Security(refresh_token_header),
     session: AsyncSession = Depends(get_session),
-) -> User:
+) -> tuple[User, JWTPayload]:
     """
     Get the user from a refresh token for generating a new access token.
 
@@ -82,7 +70,7 @@ async def get_access_by_refresh_token(
         session: Database session
 
     Returns:
-        User: The authenticated user
+        tuple[User, JWTPayload]: The authenticated user and token payload
 
     Raises:
         UnauthorizedException: If authentication fails
@@ -108,7 +96,7 @@ async def get_access_by_refresh_token(
     if not user:
         raise credentials_exception
 
-    return user
+    return user, payload
 
 
 async def get_user_id_from_token(request: Request) -> str:
@@ -126,16 +114,12 @@ async def get_user_id_from_token(request: Request) -> str:
             "Authentication token not found",
         )
 
-    await verify_jti(token)
+    payload = await verify_jti(token)
     try:
-        payload = jwt.decode(
-            token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
-        )
-        payload_typed = cast(JWTPayload, payload)
-        identifier = payload_typed["sub"]
+        identifier = payload["sub"]
 
         return identifier
-    except (jwt.PyJWTError, KeyError):
+    except KeyError:
         raise UnauthorizedException(
             "Invalid or expired token",
         )
@@ -145,14 +129,29 @@ async def verify_jti(token: str) -> JWTPayload:
     """
     Verifies the JWT token's JTI (JWT ID) against the stored value in Redis.
 
+    This function is a central part of the token security system and performs
+    several important checks:
+
+    1. Validates the token signature and expiration
+    2. Extracts and validates required token fields
+    3. For refresh tokens:
+       - Checks if the token has been used before (reuse detection)
+       - Verifies that the token belongs to a valid token family
+    4. For all tokens:
+       - Verifies that the token's JTI matches the one stored in Redis
+
+    The function works closely with the token rotation mechanism to provide
+    robust protection against token theft and replay attacks.
+
     Args:
-        token: The JWT token to verify
+        token: The JWT token to verify (with or without 'Bearer ' prefix)
 
     Returns:
-        JWTPayload: The verified JWT payload
+        JWTPayload: The verified JWT payload with all claims
 
     Raises:
-        UnauthorizedException: If the token is invalid, expired, or has been invalidated
+        UnauthorizedException: If the token is invalid, expired, has been reused,
+                               belongs to an invalid family, or has been invalidated
     """
     if isinstance(token, str) and token.lower().startswith("bearer "):
         token = token[7:].strip()
@@ -177,13 +176,44 @@ async def verify_jti(token: str) -> JWTPayload:
     except KeyError:
         raise UnauthorizedException("Invalid token structure")
 
-    redis_key = f"{mode.replace('_token', '')}:{user_id}:{session_id}"
-    stored_jti = await redis_client.get(redis_key)
+    # Check for reuse
+    if mode == "refresh_token":
+        used_key = f"used:{user_id}:{jti}"
+        is_used = await redis_client.exists(used_key)
+
+        if is_used:
+            # Token reuse detected!
+            from src.user.auth.token_helpers import invalidate_all_user_sessions
+
+            await invalidate_all_user_sessions(user_id)
+            raise UnauthorizedException(
+                "Token reuse detected. All sessions invalidated."
+            )
+
+        # Token family validation
+        family = payload_typed.get("family")
+        if family:
+            family_key = f"family:{user_id}:{family}"
+            family_exists = await redis_client.exists(family_key)
+            if not family_exists:
+                from src.user.auth.token_helpers import invalidate_all_user_sessions
+
+                await invalidate_all_user_sessions(user_id)
+                raise UnauthorizedException(
+                    "Token family invalidated. All sessions terminated."
+                )
+
+    # Check active tokens
+    prefix = mode.replace("_token", "")
+    active_key = f"{prefix}:{user_id}:{session_id}"
+    stored_jti = await redis_client.get(active_key)
+
     stored_jti_str = (
         stored_jti.decode()
         if isinstance(stored_jti, (bytes, bytearray))
         else stored_jti
     )
+
     if not stored_jti or stored_jti_str != jti:
         raise UnauthorizedException(
             "Token invalidated or expired",

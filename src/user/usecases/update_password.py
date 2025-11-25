@@ -8,7 +8,7 @@ from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.user.auth.schemas import UserNewPassword
-from src.user.auth.security import invalidate_all_user_sessions
+from src.user.auth.token_helpers import invalidate_all_user_sessions
 
 logger = get_logger(__name__)
 

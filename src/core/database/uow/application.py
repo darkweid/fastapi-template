@@ -3,9 +3,8 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.repositories import BaseRepository
-from src.core.database.uow import SQLAlchemyUnitOfWork
 from src.core.database.uow.abstract import R, RepositoryProtocol
-from src.core.database.uow.sqlalchemy import RepositoryInstance
+from src.core.database.uow.sqlalchemy import RepositoryInstance, SQLAlchemyUnitOfWork
 from src.user.repositories import UserRepository
 
 
