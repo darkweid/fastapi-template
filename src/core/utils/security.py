@@ -44,7 +44,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-async def generate_otp() -> str:
+def generate_otp() -> str:
     """
     Generate a random OTP
     """

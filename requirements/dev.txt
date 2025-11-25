@@ -7,6 +7,7 @@ pre-commit
 # Testing dependencies
 pytest
 pytest-asyncio
+pytest-cov
 
 # Type stubs
 types-passlib

@@ -132,6 +132,10 @@ check-lint:
 test:
 	pytest
 
+.PHONY: check-coverage
+check-coverage:
+	pytest --cov --cov-report=term-missing
+
 .PHONY: count-code-lines
 count-code-lines:
 	find . -path './.venv' -prune -o -type f -name '*.py' -print0 | xargs -0 wc -l | tail -1
@@ -187,6 +191,7 @@ info:
 	@echo ""
 	@echo "🧪 Testing & Quality:"
 	@echo "   • make test               # Run all tests"
+	@echo "   • make check-coverage     # Check coverage report"
 	@echo "   • make lint               # Run linting on all files"
 	@echo "   • make check-lint         # Check linting during push"
 	@echo ""
