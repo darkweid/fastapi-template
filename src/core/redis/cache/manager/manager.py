@@ -60,7 +60,7 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
     @staticmethod
     async def _get_identity(
         session: AsyncSession,
-        model: Base,
+        model: type[Base],
         field: InstrumentedAttribute[Any] | str,
         **filters: Any,
     ) -> str | None:
@@ -87,7 +87,7 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
         ttl: int = 3600,
         tags: list[str] | list[CacheTags] | None = None,
         identity_field: InstrumentedAttribute[Any] | str | None = None,
-        identity_model: Base | None = None,
+        identity_model: type[Base] | None = None,
         **filters: Any,
     ) -> Callable[[Callable[..., Awaitable[R]]], Callable[..., Awaitable[R]]]:
         """
@@ -97,7 +97,7 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
             ttl (int): Time-to-live for the cache in seconds. Default is 3600 seconds.
             tags (list[str] | list[CacheTags] | None): List of tags associated with this cache entry.
             identity_field (InstrumentedAttribute | str | None): Field to identify the entity for tagging.
-            identity_model (Base | None): Model class to use for fetching the identity.
+            identity_model (type[Base] | None): Model class to use for fetching the identity.
             **filters: Additional filters to apply when fetching the identity.
 
         Returns:
