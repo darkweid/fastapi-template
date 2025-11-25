@@ -1,5 +1,42 @@
 # Architecture and Structure
 
+## Core Architectural Patterns
+
+### Unit of Work (UoW) Pattern
+`src/core/database/uow.py` keeps DB work transactional and coordinates repositories.
+
+- Transaction management: groups multiple DB operations to succeed or fail together.
+- Repository coordination: single transaction boundary for multiple repositories.
+- Clean API design: consistent interface (`commit`, `rollback`) for callers.
+
+Implementations:
+- `AbstractUnitOfWork`: contract.
+- `SQLAlchemyUnitOfWork`: AsyncSession-based implementation.
+- `ApplicationUnitOfWork`: app-specific factory wiring repositories.
+
+### Main Module Architecture
+`src/main/` wires the app and isolates bootstrapping concerns.
+- `config.py`: Pydantic settings for DB, Redis, RabbitMQ, JWT, etc.
+- `lifespan.py`: startup/shutdown lifecycle (init/cleanup external resources).
+- `presentation.py`: API assembly, versioning, exception handlers.
+- `route_logging.py`: logs routes grouped by method/tag for debugging.
+- `web.py`: FastAPI app factory with middleware, CORS, Sentry, routers.
+
+Benefits:
+- Separation of concerns per file.
+- Modularity and extendability.
+- Centralized configuration and consistent error handling.
+- Clear startup/shutdown ownership for resources.
+
+### Usecases vs Services
+- Services: keep simple, single-responsibility operations (e.g., one repo call, one external call, small validation).
+- Usecases: orchestrate flows that span multiple repositories/services, coordinate side effects, or enforce business rules across components. Also use when you need cross-service interactions (e.g., DB + cache + email) or transactional sequences. Usecases live under feature modules (e.g., `src/user/usecases/`) and encapsulate the flow, leaving low-level operations to services/repositories.
+
+### Repository Access
+- All DB work goes through repositories; no direct SQL in usecases/services/routers.
+- Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.
+- Keep repositories focused on data access; put orchestration and business logic in usecases/services.
+---
 ## Project Layout
 ```
 ├── infra/                               # Infrastructure and deployment assets
@@ -137,40 +174,3 @@
 ├── README.md                            # Project documentation
 └── pyproject.toml                       # Project and tooling configuration
 ```
-
-## Core Architectural Patterns
-
-### Unit of Work (UoW) Pattern
-`src/core/database/uow.py` keeps DB work transactional and coordinates repositories.
-
-- Transaction management: groups multiple DB operations to succeed or fail together.
-- Repository coordination: single transaction boundary for multiple repositories.
-- Clean API design: consistent interface (`commit`, `rollback`) for callers.
-
-Implementations:
-- `AbstractUnitOfWork`: contract.
-- `SQLAlchemyUnitOfWork`: AsyncSession-based implementation.
-- `ApplicationUnitOfWork`: app-specific factory wiring repositories.
-
-### Main Module Architecture
-`src/main/` wires the app and isolates bootstrapping concerns.
-- `config.py`: Pydantic settings for DB, Redis, RabbitMQ, JWT, etc.
-- `lifespan.py`: startup/shutdown lifecycle (init/cleanup external resources).
-- `presentation.py`: API assembly, versioning, exception handlers.
-- `route_logging.py`: logs routes grouped by method/tag for debugging.
-- `web.py`: FastAPI app factory with middleware, CORS, Sentry, routers.
-
-Benefits:
-- Separation of concerns per file.
-- Modularity and extendability.
-- Centralized configuration and consistent error handling.
-- Clear startup/shutdown ownership for resources.
-
-### Usecases vs Services
-- Services: keep simple, single-responsibility operations (e.g., one repo call, one external call, small validation).
-- Usecases: orchestrate flows that span multiple repositories/services, coordinate side effects, or enforce business rules across components. Also use when you need cross-service interactions (e.g., DB + cache + email) or transactional sequences. Usecases live under feature modules (e.g., `src/user/usecases/`) and encapsulate the flow, leaving low-level operations to services/repositories.
-
-### Repository Access
-- All DB work goes through repositories; no direct SQL in usecases/services/routers.
-- Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.
-- Keep repositories focused on data access; put orchestration and business logic in usecases/services.
