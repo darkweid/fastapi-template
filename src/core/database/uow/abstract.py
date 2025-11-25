@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar, ClassVar, Protocol
+from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
 
 class RepositoryProtocol(Protocol):

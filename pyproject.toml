@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "I",  # isort (import sorting)
+]
+extend-ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["celery_tasks", "loggers", "models", "src"]
+combine-as-imports = true
+force-sort-within-sections = true

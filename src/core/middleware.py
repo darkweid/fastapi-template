@@ -1,13 +1,13 @@
+from collections.abc import Awaitable, Callable
 import re
 import time
 import traceback
-from collections.abc import Callable, Awaitable
 
-import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+import sentry_sdk
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from starlette.responses import Response
 

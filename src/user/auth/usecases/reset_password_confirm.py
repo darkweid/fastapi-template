@@ -1,14 +1,14 @@
-import jwt
 from fastapi import Depends
+import jwt
 
+from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.main.config import config
-from src.user.auth.security import invalidate_all_user_sessions
 from src.user.auth.schemas import ResetPasswordModel
-from loggers import get_logger
+from src.user.auth.security import invalidate_all_user_sessions
 
 logger = get_logger(__name__)
 

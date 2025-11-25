@@ -6,12 +6,12 @@ from sqlalchemy.orm import Load
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.repositories import BaseRepository
 from src.core.errors.exceptions import InstanceNotFoundException
-from src.core.schemas import Base as PydanticBase
 from src.core.pagination import (
     PaginatedResponse,
     PaginationParams,
     make_paginated_response,
 )
+from src.core.schemas import Base as PydanticBase
 
 T = TypeVar("T", bound=SQLAlchemyBase)
 CreateSchema = TypeVar("CreateSchema", bound=PydanticBase)

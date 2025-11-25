@@ -4,12 +4,13 @@ from datetime import timedelta
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from celery_tasks.main import celery_app  # noqa: F401
+from celery_tasks.main import (
+    celery_app,  # noqa: F401
+    local_async_session,
+)
 from celery_tasks.types import typed_shared_task
-
-from src.core.utils.datetime_utils import get_utc_now
 from loggers import get_logger
-from celery_tasks.main import local_async_session
+from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
 

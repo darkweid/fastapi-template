@@ -1,10 +1,11 @@
+from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, cast
-from collections.abc import Callable, Awaitable
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from loggers import get_logger
 from src.core.errors.exceptions import (
     CoreException,
     FilteringError,
@@ -12,7 +13,6 @@ from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
 )
-from loggers import get_logger
 
 response_logger = get_logger("app.request.4xxresponse", plain_format=True)
 

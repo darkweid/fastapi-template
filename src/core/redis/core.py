@@ -3,7 +3,6 @@ import logging
 from fastapi import FastAPI
 from redis import asyncio as redis
 
-
 logger = logging.getLogger(__name__)
 
 

@@ -4,8 +4,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database.engine import engine
-from src.core.database.uow import get_uow, ApplicationUnitOfWork, RepositoryProtocol
-
+from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol, get_uow
 
 async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 
