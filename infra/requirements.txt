@@ -1,7 +1,7 @@
 # This file is a convenience wrapper for environment-specific requirements
 # To install dependencies for a specific environment:
-#   - Production: pip install -r requirements/prod.txt
-#   - Development: pip install -r requirements/dev.txt
+#   - Production: pip install -r infra/requirements/prod.txt
+#   - Development: pip install -r infra/requirements/dev.txt
 
 # By default, install development dependencies
 -r requirements/dev.txt

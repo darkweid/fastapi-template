@@ -1,5 +1,8 @@
 # Docker settings
-DOCKER_COMPOSE = docker compose
+COMPOSE_BASE = infra/docker-compose.yml
+COMPOSE_DEV = infra/docker-compose.override.yml
+DOCKER_COMPOSE = docker compose --env-file .env -f $(COMPOSE_BASE)
+DOCKER_COMPOSE_DEV = docker compose --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
 DOCKER_COMPOSE_EXEC = $(DOCKER_COMPOSE) exec
 
 # Container names
@@ -27,7 +30,7 @@ run:
 # Run Docker containers in development mode with auto-reload
 .PHONY: run-dev
 run-dev:
-	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.override.yml up --build -d
+	$(DOCKER_COMPOSE_DEV) up --build -d
 	docker restart template-nginx
 
 # Stop the Docker containers

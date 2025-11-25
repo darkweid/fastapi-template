@@ -8,9 +8,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy custom configuration and initialization scripts into the image
-COPY postgres/postgresql.conf /custom-config/postgresql.conf
-COPY postgres/setup-config.sh /docker-entrypoint-initdb.d/00-setup-config.sh
-COPY postgres/init-postgis.sh /docker-entrypoint-initdb.d/init-postgis.sh
+COPY infra/postgres/postgresql.conf /custom-config/postgresql.conf
+COPY infra/postgres/setup-config.sh /docker-entrypoint-initdb.d/00-setup-config.sh
+COPY infra/postgres/init-postgis.sh /docker-entrypoint-initdb.d/init-postgis.sh
 
 RUN chmod 0644 /custom-config/postgresql.conf \
     && chmod +x /docker-entrypoint-initdb.d/00-setup-config.sh \
