@@ -21,16 +21,17 @@ jobs:
           python-version: '3.13'
           cache: 'pip'                     # built-in pip cache
           cache-dependency-path: |
-            requirements/base.txt
-            requirements/dev.txt
-            requirements/prod.txt
+            infra/requirements/base.txt
+            infra/requirements/dev.txt
+            infra/requirements/prod.txt
+            infra/requirements.txt
 
       - name: Create venv and install deps
         shell: bash
         run: |
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
-          ./.venv/bin/pip install -r requirements/dev.txt
+          ./.venv/bin/pip install -r infra/requirements.txt
 
       - name: Create .env file from .env.example
         run: cp .env.example .env
