@@ -10,10 +10,12 @@ from src.core.errors.exceptions import (
     PermissionDeniedException,
 )
 from src.core.schemas import TokenModel
-from src.core.utils.security import mask_email, verify_password
+from src.core.utils.security import hash_password, mask_email, verify_password
 from src.user.auth.schemas import LoginUserModel
 from src.user.auth.security import create_access_token, create_refresh_token
 
+INVALID_CREDENTIALS_MESSAGE = "Incorrect email or password."
+INVALID_CREDENTIALS_PASSWORD_HASH = hash_password("dummy-password")
 logger = get_logger(__name__)
 
 
@@ -37,7 +39,8 @@ class LoginUserUseCase:
                     "[LoginUser] User with email '%s' not found.",
                     mask_email(data.email),
                 )
-                raise InstanceProcessingException("Incorrect Password or Email")
+                await verify_password(data.password, INVALID_CREDENTIALS_PASSWORD_HASH)
+                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
             correct_password = await verify_password(data.password, user.password)
             if not correct_password:
@@ -45,7 +48,7 @@ class LoginUserUseCase:
                     "[LoginUser] Incorrect password for user '%s'",
                     mask_email(data.email),
                 )
-                raise InstanceProcessingException("Incorrect Password or Email")
+                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
             if not user.is_verified:
                 logger.info(

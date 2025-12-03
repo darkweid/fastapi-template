@@ -21,6 +21,15 @@ def register_middlewares(app: FastAPI) -> None:
     """Registers all custom middlewares in proper order"""
 
     @app.middleware("http")
+    async def security_headers_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        return response
+
+    @app.middleware("http")
     async def request_timing_middleware(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
