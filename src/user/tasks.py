@@ -1,4 +1,3 @@
-import asyncio
 from datetime import timedelta
 
 from sqlalchemy import update
@@ -10,6 +9,7 @@ from celery_tasks.main import (
 )
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
+from src.core.utils.asyncio_runner import run_coroutine_synchronously
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
@@ -17,8 +17,7 @@ logger = get_logger(__name__)
 
 @typed_shared_task(name="cleanup_unverified_users")
 def cleanup_unverified_users() -> int:
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(_soft_delete_unverified_users())
+    result = run_coroutine_synchronously(coroutine=_soft_delete_unverified_users)
     return result
 
 
