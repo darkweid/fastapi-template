@@ -1,3 +1,4 @@
+from collections.abc import Awaitable
 import logging
 
 from redis.asyncio import Redis
@@ -27,8 +28,10 @@ class HealthService:
 
     async def _check_redis(self) -> bool:
         try:
-            await self.redis_client.ping()
-            return True
+            ping_result = self.redis_client.ping()
+            if isinstance(ping_result, Awaitable):
+                return bool(await ping_result)
+            return bool(ping_result)
         except Exception as exc:
             self.logger.error("Redis health check failed", exc_info=exc)
             sentry_sdk.capture_exception(exc)
