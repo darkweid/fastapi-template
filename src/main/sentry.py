@@ -1,0 +1,32 @@
+import sentry_sdk
+from sentry_sdk.integrations.celery import CeleryIntegration
+
+from loggers import get_logger
+from src.main.config import config
+
+logger = get_logger(__name__)
+
+_sentry_initialized = False
+
+
+def init_sentry() -> None:
+    """
+    Initialize the Sentry client once using environment variables.
+    """
+    global _sentry_initialized
+
+    if _sentry_initialized:
+        return
+
+    if not config.sentry.SENTRY_DSN:
+        logger.info("Sentry DSN is empty. Skipping Sentry initialization.")
+        return
+
+    sentry_sdk.init(
+        dsn=config.sentry.SENTRY_DSN,
+        environment=config.sentry.SENTRY_ENV,
+        release=config.app.VERSION,
+        integrations=[CeleryIntegration()],
+    )
+    _sentry_initialized = True
+    logger.info("Sentry initialized.")

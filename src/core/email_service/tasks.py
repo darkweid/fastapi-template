@@ -77,3 +77,4 @@ def send_email_with_file_task(
 
     except Exception as e:
         logger.exception("Failed to send email with attachment: %s", e)
+        raise

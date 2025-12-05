@@ -1,9 +1,12 @@
 from fastapi import APIRouter, FastAPI
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 
 from src.core.errors.exceptions import (
     AccessForbiddenException,
     CoreException,
     FilteringError,
+    InfrastructureException,
     InstanceAlreadyExistsException,
     InstanceNotFoundException,
     InstanceProcessingException,
@@ -15,12 +18,15 @@ from src.core.errors.handlers import (
     AccessForbiddenExceptionHandler,
     CoreExceptionHandler,
     FilteringErrorHandler,
+    InfrastructureExceptionHandler,
     InstanceAlreadyExistsExceptionHandler,
     InstanceNotFoundExceptionHandler,
     InstanceProcessingExceptionHandler,
     NotAcceptableExceptionHandler,
     PermissionDeniedExceptionHandler,
+    RequestValidationExceptionHandler,
     UnauthorizedExceptionHandler,
+    ValidationErrorExceptionHandler,
     as_exception_handler,
 )
 from src.system import routers as system_routers
@@ -59,6 +65,16 @@ def include_exceptions_handlers(app: FastAPI) -> None:
     Returns:
         None
     """
+    app.add_exception_handler(
+        InfrastructureException, as_exception_handler(InfrastructureExceptionHandler())
+    )
+    app.add_exception_handler(
+        RequestValidationError,
+        as_exception_handler(RequestValidationExceptionHandler()),
+    )
+    app.add_exception_handler(
+        ValidationError, as_exception_handler(ValidationErrorExceptionHandler())
+    )
     app.add_exception_handler(
         InstanceNotFoundException,
         as_exception_handler(InstanceNotFoundExceptionHandler()),

@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+import sentry_sdk
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -44,4 +45,5 @@ async def _soft_delete_unverified_users() -> int:
         except (IntegrityError, SQLAlchemyError) as e:
             await session.rollback()
             logger.exception("Batch soft-delete failed: %s", e)
+            sentry_sdk.capture_exception(e)
             return 0

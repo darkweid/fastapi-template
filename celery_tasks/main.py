@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from loggers import get_logger
 from src.main.config import config
+from src.main.sentry import init_sentry
 
+init_sentry()
 logger = get_logger(__name__)
 
 
@@ -39,7 +41,6 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     "cleanup_unverified_users_every_10_hours": {
         "task": "cleanup_unverified_users",
-        # "schedule": crontab(minute=0, hour="*/10"),
-        "schedule": crontab(minute="*/1"),
+        "schedule": crontab(minute=0, hour="*/10"),
     },
 }
