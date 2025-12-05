@@ -2,19 +2,24 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, cast
 
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+import sentry_sdk
 from starlette.responses import Response
 
 from loggers import get_logger
 from src.core.errors.exceptions import (
     CoreException,
     FilteringError,
+    InfrastructureException,
     InstanceAlreadyExistsException,
     InstanceNotFoundException,
     InstanceProcessingException,
 )
 
-response_logger = get_logger("app.request.4xxresponse", plain_format=True)
+response_logger = get_logger("app.request.error_response", plain_format=True)
 
 # Type for exception handler
 ExcType = TypeVar("ExcType", bound=Exception)
@@ -115,6 +120,57 @@ def format_log_message(
     return log_msg
 
 
+# ----- Infrastructure error handler ----- #
+class InfrastructureExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: InfrastructureException
+    ) -> JSONResponse:
+        error_type = "Infrastructure error"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.error(log_msg)
+        sentry_sdk.capture_exception(exc)
+        return JSONResponse(
+            status_code=500,
+            content=format_error_response(error_type, exc.message),
+        )
+
+
+# ----- Validation Handlers ----- #
+class RequestValidationExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        error_type = "Request validation error"
+        safe_detail = jsonable_encoder(exc.errors())
+        log_msg = format_log_message(
+            request,
+            error_type,
+            str(safe_detail),
+            include_request_path=True,
+        )
+        response_logger.debug(log_msg)
+        return JSONResponse(status_code=422, content={"detail": safe_detail})
+
+
+class ValidationErrorExceptionHandler:
+    async def __call__(self, request: Request, exc: ValidationError) -> JSONResponse:
+        error_type = "Backend validation error"
+        errors = exc.errors()
+        safe_detail = jsonable_encoder(errors)
+        log_msg = format_log_message(
+            request,
+            error_type,
+            str(safe_detail),
+            include_request_path=True,
+        )
+        response_logger.error(log_msg)
+        sentry_sdk.capture_exception(exc)
+        return JSONResponse(status_code=500, content={"detail": "Unexpected error"})
+
+
+# ----- Core Error Handlers ----- #
 class CoreExceptionHandler:
     async def __call__(self, request: Request, exc: CoreException) -> JSONResponse:
         error_type = "Bad request"

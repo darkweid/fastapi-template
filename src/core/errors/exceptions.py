@@ -9,6 +9,10 @@ class CoreException(Exception):
         self.additional_info = additional_info
 
 
+class InfrastructureException(CoreException):
+    pass
+
+
 class InstanceNotFoundException(CoreException):
     pass
 

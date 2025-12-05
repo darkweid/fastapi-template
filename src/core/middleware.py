@@ -4,9 +4,7 @@ import time
 import traceback
 
 from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
 import sentry_sdk
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from starlette.responses import Response
@@ -55,19 +53,6 @@ def register_middlewares(app: FastAPI) -> None:
         level(f"{category} {method} {path} | {duration} | {status_code}")
 
         return response
-
-    @app.middleware("http")
-    async def validation_error_middleware(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        try:
-            return await call_next(request)
-        except ValidationError as e:
-            logger.error("Validation error at %s: %s", request.url.path, e.errors())
-            sentry_sdk.capture_exception(e)
-
-            safe_detail = jsonable_encoder(e.errors())
-            return JSONResponse(status_code=422, content={"detail": safe_detail})
 
     @app.middleware("http")
     async def database_error_middleware(

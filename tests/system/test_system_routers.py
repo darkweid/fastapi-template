@@ -1,10 +1,27 @@
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.core.database.session import get_session
 from src.system import routers
+from src.system.dependencies import get_health_service
+from src.system.schemas import HealthCheckResponse
+
+
+class FakeHealthService:
+    async def get_status(self, session) -> HealthCheckResponse:
+        return HealthCheckResponse(status="ok")
+
+
+async def get_session_override() -> AsyncGenerator[None]:
+    yield None
+
+
+def get_health_service_override() -> FakeHealthService:
+    return FakeHealthService()
 
 
 def _build_client(app: FastAPI) -> TestClient:
@@ -14,6 +31,8 @@ def _build_client(app: FastAPI) -> TestClient:
 def test_check_health_endpoint() -> None:
     app = FastAPI()
     app.include_router(routers.router)
+    app.dependency_overrides[get_health_service] = get_health_service_override
+    app.dependency_overrides[get_session] = get_session_override
     client = _build_client(app)
 
     response = client.get("/health/")
