@@ -1,4 +1,3 @@
-import asyncio
 from datetime import timedelta
 
 import sentry_sdk
@@ -11,16 +10,16 @@ from celery_tasks.main import (
 )
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
+from src.core.utils.coroutine_runner import execute_coroutine_sync
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
 
 
 @typed_shared_task(name="cleanup_unverified_users")
-def cleanup_unverified_users() -> int:
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(_soft_delete_unverified_users())
-    return result
+def cleanup_unverified_users() -> str:
+    result = execute_coroutine_sync(coroutine=_soft_delete_unverified_users())
+    return f"Deleted {result} unverified users."
 
 
 async def _soft_delete_unverified_users() -> int:
