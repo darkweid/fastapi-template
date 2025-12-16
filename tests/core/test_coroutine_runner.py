@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from src.core.utils.asyncio_runner import run_coroutine_synchronously
+from src.core.utils.coroutine_runner import execute_coroutine_sync
 
 
 async def _add(a: int, b: int) -> int:
@@ -15,13 +15,13 @@ async def _raise_error() -> None:
     raise ValueError("test error")
 
 
-def test_run_coroutine_synchronously_returns_result() -> None:
+def test_execute_coroutine_sync_returns_result() -> None:
     """Base coroutine execution test."""
-    result = run_coroutine_synchronously(coroutine=_add(2, 3))
+    result = execute_coroutine_sync(coroutine=_add(2, 3))
     assert result == 5
 
 
-def test_run_coroutine_synchronously_reuses_existing_open_loop() -> None:
+def test_execute_coroutine_sync_reuses_existing_open_loop() -> None:
     """
     if you have an existing open event loop, function should reuse it.
     """
@@ -34,7 +34,7 @@ def test_run_coroutine_synchronously_reuses_existing_open_loop() -> None:
     asyncio.set_event_loop(loop)
 
     try:
-        result = run_coroutine_synchronously(coroutine=_add(10, 20))
+        result = execute_coroutine_sync(coroutine=_add(10, 20))
         assert result == 30
         assert not loop.is_closed()
     finally:
@@ -42,7 +42,7 @@ def test_run_coroutine_synchronously_reuses_existing_open_loop() -> None:
         loop.close()
 
 
-def test_run_coroutine_synchronously_creates_new_loop_if_closed() -> None:
+def test_execute_coroutine_sync_creates_new_loop_if_closed() -> None:
     """
     if the existing event loop is closed,
     the function should create a new one and not reuse the closed one.
@@ -56,7 +56,7 @@ def test_run_coroutine_synchronously_creates_new_loop_if_closed() -> None:
     asyncio.set_event_loop(old_loop)
     old_loop.close()
 
-    result = run_coroutine_synchronously(coroutine=_add(1, 2))
+    result = execute_coroutine_sync(coroutine=_add(1, 2))
     assert result == 3
 
     new_loop = asyncio.get_event_loop()
@@ -69,9 +69,9 @@ def test_run_coroutine_synchronously_creates_new_loop_if_closed() -> None:
         asyncio.set_event_loop(previous_loop)
 
 
-def test_run_coroutine_synchronously_propagates_exceptions() -> None:
+def test_execute_coroutine_sync_propagates_exceptions() -> None:
     """Exception propagation test."""
     with pytest.raises(ValueError) as exc_info:
-        run_coroutine_synchronously(coroutine=_raise_error())
+        execute_coroutine_sync(coroutine=_raise_error())
 
     assert "test error" in str(exc_info.value)

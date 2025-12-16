@@ -10,16 +10,16 @@ from celery_tasks.main import (
 )
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
-from src.core.utils.asyncio_runner import run_coroutine_synchronously
+from src.core.utils.coroutine_runner import execute_coroutine_sync
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
 
 
 @typed_shared_task(name="cleanup_unverified_users")
-def cleanup_unverified_users() -> int:
-    result = run_coroutine_synchronously(coroutine=_soft_delete_unverified_users)
-    return result
+def cleanup_unverified_users() -> str:
+    result = execute_coroutine_sync(coroutine=_soft_delete_unverified_users)
+    return f"Deleted {result} unverified users."
 
 
 async def _soft_delete_unverified_users() -> int:

@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 import re
 import time
 import traceback
@@ -13,6 +14,14 @@ from loggers import get_logger
 
 logger = get_logger(__name__)
 timing_logger = get_logger("src.request.timing", plain_format=True)
+UNEXPECTED_ERROR_DETAIL = "Unexpected error"
+
+
+@dataclass(slots=True)
+class PostgresqlErrorHandlingResult:
+    response: JSONResponse
+    send_to_sentry: bool
+    is_server_error: bool
 
 
 def register_middlewares(app: FastAPI) -> None:
@@ -42,7 +51,7 @@ def register_middlewares(app: FastAPI) -> None:
             level = timing_logger.warning
             category = "[MODERATE]"
         else:
-            level = timing_logger.error
+            level = timing_logger.warning
             category = "[SLOW]"
 
         method = request.method
@@ -50,7 +59,7 @@ def register_middlewares(app: FastAPI) -> None:
         status_code = response.status_code
         duration = f"{process_time:.3f}s"
 
-        level(f"{category} {method} {path} | {duration} | {status_code}")
+        level(f"{category} {method} {path} |{duration}|{status_code}")
 
         return response
 
@@ -60,11 +69,16 @@ def register_middlewares(app: FastAPI) -> None:
     ) -> Response:
         try:
             return await call_next(request)
-        except IntegrityError as e:
-            logger.error(f"Integrity error at {request.url.path}: {str(e.orig)}")
-            sentry_sdk.capture_exception(e)
-            return handle_postgresql_error(e)
-
+        except IntegrityError as exc:
+            handled_result = handle_postgresql_error(exc)
+            log_message = f"Integrity error at {request.url.path}: {str(exc.orig)}"
+            if handled_result.is_server_error:
+                logger.error(log_message, exc_info=True)
+            else:
+                logger.info(log_message)
+            if handled_result.send_to_sentry:
+                sentry_sdk.capture_exception(exc)
+            return handled_result.response
         except OperationalError as e:
             logger.error(
                 f"Database connection error at {request.url.path}: {str(e.orig)}"
@@ -99,11 +113,17 @@ def register_middlewares(app: FastAPI) -> None:
                 error_traceback,
             )
             sentry_sdk.capture_exception(e)
-            return JSONResponse(status_code=500, content={"detail": "Unexpected error"})
+            return JSONResponse(
+                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
+            )
 
 
-def handle_postgresql_error(error: IntegrityError) -> JSONResponse:
-    """PostgreSQL error handling (asyncpg-style)"""
+def handle_postgresql_error(
+    error: IntegrityError,
+) -> PostgresqlErrorHandlingResult:
+    """
+    Build a structured handling result for PostgreSQL IntegrityError with HTTP response, Sentry flag, and log severity.
+    """
     orig_error = error.orig
     sqlstate = getattr(orig_error, "sqlstate", None)
     detail_message = getattr(orig_error, "detail", None)
@@ -121,14 +141,50 @@ def handle_postgresql_error(error: IntegrityError) -> JSONResponse:
             first_value = match.group(1)
         else:
             first_value = detail_message
-        return JSONResponse(status_code=409, content={"detail": first_value})
-    elif sqlstate == "23502":  # NotNullViolation
-        return JSONResponse(status_code=422, content={"detail": detail_message})
-    elif sqlstate == "23503":  # ForeignKeyViolation
-        return JSONResponse(status_code=400, content={"detail": detail_message})
-    elif sqlstate == "23514":  # CheckViolation
-        return JSONResponse(status_code=400, content={"detail": detail_message})
-    elif sqlstate == "23P01":  # ExclusionViolation
-        return JSONResponse(status_code=400, content={"detail": detail_message})
+        return PostgresqlErrorHandlingResult(
+            response=JSONResponse(status_code=409, content={"detail": first_value}),
+            send_to_sentry=False,
+            is_server_error=False,
+        )
+    if sqlstate == "23502":  # NotNullViolation
+        column_match = re.search(r'column "([^"]+)"', detail_message or "")
+        safe_detail = (
+            f'Field "{column_match.group(1)}" is required'
+            if column_match
+            else "Required field is missing"
+        )
+        return PostgresqlErrorHandlingResult(
+            response=JSONResponse(status_code=422, content={"detail": safe_detail}),
+            send_to_sentry=True,
+            is_server_error=False,
+        )
+    if sqlstate == "23503":  # ForeignKeyViolation
+        return PostgresqlErrorHandlingResult(
+            response=JSONResponse(status_code=400, content={"detail": detail_message}),
+            send_to_sentry=False,
+            is_server_error=False,
+        )
+    if sqlstate == "23514":  # CheckViolation
+        return PostgresqlErrorHandlingResult(
+            response=JSONResponse(
+                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
+            ),
+            send_to_sentry=True,
+            is_server_error=True,
+        )
+    if sqlstate == "23P01":  # ExclusionViolation
+        return PostgresqlErrorHandlingResult(
+            response=JSONResponse(
+                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
+            ),
+            send_to_sentry=True,
+            is_server_error=True,
+        )
 
-    return JSONResponse(status_code=400, content={"detail": detail_message})
+    return PostgresqlErrorHandlingResult(
+        response=JSONResponse(
+            status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
+        ),
+        send_to_sentry=True,
+        is_server_error=True,
+    )
