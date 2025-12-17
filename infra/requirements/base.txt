@@ -1,3 +1,4 @@
+aioboto3
 alembic
 alembic-postgresql-enum
 argon2-cffi

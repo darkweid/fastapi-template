@@ -17,7 +17,7 @@ class AWSConfig(BaseModel):
     AWS_SECRET_ACCESS_KEY: str
     REGION_NAME: str
     S3_SAMPLE_URL: str
-    PRE_SIGNED_URL_SECONDS: str
+    PRE_SIGNED_URL_SECONDS: int = Field(300, gt=0)
 
     model_config = ConfigDict(extra="ignore")
 
