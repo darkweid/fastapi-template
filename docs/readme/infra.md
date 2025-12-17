@@ -27,7 +27,8 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 
 ## Quick Start
 ```bash
-cp .env.example .env
+cp .env.example .env   # main env
+cp .env.test .env.test # optional test env (used when TESTING=true)
 make run-dev          # dev images + autoreload, exposes 8000 via nginx
 # or:
 make run              # prod-like build
@@ -55,6 +56,6 @@ make clean            # remove stack + volumes/images/orphans
 
 ## Troubleshooting
 - Ensure Docker/Compose are installed.
-- `.env` must be filled (ports, DB/Redis/RabbitMQ credentials).
+- `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test`.
 - Use `make logs` or service-specific logs to inspect errors.
 - If migrations fail, check Postgres health first.
