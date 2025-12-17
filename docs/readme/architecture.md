@@ -28,9 +28,21 @@ Benefits:
 - Centralized configuration and consistent error handling.
 - Clear startup/shutdown ownership for resources.
 
-### Usecases vs Services
-- Services: keep simple, single-responsibility operations (e.g., one repo call, one external call, small validation).
-- Usecases: orchestrate flows that span multiple repositories/services, coordinate side effects, or enforce business rules across components. Also use when you need cross-service interactions (e.g., DB + cache + email) or transactional sequences. Usecases live under feature modules (e.g., `src/user/usecases/`) and encapsulate the flow, leaving low-level operations to services/repositories.
+
+### UseCase vs Service (Formalization)
+**UseCase (Application Service)**
+- Use when the operation is a scenario, not a single business rule.
+- Always: controls the transaction (UoW), orchestrates steps, may touch multiple repositories/services, may call external ports (S3/Email/Payment/HTTP), is responsible for side effects (events/queues), and shapes the final DTO/response.
+- Forbidden: heavy business logic inside; push domain rules into Services.
+
+**Service (Domain / Module Service)**
+- Encapsulates business logic of a single module.
+- By default: uses only its own repository, no external systems, no cross-context knowledge, holds domain rules (validations/invariants/calculations).
+- Exceptions: may use multiple repositories of the same bounded context if it stays a pure domain rule (not a scenario or I/O process).
+- Size rule of thumb: if a method grows beyond ~30–40 LOC, has 3+ branches, or 3+ sequential steps, it’s turning into a scenario → move to a UseCase.
+
+**External systems (S3, Email, Queues, HTTP clients)**
+- Always at the UseCase level or in infra adapters used by a UseCase.
 
 ### Repository Access
 - All DB work goes through repositories; no direct SQL in usecases/services/routers.
