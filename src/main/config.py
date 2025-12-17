@@ -1,48 +1,46 @@
+from functools import lru_cache
 import json
 import logging
-from os import environ
+import os
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
 class AWSConfig(BaseModel):
-    BUCKET_NAME: str = Field(alias="BUCKET_NAME")
-    AWS_ACCESS_KEY_ID: str = Field(alias="AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY: str = Field(alias="AWS_SECRET_ACCESS_KEY")
-    REGION_NAME: str = Field(alias="REGION_NAME")
-    S3_SAMPLE_URL: str = Field(alias="S3_SAMPLE_URL")
-    PRE_SIGNED_URL_SECONDS: str = Field(alias="PRE_SIGNED_URL_SECONDS")
+    BUCKET_NAME: str
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    REGION_NAME: str
+    S3_SAMPLE_URL: str
+    PRE_SIGNED_URL_SECONDS: str
 
     model_config = ConfigDict(extra="ignore")
 
 
 class BroadcastingConfig(BaseModel):
-    EMAIL_SERVER: str = Field(alias="EMAIL_SERVER")
-    EMAIL_PORT: int = Field(alias="EMAIL_PORT")
-    EMAIL_PASSWORD: str = Field(alias="EMAIL_PASSWORD")
-    EMAIL_USER: str = Field(alias="EMAIL_USER")
-    EMAIL_FROM_NAME: str = Field(alias="EMAIL_FROM_NAME")
-    EMAIL_USE_TLS: bool = Field(alias="EMAIL_USE_TLS")
-    EMAIL_STARTTLS: bool = Field(alias="EMAIL_STARTTLS")
-    VALIDATE_CERTS: bool = Field(alias="VALIDATE_CERTS")
+    EMAIL_SERVER: str
+    EMAIL_PORT: int
+    EMAIL_PASSWORD: str
+    EMAIL_USER: str
+    EMAIL_FROM_NAME: str
+    EMAIL_USE_TLS: bool
+    EMAIL_STARTTLS: bool
+    VALIDATE_CERTS: bool
 
     model_config = ConfigDict(extra="ignore")
 
 
 class RedisConfig(BaseModel):
-    REDIS_HOST: str = Field(alias="REDIS_HOST")
-    REDIS_PORT: int = Field(alias="REDIS_PORT")
-    REDIS_PASSWORD: str = Field(alias="REDIS_PASSWORD")
-    REDIS_DATABASE: str = Field(alias="REDIS_DATABASE")
-    REDIS_CELERY_DATABASE: str = Field("1", alias="REDIS_CELERY_DATABASE")
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_PASSWORD: str
+    REDIS_DATABASE: str
+    REDIS_CELERY_DATABASE: str = "1"
 
     model_config = ConfigDict(extra="ignore")
 
@@ -68,10 +66,10 @@ class RedisConfig(BaseModel):
 
 
 class RabbitMQConfig(BaseModel):
-    RABBITMQ_HOST: str = Field(alias="RABBITMQ_HOST")
-    RABBITMQ_PORT: int = Field(alias="RABBITMQ_PORT")
-    RABBITMQ_USER: str = Field(alias="RABBITMQ_USER")
-    RABBITMQ_PASSWORD: str = Field(alias="RABBITMQ_PASSWORD")
+    RABBITMQ_HOST: str
+    RABBITMQ_PORT: int
+    RABBITMQ_USER: str
+    RABBITMQ_PASSWORD: str
 
     model_config = ConfigDict(extra="ignore")
 
@@ -87,43 +85,38 @@ class RabbitMQConfig(BaseModel):
 
 
 class SentryConfig(BaseModel):
-    SENTRY_DSN: str | None = Field(None, alias="SENTRY_DSN")
-    SENTRY_ENV: str = Field("development", alias="SENTRY_ENV")
+    SENTRY_DSN: str | None = None
+    SENTRY_ENV: str = "development"
+    SENTRY_ENABLED: bool = False
 
     model_config = ConfigDict(extra="ignore")
 
 
 class JWTConfig(BaseModel):
-    JWT_USER_SECRET_KEY: str = Field(alias="JWT_USER_SECRET_KEY")
-    JWT_VERIFY_SECRET_KEY: str = Field(alias="JWT_VERIFY_SECRET_KEY")
-    JWT_ADMIN_SECRET_KEY: str = Field(alias="JWT_ADMIN_SECRET_KEY")
-    JWT_RESET_PASSWORD_SECRET_KEY: str = Field(alias="JWT_RESET_PASSWORD_SECRET_KEY")
+    JWT_USER_SECRET_KEY: str
+    JWT_VERIFY_SECRET_KEY: str
+    JWT_ADMIN_SECRET_KEY: str
+    JWT_RESET_PASSWORD_SECRET_KEY: str
 
-    ALGORITHM: str = Field(alias="ALGORITHM")
+    ALGORITHM: str
 
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(alias="ACCESS_TOKEN_EXPIRE_MINUTES")
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(alias="REFRESH_TOKEN_EXPIRE_MINUTES")
-    REFRESH_TOKEN_USED_TTL_SECONDS: int = Field(
-        1_209_600, alias="REFRESH_TOKEN_USED_TTL_SECONDS"
-    )
-    VERIFICATION_TOKEN_EXPIRE_MINUTES: int = Field(
-        alias="VERIFICATION_TOKEN_EXPIRE_MINUTES"
-    )
-    RESET_PASSWORD_TOKEN_EXPIRE_MINUTES: int = Field(
-        alias="RESET_PASSWORD_TOKEN_EXPIRE_MINUTES"
-    )
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
+    REFRESH_TOKEN_USED_TTL_SECONDS: int = Field(1_209_600, gt=0)
+    VERIFICATION_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
+    RESET_PASSWORD_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
 
     model_config = ConfigDict(extra="ignore")
 
 
 class PostgresConfig(BaseModel):
-    DB_ECHO: bool = Field(alias="DB_ECHO")
+    DB_ECHO: bool
 
-    POSTGRES_USER: str = Field(alias="POSTGRES_USER")
-    POSTGRES_PASSWORD: str = Field(alias="POSTGRES_PASSWORD")
-    POSTGRES_HOST: str = Field(alias="POSTGRES_HOST")
-    POSTGRES_PORT: int = Field(alias="POSTGRES_PORT")
-    POSTGRES_DB: str = Field(alias="POSTGRES_DB")
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_HOST: str
+    POSTGRES_PORT: int
+    POSTGRES_DB: str
 
     model_config = ConfigDict(extra="ignore")
 
@@ -147,36 +140,37 @@ class PostgresConfig(BaseModel):
 
 
 class AdministrationConfig(BaseModel):
-    SUPER_ADMIN_USERNAME: str = Field(alias="SUPER_ADMIN_USERNAME")
-    SUPER_ADMIN_PASSWORD: str = Field(alias="SUPER_ADMIN_PASSWORD")
-    SUPER_ADMIN_EMAIL: str = Field(alias="SUPER_ADMIN_EMAIL")
-    SUPER_ADMIN_PHONE: str = Field(alias="SUPER_ADMIN_PHONE")
+    SUPER_ADMIN_USERNAME: str
+    SUPER_ADMIN_PASSWORD: str
+    SUPER_ADMIN_EMAIL: str
+    SUPER_ADMIN_PHONE: str
 
     model_config = ConfigDict(extra="ignore")
 
 
 class AppConfig(BaseModel):
-    VERSION: str = Field(alias="VERSION")
-    DEBUG: bool = Field(False, alias="DEBUG")
+    VERSION: str
+    DEBUG: bool = False
+    TESTING: bool = False
 
-    LOCAL_TIMEZONE: str = Field(alias="LOCAL_TIMEZONE")
+    LOCAL_TIMEZONE: str
 
-    LOG_LEVEL: str = Field(alias="LOG_LEVEL")
-    LOG_LEVEL_FILE: str = Field(alias="LOG_LEVEL_FILE")
+    LOG_LEVEL: str
+    LOG_LEVEL_FILE: str
 
-    CORS_ALLOWED_ORIGINS: list[str] = Field(["*"], alias="CORS_ALLOWED_ORIGINS")
-    CORS_ALLOW_CREDENTIALS: bool = Field(True, alias="CORS_ALLOW_CREDENTIALS")
-    CORS_ALLOWED_METHODS: list[str] = Field(["*"], alias="CORS_ALLOWED_METHODS")
-    CORS_ALLOWED_HEADERS: list[str] = Field(["*"], alias="CORS_ALLOWED_HEADERS")
-    CORS_EXPOSE_HEADERS: list[str] = Field(["*"], alias="CORS_EXPOSE_HEADERS")
+    CORS_ALLOWED_ORIGINS: list[str] = Field(["*"])
+    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOWED_METHODS: list[str] = Field(["*"])
+    CORS_ALLOWED_HEADERS: list[str] = Field(["*"])
+    CORS_EXPOSE_HEADERS: list[str] = Field(["*"])
 
-    TRUST_PROXY_HEADERS: str = Field(alias="TRUST_PROXY_HEADERS")
+    TRUST_PROXY_HEADERS: str
 
-    PROJECT_NAME: str = Field(alias="PROJECT_NAME")
-    PROJECT_SECRET_KEY: str = Field(alias="PROJECT_SECRET_KEY")
+    PROJECT_NAME: str
+    PROJECT_SECRET_KEY: str
 
-    PING_INTERVAL: int = Field(alias="PING_INTERVAL")
-    CONNECTION_TTL: int = Field(alias="CONNECTION_TTL")
+    PING_INTERVAL: int
+    CONNECTION_TTL: int
 
     model_config = ConfigDict(extra="ignore")
 
@@ -202,30 +196,20 @@ class AppConfig(BaseModel):
         return [item.strip() for item in v.split(sep) if item.strip()]
 
 
-class Config(BaseSettings):
+class Config(BaseModel):
     _project_root: Path | None = None
 
-    app: AppConfig = Field(default_factory=lambda: AppConfig(**environ))
-    aws: AWSConfig = Field(default_factory=lambda: AWSConfig(**environ))
-    jwt: JWTConfig = Field(default_factory=lambda: JWTConfig(**environ))
-    redis: RedisConfig = Field(default_factory=lambda: RedisConfig(**environ))
-    sentry: SentryConfig = Field(default_factory=lambda: SentryConfig(**environ))
-    postgres: PostgresConfig = Field(default_factory=lambda: PostgresConfig(**environ))
-    rabbitmq: RabbitMQConfig = Field(default_factory=lambda: RabbitMQConfig(**environ))
-    broadcasting: BroadcastingConfig = Field(
-        default_factory=lambda: BroadcastingConfig(**environ)
-    )
-    administration: AdministrationConfig = Field(
-        default_factory=lambda: AdministrationConfig(**environ)
-    )
+    app: AppConfig
+    aws: AWSConfig
+    jwt: JWTConfig
+    redis: RedisConfig
+    sentry: SentryConfig
+    postgres: PostgresConfig
+    rabbitmq: RabbitMQConfig
+    broadcasting: BroadcastingConfig
+    administration: AdministrationConfig
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=True,
-        extra="ignore",
-        env_nested_delimiter="__",
-    )
+    model_config = ConfigDict(extra="ignore")
 
     @property
     def project_root(self) -> Path:
@@ -234,7 +218,33 @@ class Config(BaseSettings):
         return self._project_root
 
 
-config = Config()
+@lru_cache
+def get_settings() -> Config:
+    """
+    Cached settings factory. Override in tests via monkeypatching or dependency overrides.
+    """
+    env_filename = ".env.test" if os.getenv("TESTING") == "true" else ".env"
+    env_file_values = dotenv_values(env_filename)
+    merged_env: dict[str, Any] = {
+        k: v
+        for k, v in {**env_file_values, **dict(os.environ)}.items()
+        if v is not None
+    }
+
+    return Config(
+        app=AppConfig(**merged_env),
+        aws=AWSConfig(**merged_env),
+        jwt=JWTConfig(**merged_env),
+        redis=RedisConfig(**merged_env),
+        sentry=SentryConfig(**merged_env),
+        postgres=PostgresConfig(**merged_env),
+        rabbitmq=RabbitMQConfig(**merged_env),
+        broadcasting=BroadcastingConfig(**merged_env),
+        administration=AdministrationConfig(**merged_env),
+    )
+
+
+config = get_settings()
 
 
 # ----- Config utils ----- #
