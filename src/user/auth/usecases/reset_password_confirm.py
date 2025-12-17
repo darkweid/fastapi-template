@@ -1,9 +1,11 @@
 from fastapi import Depends
 import jwt
+from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.main.config import config
@@ -19,8 +21,10 @@ class ResetPasswordConfirmUseCase:
     def __init__(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
+        redis_client: Redis,
     ) -> None:
         self.uow = uow
+        self.redis_client = redis_client
 
     async def execute(
         self,
@@ -53,7 +57,7 @@ class ResetPasswordConfirmUseCase:
                         )
                         return SuccessResponse(success=False)
 
-                    await invalidate_all_user_sessions(str(user.id))
+                    await invalidate_all_user_sessions(str(user.id), self.redis_client)
                     logger.debug(
                         "[ResetPasswordConfirm] All user %s sessions invalidated.",
                         mask_email(email),
@@ -79,7 +83,9 @@ class ResetPasswordConfirmUseCase:
 
 def get_reset_password_confirm_use_case(
     uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> ResetPasswordConfirmUseCase:
     return ResetPasswordConfirmUseCase(
         uow=uow,
+        redis_client=redis_client,
     )

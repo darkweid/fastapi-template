@@ -128,10 +128,11 @@ def handle_postgresql_error(
     sqlstate = getattr(orig_error, "sqlstate", None)
     detail_message = getattr(orig_error, "detail", None)
 
+    raw_message = str(orig_error)
+
     if not detail_message:
-        error_message = str(orig_error)
-        if "DETAIL:" in error_message:
-            detail_message = error_message.split("DETAIL:")[-1].strip()
+        if "DETAIL:" in raw_message:
+            detail_message = raw_message.split("DETAIL:")[-1].strip()
         else:
             detail_message = "No additional details provided."
 
@@ -147,16 +148,22 @@ def handle_postgresql_error(
             is_server_error=False,
         )
     if sqlstate == "23502":  # NotNullViolation
-        column_match = re.search(r'column "([^"]+)"', detail_message or "")
-        safe_detail = (
-            f'Field "{column_match.group(1)}" is required'
-            if column_match
-            else "Required field is missing"
+        column_name = getattr(orig_error, "column_name", None)
+        column_match = (
+            re.search(r'column "([^"]+)"', raw_message) if not column_name else None
+        )
+        missing_field = column_name or (column_match.group(1) if column_match else None)
+        logger.error(
+            "NotNullViolation on column=%s | detail=%s",
+            missing_field,
+            detail_message,
         )
         return PostgresqlErrorHandlingResult(
-            response=JSONResponse(status_code=422, content={"detail": safe_detail}),
+            response=JSONResponse(
+                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
+            ),
             send_to_sentry=True,
-            is_server_error=False,
+            is_server_error=True,
         )
     if sqlstate == "23503":  # ForeignKeyViolation
         return PostgresqlErrorHandlingResult(

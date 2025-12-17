@@ -21,8 +21,12 @@ def init_sentry() -> None:
     if _sentry_initialized:
         return
 
-    if not config.sentry.SENTRY_DSN:
-        logger.info("Sentry DSN is empty. Skipping Sentry initialization.")
+    if config.app.DEBUG or getattr(config.app, "TESTING", False):
+        logger.info("DEBUG/TESTING enabled. Skipping Sentry initialization.")
+        return
+
+    if not config.sentry.SENTRY_ENABLED or not config.sentry.SENTRY_DSN:
+        logger.info("Sentry disabled or DSN empty. Skipping Sentry initialization.")
         return
 
     sentry_sdk.init(

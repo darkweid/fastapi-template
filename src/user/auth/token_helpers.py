@@ -8,14 +8,15 @@ including validation, family checking, and token invalidation.
 from collections.abc import Awaitable
 from typing import cast
 
+from redis.asyncio import Redis
+
 from src.core.errors.exceptions import UnauthorizedException
-from src.core.redis.client import redis_client
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 
-async def invalidate_all_user_sessions(user_id: str) -> None:
+async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
     """
     Invalidates all sessions for a given user by deleting all related Redis keys.
 
@@ -42,7 +43,9 @@ async def invalidate_all_user_sessions(user_id: str) -> None:
         await redis_client.delete(*used_keys)
 
 
-async def validate_token_family(user_id: str, family_id: str | None) -> None:
+async def validate_token_family(
+    user_id: str, family_id: str | None, redis_client: Redis
+) -> None:
     """
     Validates that a token belongs to an active token family.
 
@@ -54,7 +57,7 @@ async def validate_token_family(user_id: str, family_id: str | None) -> None:
         UnauthorizedException: If the family doesn't exist or the token structure is invalid
     """
     if not family_id:
-        await invalidate_all_user_sessions(user_id)
+        await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Invalid token structure")
 
     family_key = f"family:{user_id}:{family_id}"
@@ -62,13 +65,15 @@ async def validate_token_family(user_id: str, family_id: str | None) -> None:
 
     if not family_exists:
         # Family doesn't exist - possible token reuse attempt
-        await invalidate_all_user_sessions(user_id)
+        await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token has been invalidated due to potential reuse")
 
     return None
 
 
-async def validate_token_structure(payload: JWTPayload) -> tuple[str, str, str, str]:
+async def validate_token_structure(
+    payload: JWTPayload, redis_client: Redis
+) -> tuple[str, str, str, str]:
     """
     Validates that a token payload has all required fields.
 
@@ -88,7 +93,7 @@ async def validate_token_structure(payload: JWTPayload) -> tuple[str, str, str, 
         family_id = payload.get("family")
 
         if not jti or not family_id:
-            await invalidate_all_user_sessions(user_id)
+            await invalidate_all_user_sessions(user_id, redis_client)
             raise UnauthorizedException("Invalid token structure")
 
         return user_id, session_id, jti, family_id
@@ -100,6 +105,7 @@ async def execute_token_rotation(
     user_id: str,
     session_id: str,
     jti: str,
+    redis_client: Redis,
 ) -> str:
     """
     Executes the atomic token rotation operation using a Lua script.
@@ -139,10 +145,10 @@ async def execute_token_rotation(
 
     if result == "REUSED":
         # Token reuse detected!
-        await invalidate_all_user_sessions(user_id)
+        await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
     elif result == "INVALID":
-        await invalidate_all_user_sessions(user_id)
+        await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token invalidated or expired")
 
     return result

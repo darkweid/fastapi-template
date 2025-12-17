@@ -133,7 +133,7 @@ check-lint:
 
 .PHONY: test
 test:
-	pytest
+	TESTING=true pytest
 
 .PHONY: check-coverage
 check-coverage:

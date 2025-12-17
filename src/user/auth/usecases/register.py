@@ -7,7 +7,7 @@ from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.email_service.dependencies import get_email_service
 from src.core.email_service.service import EmailService
-from src.core.redis.client import redis_client
+from src.core.redis.dependencies import get_redis_client
 from src.core.utils.security import build_email_throttle_key
 from src.user.auth.schemas import CreateUserModel
 from src.user.auth.services.verification_notifier import VerificationNotifier
@@ -58,6 +58,7 @@ class RegisterUseCase:
 def get_register_use_case(
     uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
     email_service: EmailService = Depends(get_email_service),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> RegisterUseCase:
     return RegisterUseCase(
         uow=uow, email_service=email_service, redis_client=redis_client

@@ -3,11 +3,12 @@ from typing import cast
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
 import jwt
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
-from src.core.redis.client import redis_client
+from src.core.redis.dependencies import get_redis_client
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.models import User
@@ -20,6 +21,7 @@ refresh_token_header = APIKeyHeader(name="Authorization", scheme_name="refresh-t
 async def get_current_user(
     token: str = Security(access_token_header),
     session: AsyncSession = Depends(get_session),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> User:
     """
     Get the current authenticated user from the access token.
@@ -39,7 +41,7 @@ async def get_current_user(
     )
 
     # verify_jti also validates the token and throws appropriate exceptions
-    payload = await verify_jti(token)
+    payload = await verify_jti(token, redis_client)
 
     try:
         user_id = payload["sub"]
@@ -61,6 +63,7 @@ async def get_current_user(
 async def get_access_by_refresh_token(
     refresh_token: str = Security(refresh_token_header),
     session: AsyncSession = Depends(get_session),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> tuple[User, JWTPayload]:
     """
     Get the user from a refresh token for generating a new access token.
@@ -80,7 +83,7 @@ async def get_access_by_refresh_token(
     )
 
     # verify_jti also validates the token and throws appropriate exceptions
-    payload = await verify_jti(refresh_token)
+    payload = await verify_jti(refresh_token, redis_client)
 
     try:
         user_id = payload["sub"]
@@ -99,7 +102,9 @@ async def get_access_by_refresh_token(
     return user, payload
 
 
-async def get_user_id_from_token(request: Request) -> str:
+async def get_user_id_from_token(
+    request: Request,
+) -> str:
     """
     Extracts the user identifier from token provided on Authorization header
 
@@ -114,7 +119,8 @@ async def get_user_id_from_token(request: Request) -> str:
             "Authentication token not found",
         )
 
-    payload = await verify_jti(token)
+    redis_client = await get_redis_client(request)
+    payload = await verify_jti(token, redis_client)
     try:
         identifier = payload["sub"]
 
@@ -125,7 +131,7 @@ async def get_user_id_from_token(request: Request) -> str:
         )
 
 
-async def verify_jti(token: str) -> JWTPayload:
+async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
     """
     Verifies the JWT token's JTI (JWT ID) against the stored value in Redis.
 
@@ -185,7 +191,7 @@ async def verify_jti(token: str) -> JWTPayload:
             # Token reuse detected!
             from src.user.auth.token_helpers import invalidate_all_user_sessions
 
-            await invalidate_all_user_sessions(user_id)
+            await invalidate_all_user_sessions(user_id, redis_client)
             raise UnauthorizedException(
                 "Token reuse detected. All sessions invalidated."
             )
@@ -198,7 +204,7 @@ async def verify_jti(token: str) -> JWTPayload:
             if not family_exists:
                 from src.user.auth.token_helpers import invalidate_all_user_sessions
 
-                await invalidate_all_user_sessions(user_id)
+                await invalidate_all_user_sessions(user_id, redis_client)
                 raise UnauthorizedException(
                     "Token family invalidated. All sessions terminated."
                 )

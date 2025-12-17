@@ -11,12 +11,13 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
 - Email service: templated mailer with Celery tasks for async sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
+- Storage: async S3 adapter (`src/core/storage/s3`) with presign support.
 - Observability/resilience: structured logging (loggers), retry utils, health route.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
-- Copy env: `cp .env.example .env` and fill required values.
+- Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
 - Stop: `make down`; logs: `make logs`; tests: `make test`; lint: `make lint`.
@@ -41,6 +42,12 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - `make logs` / `make logs-app` — view logs
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
+
+## Pre-commit Hooks
+- Install dev deps: `pip install -r infra/requirements/dev.txt`
+- Update hooks: `pre-commit autoupdate` (and commit `.pre-commit-config.yaml` changes)
+- Clean hook envs if needed: `pre-commit clean`
+- Run all hooks locally: `pre-commit run --all-files` or `make lint`
 
 ## Documentation
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)

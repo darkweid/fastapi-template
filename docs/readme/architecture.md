@@ -16,7 +16,7 @@ Implementations:
 
 ### Main Module Architecture
 `src/main/` wires the app and isolates bootstrapping concerns.
-- `config.py`: Pydantic settings for DB, Redis, RabbitMQ, JWT, etc.
+- `config.py`: Pydantic settings for DB, Redis, RabbitMQ, JWT, etc. `.env` is used by default; `.env.test` is used when `TESTING=true`. `SENTRY_ENABLED` gates Sentry even if DSN is set; Sentry is skipped in DEBUG/TESTING.
 - `lifespan.py`: startup/shutdown lifecycle (init/cleanup external resources).
 - `presentation.py`: API assembly, versioning, exception handlers.
 - `route_logging.py`: logs routes grouped by method/tag for debugging.
@@ -28,9 +28,23 @@ Benefits:
 - Centralized configuration and consistent error handling.
 - Clear startup/shutdown ownership for resources.
 
-### Usecases vs Services
-- Services: keep simple, single-responsibility operations (e.g., one repo call, one external call, small validation).
-- Usecases: orchestrate flows that span multiple repositories/services, coordinate side effects, or enforce business rules across components. Also use when you need cross-service interactions (e.g., DB + cache + email) or transactional sequences. Usecases live under feature modules (e.g., `src/user/usecases/`) and encapsulate the flow, leaving low-level operations to services/repositories.
+### Core Components (extended)
+- **Storage (S3):** Async adapter in `src/core/storage/s3` with presigned URLs, UploadFile support, and paginated listings. Use via DI (`src/core/storage/s3/dependencies.get_s3_adapter`).
+
+### UseCase vs Service (Formalization)
+**UseCase (Application Service)**
+- Use when the operation is a scenario, not a single business rule.
+- Always: controls the transaction (UoW), orchestrates steps, may touch multiple repositories/services, may call external ports (S3/Email/Payment/HTTP), is responsible for side effects (events/queues), and shapes the final DTO/response.
+- Forbidden: heavy business logic inside; push domain rules into Services.
+
+**Service (Domain / Module Service)**
+- Encapsulates business logic of a single module.
+- By default: uses only its own repository, no external systems, no cross-context knowledge, holds domain rules (validations/invariants/calculations).
+- Exceptions: may use multiple repositories of the same bounded context if it stays a pure domain rule (not a scenario or I/O process).
+- Size rule of thumb: if a method grows beyond ~30–40 LOC, has 3+ branches, or 3+ sequential steps, it’s turning into a scenario → move to a UseCase.
+
+**External systems (S3, Email, Queues, HTTP clients)**
+- Always at the UseCase level or in infra adapters used by a UseCase.
 
 ### Repository Access
 - All DB work goes through repositories; no direct SQL in usecases/services/routers.
@@ -73,53 +87,14 @@ Benefits:
 ├── src/                                 # Application source code
 │   ├── core/                            # Core components shared across the application
 │   │   ├── database/                    # Database connection and ORM setup
-│   │   │   ├── base.py                  # SQLAlchemy declarative base configuration
-│   │   │   ├── engine.py                # Async database engine setup
-│   │   │   ├── mixins.py                # Reusable model mixins (e.g., TimestampMixin, UUIDIDMixin)
-│   │   │   ├── repositories.py          # Generic repository pattern implementations
-│   │   │   ├── session.py               # Database session and dependency management
-│   │   │   ├── transactions.py          # Transaction management utilities
-│   │   │   └── uow.py                   # Unit of Work pattern implementation
-│   │   │
 │   │   ├── email_service/               # Email service functionality
-│   │   │   ├── config.py                # Email configuration
-│   │   │   ├── dependencies.py          # Email dependencies
-│   │   │   ├── fastapi_mailer.py        # FastAPI-Mail integration
-│   │   │   ├── interfaces.py            # Email service interfaces
-│   │   │   ├── schemas.py               # Email data schemas
-│   │   │   ├── service.py               # Email service implementation
-│   │   │   ├── tasks.py                 # Celery tasks for email
-│   │   │   └── templates/               # Email templates
-│   │   │
 │   │   ├── errors/                      # Error handling
-│   │   │   ├── exceptions.py            # Custom exception classes
-│   │   │   └── handlers.py              # Exception handlers
-│   │   │
 │   │   ├── limiter/                     # Rate limiting functionality
-│   │   │   ├── depends.py               # Dependencies for rate limiting
-│   │   │   └── script.py                # Rate limiting implementation
-│   │   │
 │   │   ├── patterns/                    # Design patterns
-│   │   │   └── singleton.py             # Singleton pattern implementation
-│   │   │
-│   │   ├── redis/                       # Redis caching system
-│   │   │   ├── cache/                   # Caching implementation
-│   │   │   │   ├── backend/             # Cache backends
-│   │   │   │   ├── coder/               # Data encoding/decoding
-│   │   │   │   ├── manager/             # Cache management
-│   │   │   │   ├── decorators.py        # Cache decorators
-│   │   │   │   ├── lifecycle.py         # Cache lifecycle management
-│   │   │   │   └── tags.py              # Cache tagging system
-│   │   │   ├── core.py                  # Redis core functionality
-│   │   │   └── lifecycle.py             # Redis lifecycle management
-│   │   │
+│   │   ├── redis/                       # Redis caching system + limiter init
+│   │   ├── storage/                     # Storage adapters (S3)
 │   │   ├── utils/                       # Utility functions
-│   │   │   ├── datetime_utils.py        # Date and time utilities
-│   │   │   ├── retry.py                 # Retry mechanism
-│   │   │   └── security.py              # Security utilities
-│   │   │
 │   │   ├── middleware.py                # Application middleware setup
-│   │   ├── routes.py                    # Core API routes
 │   │   ├── schemas.py                   # Core data validation schemas
 │   │   ├── services.py                  # Core services shared across modules
 │   │   └── validations.py               # Data validation utilities
@@ -128,7 +103,7 @@ Benefits:
 │   │   ├── config.py                    # Application configuration settings
 │   │   ├── lifespan.py                  # Application lifecycle management
 │   │   ├── presentation.py              # API presentation layer
-│   │   ├── route_logging.py             # Utilite for logging routes summary
+│   │   ├── route_logging.py             # Utility for logging routes summary
 │   │   └── web.py                       # FastAPI application setup
 │   │
 │   ├── system/                          # System-level functionality
@@ -136,15 +111,7 @@ Benefits:
 │   │
 │   └── user/                            # User functionality
 │       ├── auth/                        # Authentication logic for regular users
-│       │   ├── dependencies.py          # Authentication dependencies
-│       │   ├── permissions/             # Permission-based authorization
-│       │   ├── routers.py               # Authentication endpoints
-│       │   ├── schemas.py               # Authentication data schemas
-│       │   ├── security.py              # Token and security utilities
-│       │   ├── services/                # Authentication-related services
-│       │   └── usecases/                # Authentication use cases (login, register, etc.)
 │       ├── dependencies.py              # User dependencies
-│       ├── exceptions.py                # User-specific exceptions
 │       ├── models.py                    # User data models (ORM)
 │       ├── repositories.py              # User data repository layer
 │       ├── routers.py                   # User API endpoints
@@ -154,19 +121,16 @@ Benefits:
 │       └── usecases/                    # User-related use cases
 │
 ├── tests/                               # Test suite
-│   └── email/                           # Tests for email functionality
-│       ├── mocks.py                     # Mock objects for testing
-│       └── test_email_service.py        # Tests for email service
+│   ├── auth/                            # Auth tests
+│   ├── core/                            # Core tests
+│   ├── email/                           # Email tests
+│   ├── main/                            # Main module tests
+│   ├── storage/                         # Storage adapter tests
+│   └── system/                          # System routes tests
 │
 ├── celery_tasks/                        # Celery task management
-│   └── main.py                          # Celery application setup
-│
 ├── loggers/                             # Logging configurations
-│   └── __init__.py                      # Logger setup
-│
-├── models/                              # Shared data models
-│   └── __init__.py                      # Models package initialization
-│
+├── models/                              # Shared data models and models package initialization
 ├── Makefile                             # Makefile with predefined commands
 ├── alembic.ini                          # Alembic configuration file
 ├── pytest.ini                           # PyTest configuration
