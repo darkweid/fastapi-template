@@ -103,7 +103,7 @@ async def get_access_by_refresh_token(
 
 
 async def get_user_id_from_token(
-    request: Request, redis_client: Redis = Depends(get_redis_client)
+    request: Request,
 ) -> str:
     """
     Extracts the user identifier from token provided on Authorization header
@@ -119,6 +119,7 @@ async def get_user_id_from_token(
             "Authentication token not found",
         )
 
+    redis_client = await get_redis_client(request)
     payload = await verify_jti(token, redis_client)
     try:
         identifier = payload["sub"]

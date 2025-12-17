@@ -9,6 +9,7 @@ from src.core.validations import (
     FULL_NAME_PATTERN,
     PHONE_NUMBER_MIN_LENGTH,
     PHONE_NUMBER_REGEX,
+    USERNAME_VALIDATOR,
 )
 
 
@@ -16,7 +17,7 @@ class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Ba
     first_name: str
     last_name: str
     email: EmailStr
-    username: str | None = None
+    username: str
     phone_number: str = Field(min_length=PHONE_NUMBER_MIN_LENGTH)
     password: str
 
@@ -43,14 +44,14 @@ class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Ba
             )
         return value
 
-    # @field_validator("username")
-    # @classmethod
-    # def validate_username(cls, value: str) -> str:
-    #     if not USERNAME_VALIDATOR.match(value):
-    #         raise ValueError(
-    #             "Username must be from 4 to 60 symbols and contain alphanumeric characters, underscore, dash, and dot"
-    #         )
-    #     return value
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        if not USERNAME_VALIDATOR.match(value):
+            raise ValueError(
+                "Username must be from 4 to 60 symbols and contain alphanumeric characters, underscore, dash, and dot"
+            )
+        return value
 
 
 class ResendVerificationModel(EmailNormalizationMixin, Base):
