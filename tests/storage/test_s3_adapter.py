@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -62,6 +63,31 @@ def s3_mocks(
         default_presign_ttl=300,
     )
     return adapter, client, cm
+
+
+@pytest.mark.asyncio
+async def test_dependency_context_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = AsyncMock()
+    cm = FakeClientCM(client)
+    session = FakeSession(client, cm)
+    monkeypatch.setattr("src.core.storage.s3.adapter.aioboto3.Session", lambda: session)
+
+    from src.core.storage.s3 import dependencies
+
+    aws_settings = SimpleNamespace(
+        BUCKET_NAME="bucket",
+        REGION_NAME="us-east-1",
+        AWS_ACCESS_KEY_ID="ak",
+        AWS_SECRET_ACCESS_KEY="sk",
+        PRE_SIGNED_URL_SECONDS=123,
+    )
+    settings = SimpleNamespace(aws=aws_settings)
+
+    gen = dependencies.get_s3_adapter(settings)
+    adapter = await gen.__anext__()  # noqa: F841
+    assert cm.entered
+    await gen.aclose()
+    assert cm.exited
 
 
 @pytest.mark.asyncio
