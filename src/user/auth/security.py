@@ -3,8 +3,8 @@ from typing import Any
 from uuid import uuid4
 
 import jwt
+from redis.asyncio import Redis
 
-from src.core.redis.client import redis_client
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
@@ -16,7 +16,7 @@ from src.user.auth.token_helpers import (
 
 
 async def create_access_token(
-    data: dict[str, Any], session_id: str | None = None
+    data: dict[str, Any], redis_client: Redis, session_id: str | None = None
 ) -> str:
     """
     Create a new JWT access token
@@ -57,7 +57,10 @@ async def create_access_token(
 
 
 async def create_refresh_token(
-    data: dict[str, Any], session_id: str | None = None, family: str | None = None
+    data: dict[str, Any],
+    redis_client: Redis,
+    session_id: str | None = None,
+    family: str | None = None,
 ) -> str:
     """
     Create a new JWT refresh token
@@ -110,7 +113,7 @@ async def create_refresh_token(
     return str(encoded_jwt)
 
 
-async def rotate_refresh_token(old_payload: JWTPayload) -> str:
+async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> str:
     """
     Rotate a refresh token by creating a new one while invalidating the old one.
 
@@ -133,12 +136,12 @@ async def rotate_refresh_token(old_payload: JWTPayload) -> str:
 
     # Extract and validate token fields
     user_id, old_session_id, old_jti, family_id = await validate_token_structure(
-        old_payload
+        old_payload, redis_client
     )
 
-    await validate_token_family(user_id, family_id)
+    await validate_token_family(user_id, family_id, redis_client)
 
-    await execute_token_rotation(user_id, old_session_id, old_jti)
+    await execute_token_rotation(user_id, old_session_id, old_jti, redis_client)
 
     # Create a new refresh token with a new session_id but in the same family
     jti = str(uuid4())

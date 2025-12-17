@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from fastapi import Depends
+from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
@@ -9,6 +10,7 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
     PermissionDeniedException,
 )
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import hash_password, mask_email, verify_password
 from src.user.auth.schemas import LoginUserModel
@@ -25,8 +27,10 @@ class LoginUserUseCase:
     def __init__(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
+        redis_client: Redis,
     ) -> None:
         self.uow = uow
+        self.redis_client = redis_client
 
     async def execute(
         self,
@@ -71,17 +75,22 @@ class LoginUserUseCase:
 
             return TokenModel(
                 access_token=await create_access_token(
-                    token_data, session_id=session_id
+                    token_data, redis_client=self.redis_client, session_id=session_id
                 ),
                 refresh_token=await create_refresh_token(
-                    token_data, session_id=session_id, family=family
+                    token_data,
+                    redis_client=self.redis_client,
+                    session_id=session_id,
+                    family=family,
                 ),
             )
 
 
 def get_login_user_use_case(
     uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> LoginUserUseCase:
     return LoginUserUseCase(
         uow=uow,
+        redis_client=redis_client,
     )

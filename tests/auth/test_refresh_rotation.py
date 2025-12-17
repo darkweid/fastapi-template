@@ -5,7 +5,6 @@ import pytest
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
-import src.user.auth.security as security
 from src.user.auth.security import rotate_refresh_token
 import src.user.auth.token_helpers as token_helpers
 
@@ -36,8 +35,6 @@ def redis_mock(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     mock.eval.return_value = "OK"
     mock.set.return_value = None
     mock.expire.return_value = None
-    monkeypatch.setattr(token_helpers, "redis_client", mock)
-    monkeypatch.setattr(security, "redis_client", mock)
     return mock
 
 
@@ -45,7 +42,7 @@ def redis_mock(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 async def test_rotate_refresh_token_success(redis_mock: AsyncMock) -> None:
     payload = _base_payload()
 
-    token = await rotate_refresh_token(payload)
+    token = await rotate_refresh_token(payload, redis_mock)
     decoded = jwt.decode(
         token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
     )
@@ -54,10 +51,10 @@ async def test_rotate_refresh_token_success(redis_mock: AsyncMock) -> None:
     assert decoded["session_id"] != payload["session_id"]
     assert decoded["jti"] != payload["jti"]
 
-    used_ttl = security.redis_client.eval.await_args.args[5]
+    used_ttl = redis_mock.eval.await_args.args[5]
     assert used_ttl == str(min(config.jwt.REFRESH_TOKEN_USED_TTL_SECONDS, 600))
-    security.redis_client.set.assert_awaited()
-    security.redis_client.expire.assert_awaited_with(
+    redis_mock.set.assert_awaited()
+    redis_mock.expire.assert_awaited_with(
         f"family:{payload['sub']}:{payload['family']}",
         config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -74,9 +71,9 @@ async def test_rotate_refresh_token_reuse_detected(
     payload = _base_payload()
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload)
+        await rotate_refresh_token(payload, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"])
+    invalidate_mock.assert_awaited_once_with(payload["sub"], redis_mock)
 
 
 @pytest.mark.asyncio
@@ -90,9 +87,9 @@ async def test_rotate_refresh_token_invalid_state(
     payload = _base_payload()
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload)
+        await rotate_refresh_token(payload, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"])
+    invalidate_mock.assert_awaited_once_with(payload["sub"], redis_mock)
 
 
 @pytest.mark.asyncio
@@ -106,9 +103,9 @@ async def test_rotate_refresh_token_missing_family_invalidates(
     payload.pop("family")
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload)
+        await rotate_refresh_token(payload, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"])
+    invalidate_mock.assert_awaited_once_with(payload["sub"], redis_mock)
     redis_mock.eval.assert_not_awaited()
 
 
@@ -123,9 +120,9 @@ async def test_rotate_refresh_token_missing_jti_invalidates(
     payload.pop("jti")
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload)
+        await rotate_refresh_token(payload, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"])
+    invalidate_mock.assert_awaited_once_with(payload["sub"], redis_mock)
     redis_mock.eval.assert_not_awaited()
 
 
@@ -140,7 +137,7 @@ async def test_rotate_refresh_token_family_not_found(
     payload = _base_payload()
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload)
+        await rotate_refresh_token(payload, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"])
+    invalidate_mock.assert_awaited_once_with(payload["sub"], redis_mock)
     redis_mock.eval.assert_not_awaited()

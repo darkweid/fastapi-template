@@ -1,10 +1,13 @@
+from fastapi import Depends
 import jwt
+from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.errors.exceptions import (
     InstanceProcessingException,
     PermissionDeniedException,
 )
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import mask_email
 from src.main.config import config
@@ -17,6 +20,9 @@ logger = get_logger(__name__)
 
 class GetTokensByRefreshUserUseCase:
     """Use case for refreshing tokens using a refresh token."""
+
+    def __init__(self, redis_client: Redis) -> None:
+        self.redis_client = redis_client
 
     async def execute(
         self,
@@ -38,7 +44,9 @@ class GetTokensByRefreshUserUseCase:
             raise InstanceProcessingException("User is not verified")
 
         # Use rotation helper to handle the previous token safely
-        new_refresh_token = await rotate_refresh_token(old_token_payload)
+        new_refresh_token = await rotate_refresh_token(
+            old_token_payload, self.redis_client
+        )
 
         new_payload = jwt.decode(
             new_refresh_token,
@@ -47,7 +55,9 @@ class GetTokensByRefreshUserUseCase:
         )
 
         access_token = await create_access_token(
-            {"sub": str(user.id)}, session_id=new_payload["session_id"]
+            {"sub": str(user.id)},
+            redis_client=self.redis_client,
+            session_id=new_payload["session_id"],
         )
 
         return TokenModel(
@@ -56,5 +66,7 @@ class GetTokensByRefreshUserUseCase:
         )
 
 
-def get_tokens_by_refresh_user_use_case() -> GetTokensByRefreshUserUseCase:
-    return GetTokensByRefreshUserUseCase()
+def get_tokens_by_refresh_user_use_case(
+    redis_client: Redis = Depends(get_redis_client),
+) -> GetTokensByRefreshUserUseCase:
+    return GetTokensByRefreshUserUseCase(redis_client=redis_client)

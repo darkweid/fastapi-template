@@ -8,7 +8,7 @@ from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.email_service.dependencies import get_email_service
 from src.core.email_service.service import EmailService
 from src.core.errors.exceptions import InstanceProcessingException
-from src.core.redis.client import redis_client as rc
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import build_email_throttle_key, mask_email
 from src.user.auth.schemas import ResendVerificationModel
@@ -70,7 +70,8 @@ class SendVerificationUseCase:
 def get_send_verification_use_case(
     uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
     email_service: EmailService = Depends(get_email_service),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> SendVerificationUseCase:
     return SendVerificationUseCase(
-        uow=uow, email_service=email_service, redis_client=rc
+        uow=uow, email_service=email_service, redis_client=redis_client
     )

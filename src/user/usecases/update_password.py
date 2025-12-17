@@ -1,10 +1,12 @@
 from uuid import UUID
 
 from fastapi import Depends
+from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.user.auth.schemas import UserNewPassword
@@ -19,8 +21,10 @@ class UpdateUserPasswordUseCase:
     def __init__(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
+        redis_client: Redis,
     ) -> None:
         self.uow = uow
+        self.redis_client = redis_client
 
     async def execute(self, data: UserNewPassword, user_id: UUID) -> SuccessResponse:
         async with self.uow as uow:
@@ -35,7 +39,7 @@ class UpdateUserPasswordUseCase:
                 mask_email(updated_user.email),
             )
 
-            await invalidate_all_user_sessions(str(updated_user.id))
+            await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
             logger.debug(
                 "[UpdateUserPassword] All user %s sessions invalidated.",
                 mask_email(updated_user.email),
@@ -47,7 +51,9 @@ class UpdateUserPasswordUseCase:
 
 def get_update_user_password_use_case(
     uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
+    redis_client: Redis = Depends(get_redis_client),
 ) -> UpdateUserPasswordUseCase:
     return UpdateUserPasswordUseCase(
         uow=uow,
+        redis_client=redis_client,
     )

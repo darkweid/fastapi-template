@@ -26,8 +26,6 @@ def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture()
 def redis_mock(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     mock = AsyncMock()
-    monkeypatch.setattr(security, "redis_client", mock)
-    monkeypatch.setattr(token_helpers, "redis_client", mock)
     return mock
 
 
@@ -39,7 +37,7 @@ async def test_create_access_token_stores_jti(
         security, "get_utc_now", lambda: datetime(2024, 1, 1, tzinfo=timezone.utc)
     )
 
-    token = await security.create_access_token({"sub": "user"})
+    token = await security.create_access_token({"sub": "user"}, redis_client=redis_mock)
     decoded = jwt.decode(
         token, "secret", algorithms=["HS256"], options={"verify_exp": False}
     )
@@ -57,7 +55,9 @@ async def test_create_refresh_token_stores_family(
         security, "get_utc_now", lambda: datetime(2024, 1, 1, tzinfo=timezone.utc)
     )
 
-    token = await security.create_refresh_token({"sub": "user"})
+    token = await security.create_refresh_token(
+        {"sub": "user"}, redis_client=redis_mock
+    )
     decoded = jwt.decode(
         token, "secret", algorithms=["HS256"], options={"verify_exp": False}
     )
@@ -76,9 +76,9 @@ async def test_validate_token_structure_missing_fields(
     payload: JWTPayload = {"sub": "u1", "session_id": "s1", "mode": "refresh_token"}
 
     with pytest.raises(UnauthorizedException):
-        await token_helpers.validate_token_structure(payload)
+        await token_helpers.validate_token_structure(payload, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with("u1")
+    invalidate_mock.assert_awaited_once_with("u1", redis_mock)
 
 
 @pytest.mark.asyncio
@@ -89,9 +89,9 @@ async def test_validate_token_family_missing_family(
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
-        await token_helpers.validate_token_family("u1", None)
+        await token_helpers.validate_token_family("u1", None, redis_mock)
 
-    invalidate_mock.assert_awaited_once_with("u1")
+    invalidate_mock.assert_awaited_once_with("u1", redis_mock)
 
 
 @pytest.mark.asyncio
@@ -103,9 +103,9 @@ async def test_validate_token_family_not_exists(
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
-        await token_helpers.validate_token_family("u1", "family")
+        await token_helpers.validate_token_family("u1", "family", redis_mock)
 
-    invalidate_mock.assert_awaited_once_with("u1")
+    invalidate_mock.assert_awaited_once_with("u1", redis_mock)
 
 
 @pytest.mark.asyncio
@@ -117,9 +117,9 @@ async def test_execute_token_rotation_reused(
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
-        await token_helpers.execute_token_rotation("u1", "s1", "j1")
+        await token_helpers.execute_token_rotation("u1", "s1", "j1", redis_mock)
 
-    invalidate_mock.assert_awaited_once_with("u1")
+    invalidate_mock.assert_awaited_once_with("u1", redis_mock)
 
 
 @pytest.mark.asyncio
@@ -131,16 +131,16 @@ async def test_execute_token_rotation_invalid(
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
-        await token_helpers.execute_token_rotation("u1", "s1", "j1")
+        await token_helpers.execute_token_rotation("u1", "s1", "j1", redis_mock)
 
-    invalidate_mock.assert_awaited_once_with("u1")
+    invalidate_mock.assert_awaited_once_with("u1", redis_mock)
 
 
 @pytest.mark.asyncio
 async def test_execute_token_rotation_ok(redis_mock: AsyncMock) -> None:
     redis_mock.eval.return_value = "OK"
 
-    result = await token_helpers.execute_token_rotation("u1", "s1", "j1")
+    result = await token_helpers.execute_token_rotation("u1", "s1", "j1", redis_mock)
 
     assert result == "OK"
     redis_mock.eval.assert_awaited()
@@ -155,6 +155,6 @@ async def test_invalidate_all_user_sessions(redis_mock: AsyncMock) -> None:
         ["used:1:u1"],
     ]
 
-    await token_helpers.invalidate_all_user_sessions("1")
+    await token_helpers.invalidate_all_user_sessions("1", redis_mock)
 
     assert redis_mock.delete.await_count == 4
