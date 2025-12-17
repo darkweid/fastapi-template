@@ -13,6 +13,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Auth & JWT: user module with auth usecases, tokens, permissions.
 - Storage: async S3 adapter (`src/core/storage/s3`) with presign support.
 - Observability/resilience: structured logging (loggers), retry utils, health route.
+- Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
 ## Quick Start
