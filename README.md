@@ -43,6 +43,12 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
 
+## Pre-commit Hooks
+- Install dev deps: `pip install -r infra/requirements/dev.txt`
+- Update hooks: `pre-commit autoupdate` (and commit `.pre-commit-config.yaml` changes)
+- Clean hook envs if needed: `pre-commit clean`
+- Run all hooks locally: `pre-commit run --all-files` or `make lint`
+
 ## Documentation
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
