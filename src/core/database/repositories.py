@@ -5,11 +5,11 @@ from typing import Any, Generic, TypeVar, cast
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Load
 from sqlalchemy.sql.elements import ColumnElement
 
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
+from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
@@ -66,7 +66,7 @@ class BaseRepository(Generic[T]):
     async def get_single(
         self,
         session: AsyncSession,
-        eager: Sequence[Load] | None = None,
+        eager: EagerLoadSequence | None = None,
         for_update: bool = False,
         **filters: Any,
     ) -> T | None:
@@ -93,7 +93,7 @@ class BaseRepository(Generic[T]):
     async def get_list(
         self,
         session: AsyncSession,
-        eager: Sequence[Load] | None = None,
+        eager: EagerLoadSequence | None = None,
         for_update: bool = False,
         **filters: Any,
     ) -> list[T]:
@@ -127,7 +127,7 @@ class BaseRepository(Generic[T]):
         session: AsyncSession,
         page: int,
         size: int,
-        eager: Sequence[Load] | None = None,
+        eager: EagerLoadSequence | None = None,
         **filters: Any,
     ) -> tuple[list[T], int]:
         """Retrieve a paginated list of records using limit/offset pagination."""
@@ -314,7 +314,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def get_single(
         self,
         session: AsyncSession,
-        eager: Sequence[Load] | None = None,
+        eager: EagerLoadSequence | None = None,
         for_update: bool = False,
         **filters: Any,
     ) -> T | None:
@@ -327,7 +327,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def get_list(
         self,
         session: AsyncSession,
-        eager: Sequence[Load] | None = None,
+        eager: EagerLoadSequence | None = None,
         for_update: bool = False,
         **filters: Any,
     ) -> list[T]:
@@ -342,7 +342,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         session: AsyncSession,
         page: int,
         size: int,
-        eager: Sequence[Load] | None = None,
+        eager: EagerLoadSequence | None = None,
         **filters: Any,
     ) -> tuple[list[T], int]:
         """Retrieve a list of records where is_deleted flag is False, using the filters,
