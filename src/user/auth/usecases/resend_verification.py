@@ -1,6 +1,6 @@
 from fastapi import Depends
-from httpx import URL
 from redis.asyncio import Redis
+from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
