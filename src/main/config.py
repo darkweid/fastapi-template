@@ -164,7 +164,7 @@ class AppConfig(BaseModel):
     CORS_ALLOWED_HEADERS: list[str] = Field(["*"])
     CORS_EXPOSE_HEADERS: list[str] = Field(["*"])
 
-    TRUST_PROXY_HEADERS: str
+    TRUST_PROXY_HEADERS: bool
 
     PROJECT_NAME: str
     PROJECT_SECRET_KEY: str
