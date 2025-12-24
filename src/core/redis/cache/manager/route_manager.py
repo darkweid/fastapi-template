@@ -152,13 +152,14 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                 filtered_kwargs = self._filter_arguments(
                     func, *args, **sanitized_kwargs
                 )
-                # Convert to list[str] to match the expected parameter type
-                str_tags = [
-                    str(tag) if isinstance(tag, CacheTags) else tag
-                    for tag in local_tags
-                ]
+                normalized_tags: list[str] = []
+                for tag in local_tags:
+                    if isinstance(tag, CacheTags):
+                        normalized_tags.append(tag.value)
+                    else:
+                        normalized_tags.append(str(tag))
                 local_tags = self._extend_tags_using_params(
-                    tags=str_tags, **filtered_kwargs
+                    tags=normalized_tags, **filtered_kwargs
                 )
 
                 request = kwargs.pop(request_param.name, None) or next(
