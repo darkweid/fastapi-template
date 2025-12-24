@@ -11,6 +11,12 @@ class RedisCacheBackend(CacheBackend):
     def __init__(self) -> None:
         self.redis: aioredis.Redis | None = None
 
+    @staticmethod
+    def _normalize_tag_member(member: Any) -> str:
+        if isinstance(member, bytes):
+            return member.decode()
+        return str(member)
+
     async def connect(self, url: str) -> None:
         """Connect to the Redis server."""
         if self.redis is None:
@@ -52,8 +58,8 @@ class RedisCacheBackend(CacheBackend):
             result = self.redis.smembers(tag_key)
             if hasattr(result, "__await__"):
                 keys = await result
-                return {str(k) for k in keys}
-            return {str(k) for k in result}
+                return {self._normalize_tag_member(k) for k in keys}
+            return {self._normalize_tag_member(k) for k in result}
         return set()
 
     async def invalidate_keys(self, keys: list[str]) -> None:
