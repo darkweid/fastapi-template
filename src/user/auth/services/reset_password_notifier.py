@@ -1,5 +1,5 @@
-from httpx import URL
 from redis.asyncio import Redis
+from starlette.datastructures import URL
 
 from src.core.email_service.schemas import MailTemplateResetPasswordBody
 from src.core.email_service.service import EmailService

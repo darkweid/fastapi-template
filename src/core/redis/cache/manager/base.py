@@ -40,8 +40,10 @@ class BaseCacheManager(AbstractCacheManager):
         key_sets = []
         for tag in tags:
             if isinstance(tag, CacheTags):
-                tag = tag.value
-            members = await self.backend.get_tag_members(tag)
+                tag_name = tag.value
+            else:
+                tag_name = str(tag)
+            members = await self.backend.get_tag_members(tag_name)
             key_sets.append(members)
         logger.debug("Got keys: %s for tags: %s", key_sets, tags)
         return key_sets

@@ -118,12 +118,14 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
                 local_tags = tags.copy()
 
                 filtered_kwargs = self._filter_arguments(func, *args, **kwargs)
-                str_tags = [
-                    str(tag) if isinstance(tag, CacheTags) else tag
-                    for tag in local_tags
-                ]
+                normalized_tags: list[str] = []
+                for tag in local_tags:
+                    if isinstance(tag, CacheTags):
+                        normalized_tags.append(tag.value)
+                    else:
+                        normalized_tags.append(str(tag))
                 local_tags = self._extend_tags_using_params(
-                    tags=str_tags, **filtered_kwargs
+                    tags=normalized_tags, **filtered_kwargs
                 )
 
                 cache_key = await self.key_builder(func, **filtered_kwargs)
