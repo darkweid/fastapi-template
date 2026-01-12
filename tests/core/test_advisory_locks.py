@@ -2,8 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.core.database import repositories as repositories_module
-from src.core.database import transactions
+from src.core.database import repositories as repositories_module, transactions
 from src.core.database.repositories import BaseRepository
 
 
