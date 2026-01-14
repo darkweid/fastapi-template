@@ -50,6 +50,15 @@ Benefits:
 - All DB work goes through repositories; no direct SQL in usecases/services/routers.
 - Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.
 - Keep repositories focused on data access; put orchestration and business logic in usecases/services.
+
+### Advisory Transaction Locks
+Use PostgreSQL advisory transaction locks to serialize critical sections without row-level locking.
+
+- **Where:** `BaseRepository.xact_lock` / `BaseRepository.try_xact_lock`.
+- **How it works:** locks are held only for the current transaction; they release automatically on commit/rollback.
+- **When to use `xact_lock`:** when you must block until the lock is acquired (e.g., prevent duplicate workflow execution).
+- **When to use `try_xact_lock`:** when you want a non-blocking check and a boolean result (e.g., skip work if already running).
+- **Keying:** pass a string key; the repository namespaces it by model (`<table>:<key>`) before hashing to a 64-bit advisory lock key.
 ---
 ## Project Layout
 ```

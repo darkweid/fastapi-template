@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
+from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
 
@@ -46,6 +47,28 @@ class BaseRepository(Generic[T]):
             if commit:
                 await session.rollback()
             raise
+
+    async def xact_lock(self, session: AsyncSession, key: str) -> None:
+        """
+        Acquire an advisory transaction lock for the given string key.
+        """
+        await advisory_xact_lock(session, self._namespaced_lock_key(key))
+
+    async def try_xact_lock(self, session: AsyncSession, key: str) -> bool:
+        """
+        Try to acquire an advisory transaction lock for the given string key.
+
+        Returns True if the lock was acquired, False otherwise.
+        """
+        return await try_advisory_xact_lock(session, self._namespaced_lock_key(key))
+
+    def _namespaced_lock_key(self, key: str) -> str:
+        """
+        Prefix the lock key with model identity to avoid cross-repo collisions.
+        """
+        table_name = getattr(self.model, "__tablename__", None)
+        model_name = table_name or self.model.__name__
+        return f"{model_name}:{key}"
 
     async def exists(
         self, session: AsyncSession, strict_single: bool = False, **filters: Any
