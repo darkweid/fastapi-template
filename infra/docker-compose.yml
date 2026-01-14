@@ -33,7 +33,7 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
-      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/postgresql.conf:/custom-config/postgresql.conf:ro
     networks:
       - app-network
     deploy:
