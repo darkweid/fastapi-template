@@ -8,7 +8,7 @@ from src.main.config import config
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 LOG_FILE = os.path.join(LOG_DIR, "debug.log")
 
-if not os.path.exists(LOG_DIR):
+if not config.app.TESTING and not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
 logging_format = "%(asctime)s [%(levelname)s]|[%(process)d]| %(name)s: %(message)s"
@@ -49,7 +49,8 @@ def get_logger(name: Any, *, plain_format: bool = False) -> Logger:
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
     else:
-        logger.addHandler(get_file_handler())
+        if not config.app.TESTING:
+            logger.addHandler(get_file_handler())
         logger.addHandler(get_stream_handler())
 
     logger.propagate = False
