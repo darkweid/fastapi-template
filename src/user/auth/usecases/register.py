@@ -1,33 +1,57 @@
 from fastapi import Depends
-from redis.asyncio import Redis
 from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
-from src.core.email_service.dependencies import get_email_service
-from src.core.email_service.service import EmailService
-from src.core.redis.dependencies import get_redis_client
 from src.core.utils.security import build_email_throttle_key
 from src.user.auth.schemas import CreateUserModel
-from src.user.auth.services.verification_notifier import VerificationNotifier
+from src.user.auth.services.verification_notifier import (
+    VerificationNotifier,
+    get_verification_notifier,
+)
 from src.user.schemas import UserProfileViewModel
 
 logger = get_logger(__name__)
 
 
 class RegisterUseCase:
-    """Use case for user registration."""
+    """
+    Register a new user and send a verification email.
+
+    Inputs:
+    - data: CreateUserModel containing user registration details.
+    - request_base_url: The base URL of the request for building verification links.
+
+    Validations:
+    - Email and username must be unique (handled by DB constraints/repository).
+
+    Workflow:
+    1) Create a new user record in the database.
+    2) Flush the session to obtain the user ID.
+    3) Generate a verification link and send it via email.
+    4) Commit the transaction.
+
+    Side effects:
+    - Creates a user record in the database.
+    - Sends an external email notification.
+    - Sets a throttle key in Redis via the notifier.
+
+    Errors:
+    - InstanceAlreadyExistsException: if email or username already exists.
+    - InfrastructureException: if email sending fails.
+
+    Returns:
+    - UserProfileViewModel: the newly created user profile.
+    """
 
     def __init__(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
-        email_service: EmailService,
-        redis_client: Redis,
+        notifier: VerificationNotifier,
     ) -> None:
         self.uow = uow
-        self.email_service = email_service
-        self.redis_client = redis_client
+        self.notifier = notifier
 
     async def execute(
         self, data: CreateUserModel, request_base_url: URL
@@ -39,11 +63,8 @@ class RegisterUseCase:
             )
             await uow.session.flush()
 
-            notifier = VerificationNotifier(
-                email_service=self.email_service, redis_client=self.redis_client
-            )
             throttle_key = build_email_throttle_key("signup", user.email)
-            await notifier.send_verification(
+            await self.notifier.send_verification(
                 user=user,
                 base_url=request_base_url,
                 throttle_key=throttle_key,
@@ -57,9 +78,6 @@ class RegisterUseCase:
 
 def get_register_use_case(
     uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    email_service: EmailService = Depends(get_email_service),
-    redis_client: Redis = Depends(get_redis_client),
+    notifier: VerificationNotifier = Depends(get_verification_notifier),
 ) -> RegisterUseCase:
-    return RegisterUseCase(
-        uow=uow, email_service=email_service, redis_client=redis_client
-    )
+    return RegisterUseCase(uow=uow, notifier=notifier)

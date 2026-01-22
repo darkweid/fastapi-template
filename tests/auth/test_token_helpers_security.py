@@ -148,13 +148,14 @@ async def test_execute_token_rotation_ok(redis_mock: AsyncMock) -> None:
 
 @pytest.mark.asyncio
 async def test_invalidate_all_user_sessions(redis_mock: AsyncMock) -> None:
-    redis_mock.keys.side_effect = [
-        ["access:1:a1"],
-        ["refresh:1:r1"],
-        ["family:1:f1"],
-        ["used:1:u1"],
+    redis_mock.scan.side_effect = [
+        (0, ["access:1:a1"]),
+        (0, ["refresh:1:r1"]),
+        (0, ["family:1:f1"]),
+        (0, ["used:1:u1"]),
     ]
 
     await token_helpers.invalidate_all_user_sessions("1", redis_mock)
 
     assert redis_mock.delete.await_count == 4
+    assert redis_mock.scan.await_count == 4

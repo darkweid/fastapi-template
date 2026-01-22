@@ -65,6 +65,5 @@ repos:
           - pytest
           - alembic
           - fastapi-mail
-          - fastapi-pagination
           - types-passlib
           - types-pytz

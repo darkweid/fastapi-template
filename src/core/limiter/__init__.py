@@ -1,10 +1,11 @@
 from collections.abc import Awaitable, Callable
 from math import ceil
 
-from fastapi import HTTPException, Request, Response, status
+from fastapi import Request, Response
 import redis.asyncio as aredis
 
 from loggers import get_logger
+from src.core.errors.exceptions import TooManyRequestsException
 from src.core.limiter.script import lua_script
 from src.main.config import config
 
@@ -31,13 +32,12 @@ async def http_default_callback(
     request: Request, response: Response, pexpire: int
 ) -> None:
     """
-    Default callback for rate-limited responses. Raises 429 with a Retry-After header.
+    Default callback for rate-limited responses. Raises TooManyRequestsException with retry_after.
     """
     expire_seconds = ceil(pexpire / 1000)
-    raise HTTPException(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail="Too Many Requests",
-        headers={"Retry-After": str(expire_seconds)},
+    raise TooManyRequestsException(
+        message="Too Many Requests",
+        retry_after=expire_seconds,
     )
 
 

@@ -19,28 +19,28 @@ from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
     """
     Invalidates all sessions for a given user by deleting all related Redis keys.
+    Uses SCAN for non-blocking key discovery.
 
     Args:
         user_id: The user ID whose sessions should be invalidated
     """
-    access_pattern = f"access:{user_id}:*"
-    refresh_pattern = f"refresh:{user_id}:*"
-    family_pattern = f"family:{user_id}:*"
-    used_pattern = f"used:{user_id}:*"  # Also clean up used tokens
+    patterns = [
+        f"access:{user_id}:*",
+        f"refresh:{user_id}:*",
+        f"family:{user_id}:*",
+        f"used:{user_id}:*",  # Also clean up used tokens
+    ]
 
-    access_keys = await redis_client.keys(access_pattern)
-    refresh_keys = await redis_client.keys(refresh_pattern)
-    family_keys = await redis_client.keys(family_pattern)
-    used_keys = await redis_client.keys(used_pattern)
-
-    if access_keys:
-        await redis_client.delete(*access_keys)
-    if refresh_keys:
-        await redis_client.delete(*refresh_keys)
-    if family_keys:
-        await redis_client.delete(*family_keys)
-    if used_keys:
-        await redis_client.delete(*used_keys)
+    for pattern in patterns:
+        cursor = 0
+        while True:
+            cursor, keys = await redis_client.scan(
+                cursor=cursor, match=pattern, count=100
+            )
+            if keys:
+                await redis_client.delete(*keys)
+            if cursor == 0:
+                break
 
 
 async def validate_token_family(

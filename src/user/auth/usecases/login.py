@@ -22,7 +22,35 @@ logger = get_logger(__name__)
 
 
 class LoginUserUseCase:
-    """Use case for logging in user."""
+    """
+    Log in a user and return access and refresh tokens.
+
+    Inputs:
+    - data: LoginUserModel containing email and password.
+
+    Validations:
+    - User must exist.
+    - Password must be correct.
+    - User must be verified.
+    - User must be active (not blocked).
+
+    Workflow:
+    1) Retrieve user by email.
+    2) Verify password (using dummy hash if user not found to prevent timing attacks).
+    3) Check if user is verified.
+    4) Check if user is active.
+    5) Generate access and refresh tokens.
+
+    Side effects:
+    - None (Token creation handles its own caching).
+
+    Errors:
+    - InstanceProcessingException: if credentials invalid or user not verified.
+    - PermissionDeniedException: if user is blocked.
+
+    Returns:
+    - TokenModel with access and refresh tokens.
+    """
 
     def __init__(
         self,
@@ -55,14 +83,14 @@ class LoginUserUseCase:
                 raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
             if not user.is_verified:
-                logger.info(
+                logger.debug(
                     "[LoginUser] User with email '%s' not verified.",
                     mask_email(data.email),
                 )
                 raise InstanceProcessingException("User is not verified")
 
             if not user.is_active:
-                logger.info(
+                logger.debug(
                     "[LoginUser] User with email '%s' is blocked.",
                     mask_email(data.email),
                 )

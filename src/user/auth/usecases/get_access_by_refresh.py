@@ -19,7 +19,36 @@ logger = get_logger(__name__)
 
 
 class GetTokensByRefreshUserUseCase:
-    """Use case for refreshing tokens using a refresh token."""
+    """
+    Refresh access and refresh tokens using an existing refresh token.
+
+    Inputs:
+    - user: User object obtained from the token payload.
+    - old_token_payload: JWTPayload from the current refresh token.
+
+    Validations:
+    - User must be active.
+    - User must be verified.
+    - Refresh token must be valid and not reused (handled by rotate_refresh_token).
+
+    Workflow:
+    1) Check if the user is active and verified.
+    2) Rotate the refresh token (handles session invalidation and reuse detection).
+    3) Decode the new refresh token to get the session ID.
+    4) Create a new access token associated with the session.
+
+    Side effects:
+    - Updates/creates refresh token session state in Redis.
+    - May invalidate sessions if token reuse is detected.
+
+    Errors:
+    - PermissionDeniedException: if user is blocked.
+    - InstanceProcessingException: if user is not verified.
+    - UnauthorizedException: if token rotation fails.
+
+    Returns:
+    - TokenModel: containing new access and refresh tokens.
+    """
 
     def __init__(self, redis_client: Redis) -> None:
         self.redis_client = redis_client

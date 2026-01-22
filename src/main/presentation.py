@@ -12,6 +12,7 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
     NotAcceptableException,
     PermissionDeniedException,
+    TooManyRequestsException,
     UnauthorizedException,
 )
 from src.core.errors.handlers import (
@@ -25,6 +26,7 @@ from src.core.errors.handlers import (
     NotAcceptableExceptionHandler,
     PermissionDeniedExceptionHandler,
     RequestValidationExceptionHandler,
+    TooManyRequestsExceptionHandler,
     UnauthorizedExceptionHandler,
     ValidationErrorExceptionHandler,
     as_exception_handler,
@@ -107,4 +109,8 @@ def include_exceptions_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         PermissionDeniedException,
         as_exception_handler(PermissionDeniedExceptionHandler()),
+    )
+    app.add_exception_handler(
+        TooManyRequestsException,
+        as_exception_handler(TooManyRequestsExceptionHandler()),
     )

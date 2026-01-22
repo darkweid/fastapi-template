@@ -16,7 +16,32 @@ logger = get_logger(__name__)
 
 
 class UpdateUserPasswordUseCase:
-    """Use case for updating password."""
+    """
+    Update a user's password and invalidate all their active sessions.
+
+    Inputs:
+    - data: UserNewPassword containing the new password.
+    - user_id: UUID of the user updating their password.
+
+    Validations:
+    - User must exist in the database.
+
+    Workflow:
+    1) Update user password in the database (automatically hashed by model).
+    2) Flush session and log success.
+    3) Invalidate all active Redis sessions for the user.
+    4) Commit the transaction.
+
+    Side effects:
+    - Updates user record in database.
+    - Deletes all user session keys from Redis.
+
+    Errors:
+    - InstanceProcessingException: if update fails.
+
+    Returns:
+    - SuccessResponse: success=True if updated, False if user not found.
+    """
 
     def __init__(
         self,

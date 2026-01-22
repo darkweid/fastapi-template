@@ -13,7 +13,34 @@ logger = get_logger(__name__)
 
 
 class VerifyEmailUseCase:
-    """Use case for verifying email."""
+    """
+    Verify a user's email address using a JWT token.
+
+    Inputs:
+    - token: JWT token containing the user's email.
+
+    Validations:
+    - Token must be valid and not expired.
+    - Email must be present in the token.
+    - User must exist in the database.
+
+    Workflow:
+    1) Decode and validate the JWT token.
+    2) Extract email from the token payload.
+    3) Retrieve user by normalized email.
+    4) If user is already verified, return success.
+    5) Update user's is_verified status to True.
+    6) Commit the transaction.
+
+    Side effects:
+    - Updates user record in the database.
+
+    Errors:
+    - UnauthorizedException: if token is invalid or expired.
+
+    Returns:
+    - SuccessResponse: success=True if verified or already verified, False if email/user not found.
+    """
 
     def __init__(
         self,

@@ -17,6 +17,7 @@ from src.core.errors.exceptions import (
     InstanceAlreadyExistsException,
     InstanceNotFoundException,
     InstanceProcessingException,
+    TooManyRequestsException,
 )
 
 response_logger = get_logger("app.request.error_response", plain_format=True)
@@ -291,4 +292,23 @@ class PermissionDeniedExceptionHandler:
         return JSONResponse(
             status_code=403,
             content=format_error_response(error_type, exc.message),
+        )
+
+
+class TooManyRequestsExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: TooManyRequestsException
+    ) -> JSONResponse:
+        error_type = "Too Many Requests"
+        log_msg = format_log_message(request, error_type, exc.message)
+        response_logger.info(log_msg)
+
+        headers = {}
+        if exc.retry_after:
+            headers["Retry-After"] = str(exc.retry_after)
+
+        return JSONResponse(
+            status_code=429,
+            content=format_error_response(error_type, exc.message),
+            headers=headers,
         )
