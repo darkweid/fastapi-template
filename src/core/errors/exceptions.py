@@ -43,3 +43,14 @@ class NotAcceptableException(CoreException):
 
 class PermissionDeniedException(CoreException):
     pass
+
+
+class TooManyRequestsException(CoreException):
+    def __init__(
+        self,
+        message: str | None = None,
+        retry_after: int | None = None,
+        additional_info: dict[str, Any] | None = None,
+    ):
+        super().__init__(message, additional_info)
+        self.retry_after = retry_after

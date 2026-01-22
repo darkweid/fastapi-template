@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 import sentry_sdk
-from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from celery_tasks.main import (
@@ -10,6 +9,7 @@ from celery_tasks.main import (
 )
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
+from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.utils.coroutine_runner import execute_coroutine_sync
 from src.core.utils.datetime_utils import get_utc_now
 
@@ -23,27 +23,20 @@ def cleanup_unverified_users() -> str:
 
 
 async def _soft_delete_unverified_users() -> int:
-    from src.user.models import User
-
     cutoff = get_utc_now() - timedelta(days=3)
 
     async with local_async_session() as session:
+        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
         try:
-            stmt = (
-                update(User)
-                .where(
-                    User.is_deleted.is_(False),
-                    User.is_verified.is_(False),
-                    User.created_at < cutoff,
+            async with uow:
+                deleted_count = await uow.users.batch_soft_delete(
+                    session=uow.session,
+                    is_verified=False,
+                    created_at_lt=cutoff,
                 )
-                .values(is_deleted=True, deleted_at=get_utc_now())
-            )
-            result = await session.execute(stmt)
-            await session.commit()
-            deleted_count = result.rowcount if hasattr(result, "rowcount") else 0
-            return deleted_count
-        except (IntegrityError, SQLAlchemyError) as e:
-            await session.rollback()
+                await uow.commit()
+                return int(deleted_count)
+        except (IntegrityError, SQLAlchemyError, Exception) as e:
             logger.exception("Batch soft-delete failed: %s", e)
             sentry_sdk.capture_exception(e)
             return 0

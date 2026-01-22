@@ -16,7 +16,35 @@ logger = get_logger(__name__)
 
 
 class ResetPasswordConfirmUseCase:
-    """Use case for resetting password with a reset token."""
+    """
+    Confirm password reset using a valid JWT reset token.
+
+    Inputs:
+    - data: ResetPasswordModel containing the token and the new password.
+
+    Validations:
+    - Token must be valid and not expired.
+    - Token mode must be 'reset_password_token'.
+    - Email must be present in the token.
+    - User must exist in the database.
+
+    Workflow:
+    1) Decode and validate the JWT reset token.
+    2) Extract email from the token payload.
+    3) Update the user's password in the database.
+    4) Invalidate all active sessions for the user in Redis.
+    5) Commit the transaction.
+
+    Side effects:
+    - Updates user record in the database.
+    - Deletes user session keys from Redis.
+
+    Errors:
+    - None (returns success=False for invalid tokens/users).
+
+    Returns:
+    - SuccessResponse: success=True if password was reset, False otherwise.
+    """
 
     def __init__(
         self,

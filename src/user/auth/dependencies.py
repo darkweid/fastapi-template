@@ -11,6 +11,7 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.token_helpers import invalidate_all_user_sessions
 from src.user.models import User
 from src.user.repositories import UserRepository
 
@@ -189,8 +190,6 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
 
         if is_used:
             # Token reuse detected!
-            from src.user.auth.token_helpers import invalidate_all_user_sessions
-
             await invalidate_all_user_sessions(user_id, redis_client)
             raise UnauthorizedException(
                 "Token reuse detected. All sessions invalidated."
@@ -202,8 +201,6 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
             family_key = f"family:{user_id}:{family}"
             family_exists = await redis_client.exists(family_key)
             if not family_exists:
-                from src.user.auth.token_helpers import invalidate_all_user_sessions
-
                 await invalidate_all_user_sessions(user_id, redis_client)
                 raise UnauthorizedException(
                     "Token family invalidated. All sessions terminated."

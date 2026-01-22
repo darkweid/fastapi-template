@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Generic, TypeVar, cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -422,6 +422,33 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         except (IntegrityError, SQLAlchemyError):
             if commit:
                 await session.rollback()
+            raise
+
+    async def batch_soft_delete(self, session: AsyncSession, **filters: Any) -> int:
+        """
+        Soft delete multiple records matching the filters.
+        Supports suffix filters like '_lt', '_gt' for fields.
+        """
+        self._ensure_filters_present(filters)
+        try:
+            stmt = update(self.model).values(is_deleted=True, deleted_at=get_utc_now())
+
+            filters.setdefault("is_deleted", False)
+
+            for key, value in filters.items():
+                if key.endswith("_lt"):
+                    field = key[:-3]
+                    stmt = stmt.where(getattr(self.model, field) < value)
+                elif key.endswith("_gt"):
+                    field = key[:-3]
+                    stmt = stmt.where(getattr(self.model, field) > value)
+                else:
+                    stmt = stmt.where(getattr(self.model, key) == value)
+
+            result = await session.execute(stmt)
+            return int(result.rowcount) if hasattr(result, "rowcount") else 0
+        except SQLAlchemyError:
+            logger.exception("Batch soft-delete failed for %s", self.model.__name__)
             raise
 
     def _assert_softdelete_fields(self) -> None:

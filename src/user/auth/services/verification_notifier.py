@@ -1,9 +1,12 @@
+from fastapi import Depends
 from redis.asyncio import Redis
 from starlette.datastructures import URL
 
+from src.core.email_service.dependencies import get_email_service
 from src.core.email_service.schemas import MailTemplateVerificationBody
 from src.core.email_service.service import EmailService
 from src.core.errors.exceptions import InstanceProcessingException
+from src.core.redis.dependencies import get_redis_client
 from src.user.auth.security import create_verification_token
 from src.user.models import User
 
@@ -58,3 +61,10 @@ class VerificationNotifier:
                 name=user.full_name,
             ),
         )
+
+
+def get_verification_notifier(
+    email_service: EmailService = Depends(get_email_service),
+    redis_client: Redis = Depends(get_redis_client),
+) -> VerificationNotifier:
+    return VerificationNotifier(email_service=email_service, redis_client=redis_client)
