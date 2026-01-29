@@ -11,15 +11,57 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 logger = logging.getLogger(__name__)
 
 
-class AWSConfig(BaseModel):
-    BUCKET_NAME: str
-    AWS_ACCESS_KEY_ID: str
-    AWS_SECRET_ACCESS_KEY: str
-    REGION_NAME: str
+class S3Config(BaseModel):
+    S3_BUCKET_NAME: str
+    S3_ACCESS_KEY_ID: str
+    S3_SECRET_ACCESS_KEY: str
+    S3_REGION_NAME: str
     S3_SAMPLE_URL: str
-    PRE_SIGNED_URL_SECONDS: int = Field(300, gt=0)
+    S3_PRE_SIGNED_URL_SECONDS: int = Field(300, gt=0)
+    S3_ENDPOINT_URL: str | None = None
+    S3_ADDRESSING_STYLE: str | None = None
+    S3_SIGNATURE_VERSION: str = "s3v4"
+    S3_VERIFY_SSL: bool = True
+    S3_CA_BUNDLE: str | None = None
+    S3_TREAT_ACCESS_DENIED_AS_MISSING: bool = False
+    S3_CONNECT_TIMEOUT_SECONDS: int = Field(5, gt=0)
+    S3_READ_TIMEOUT_SECONDS: int = Field(120, gt=0)
+    S3_RETRY_MAX_ATTEMPTS: int = Field(3, gt=0)
+    S3_RETRY_MODE: str = "standard"
+    S3_MAX_UPLOAD_SIZE_BYTES: int = Field(20 * 1024 * 1024, gt=0)
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator(
+        "S3_ENDPOINT_URL",
+        "S3_ADDRESSING_STYLE",
+        "S3_CA_BUNDLE",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_fields(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return str(value)
+
+    @field_validator("S3_SIGNATURE_VERSION", "S3_RETRY_MODE", mode="before")
+    @classmethod
+    def normalize_string_fields(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @field_validator("S3_SIGNATURE_VERSION")
+    @classmethod
+    def default_signature_version(cls, value: str) -> str:
+        return value or "s3v4"
+
+    @field_validator("S3_RETRY_MODE")
+    @classmethod
+    def default_retry_mode(cls, value: str) -> str:
+        return value or "standard"
 
 
 class BroadcastingConfig(BaseModel):
@@ -200,7 +242,7 @@ class Config(BaseModel):
     _project_root: Path | None = None
 
     app: AppConfig
-    aws: AWSConfig
+    s3: S3Config
     jwt: JWTConfig
     redis: RedisConfig
     sentry: SentryConfig
@@ -233,7 +275,7 @@ def get_settings() -> Config:
 
     return Config(
         app=AppConfig(**merged_env),
-        aws=AWSConfig(**merged_env),
+        s3=S3Config(**merged_env),
         jwt=JWTConfig(**merged_env),
         redis=RedisConfig(**merged_env),
         sentry=SentryConfig(**merged_env),
