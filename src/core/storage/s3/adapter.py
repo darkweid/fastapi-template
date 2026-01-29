@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 from types import TracebackType
 from typing import Any, Self
@@ -213,6 +214,7 @@ class S3Adapter(S3ClientProtocol):
 
         Note:
         - Part size must be at least 5 MB (except the last part).
+        - Size limits are not enforced here; callers must validate large uploads.
         - The UploadFile source should be seekable; synchronous file backends may
           block the event loop under high concurrency.
         """
@@ -401,7 +403,7 @@ class S3Adapter(S3ClientProtocol):
         expires_in: int | None = None,
         bucket: str | None = None,
     ) -> str:
-        return self._generate_presigned_url(
+        return await self._generate_presigned_url(
             key=key,
             bucket=bucket,
             expires_in=expires_in,
@@ -417,7 +419,7 @@ class S3Adapter(S3ClientProtocol):
         bucket: str | None = None,
         content_type: str | None = None,
     ) -> str:
-        return self._generate_presigned_url(
+        return await self._generate_presigned_url(
             key=key,
             bucket=bucket,
             expires_in=expires_in,
@@ -425,7 +427,7 @@ class S3Adapter(S3ClientProtocol):
             content_type=content_type,
         )
 
-    def _generate_presigned_url(
+    async def _generate_presigned_url(
         self,
         *,
         key: str,
@@ -449,6 +451,8 @@ class S3Adapter(S3ClientProtocol):
             Params=params,
             ExpiresIn=ttl,
         )
+        if asyncio.iscoroutine(url_or_coro):
+            return str(await url_or_coro)
         return str(url_or_coro)
 
     async def object_exists(self, key: str, *, bucket: str | None = None) -> bool:
