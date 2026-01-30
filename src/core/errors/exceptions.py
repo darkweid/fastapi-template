@@ -25,6 +25,10 @@ class InstanceProcessingException(CoreException):
     pass
 
 
+class PayloadTooLargeException(CoreException):
+    pass
+
+
 class FilteringError(CoreException):
     pass
 

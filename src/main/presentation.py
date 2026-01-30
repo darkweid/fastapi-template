@@ -11,6 +11,7 @@ from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
     NotAcceptableException,
+    PayloadTooLargeException,
     PermissionDeniedException,
     TooManyRequestsException,
     UnauthorizedException,
@@ -24,6 +25,7 @@ from src.core.errors.handlers import (
     InstanceNotFoundExceptionHandler,
     InstanceProcessingExceptionHandler,
     NotAcceptableExceptionHandler,
+    PayloadTooLargeExceptionHandler,
     PermissionDeniedExceptionHandler,
     RequestValidationExceptionHandler,
     TooManyRequestsExceptionHandler,
@@ -88,6 +90,10 @@ def include_exceptions_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         InstanceProcessingException,
         as_exception_handler(InstanceProcessingExceptionHandler()),
+    )
+    app.add_exception_handler(
+        PayloadTooLargeException,
+        as_exception_handler(PayloadTooLargeExceptionHandler()),
     )
     app.add_exception_handler(
         FilteringError, as_exception_handler(FilteringErrorHandler())

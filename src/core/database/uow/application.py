@@ -62,6 +62,8 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork[R]):
 async def get_uow(session: AsyncSession) -> ApplicationUnitOfWork[RepositoryProtocol]:
     """
     Dependency injection function to get an ApplicationUnitOfWork instance.
+    This DI assumes the AsyncSession has already been created and is injected here.
+    This DI can be used as a dependency in tasks etc.
 
     Args:
         session: The SQLAlchemy AsyncSession to use for database operations

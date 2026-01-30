@@ -17,6 +17,7 @@ from src.core.errors.exceptions import (
     InstanceAlreadyExistsException,
     InstanceNotFoundException,
     InstanceProcessingException,
+    PayloadTooLargeException,
     TooManyRequestsException,
 )
 
@@ -226,6 +227,21 @@ class InstanceProcessingExceptionHandler:
         response_logger.info(log_msg)
         return JSONResponse(
             status_code=400,
+            content=format_error_response(error_type, exc.message),
+        )
+
+
+class PayloadTooLargeExceptionHandler:
+    async def __call__(
+        self, request: Request, exc: PayloadTooLargeException
+    ) -> JSONResponse:
+        error_type = "Payload too large"
+        log_msg = format_log_message(
+            request, error_type, exc.message, exc.additional_info
+        )
+        response_logger.info(log_msg)
+        return JSONResponse(
+            status_code=413,
             content=format_error_response(error_type, exc.message),
         )
 
