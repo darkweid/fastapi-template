@@ -1,5 +1,10 @@
 # FastAPI Template
 
+![CI](https://github.com/darkweid/fastapi-template/actions/workflows/ci.yml/badge.svg?branch=main)
+![Coverage](https://coveralls.io/repos/github/darkweid/fastapi-template/badge.svg?branch=main)
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![License](https://img.shields.io/github/license/darkweid/fastapi-template)
+
 Production-ready FastAPI template with modular architecture, async stack, Celery, and full Docker setup.
 
 ## Key Features
