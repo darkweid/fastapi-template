@@ -18,5 +18,5 @@ class ProvideAsyncValue(Generic[T]):
     def __init__(self, value: T) -> None:
         self._value = value
 
-    async def __call__(self) -> AsyncGenerator[T, None]:
+    async def __call__(self) -> AsyncGenerator[T]:
         yield self._value

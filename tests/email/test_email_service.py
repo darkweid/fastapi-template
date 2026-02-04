@@ -1,10 +1,39 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.schemas import MailTemplateBodyFile, MailTemplateDataBody
 from src.core.email_service.service import EmailService
 from tests.email.mocks import MockMailer
+
+
+class FakeCeleryTask:
+    def __init__(self) -> None:
+        self.delay = MagicMock()
+
+
+class FailingMailer(AbstractMailer):
+    async def send_template(
+        self,
+        subject: str,
+        recipients: list[str],
+        template_name: str,
+        template_data: MailTemplateDataBody | dict[str, str],
+        subtype: str = "html",
+    ) -> None:
+        raise RuntimeError("send failed")
+
+    async def send_with_attachments(
+        self,
+        subject: str,
+        recipients: list[str],
+        body_text: str,
+        file_paths: list[Path],
+        subtype: str = "plain",
+    ) -> None:
+        raise RuntimeError("send failed")
 
 
 @pytest.mark.asyncio
@@ -163,3 +192,84 @@ async def test_send_template_email_empty_recipients(email_service: EmailService)
             template_name="empty.html",
             template_body=body,
         )
+
+
+@pytest.mark.asyncio
+async def test_send_template_email_with_delay_queues_task(
+    email_service: EmailService, monkeypatch: pytest.MonkeyPatch
+):
+    task = FakeCeleryTask()
+    monkeypatch.setattr("src.core.email_service.service.send_email_task", task)
+    body = MailTemplateDataBody(title="Queued", link="https://queue")
+
+    await email_service.send_template_email_with_delay(
+        subject="Queued",
+        recipients=["user@example.com"],
+        template_name="queue.html",
+        template_body=body,
+    )
+
+    task.delay.assert_called_once_with(
+        "Queued",
+        ["user@example.com"],
+        "queue.html",
+        body.model_dump(),
+        "html",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_email_with_delay_queues_task(
+    email_service: EmailService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    task = FakeCeleryTask()
+    monkeypatch.setattr(
+        "src.core.email_service.service.send_email_with_file_task", task
+    )
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("content")
+
+    await email_service.send_file_to_email_with_delay(
+        subject="Files",
+        recipients="user@example.com",
+        attachments=[file_path],
+    )
+
+    task.delay.assert_called_once_with(
+        "Files",
+        ["user@example.com"],
+        [str(file_path)],
+        "plain",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_template_email_raises_when_mailer_fails() -> None:
+    email_service = EmailService(FailingMailer())
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        await email_service.send_template_email(
+            subject="Broken",
+            recipients="user@example.com",
+            template_name="broken.html",
+            template_body=MailTemplateDataBody(title="Broken", link="none"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_email_with_attachments_cleans_up_on_error(
+    tmp_path: Path,
+) -> None:
+    email_service = EmailService(FailingMailer())
+    file_path = tmp_path / "cleanup.txt"
+    file_path.write_text("cleanup")
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        await email_service.send_email_with_attachments(
+            subject="Cleanup",
+            recipients="user@example.com",
+            body_text="body",
+            file_paths=[file_path],
+        )
+
+    assert not file_path.exists()

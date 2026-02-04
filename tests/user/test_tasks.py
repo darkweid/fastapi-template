@@ -46,9 +46,7 @@ async def test_soft_delete_unverified_users_success(
     fake_session: FakeAsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 10, tzinfo=timezone.utc)
-    monkeypatch.setattr(
-        "src.user.tasks.get_utc_now", ProvideValue(fixed_now)
-    )
+    monkeypatch.setattr("src.user.tasks.get_utc_now", ProvideValue(fixed_now))
     users_repo = FakeUsersRepository(result=5)
     uow = build_uow(fake_session, users_repo)
 

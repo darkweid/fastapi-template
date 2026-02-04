@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 
 class AsyncTransactionContext:
-    def __init__(self, session: "FakeAsyncSession") -> None:
+    def __init__(self, session: FakeAsyncSession) -> None:
         self._session = session
         self._was_in_transaction = session.in_transaction()
 
-    async def __aenter__(self) -> "AsyncTransactionContext":
+    async def __aenter__(self) -> AsyncTransactionContext:
         self._session.set_in_transaction(True)
         return self
 
@@ -60,7 +60,7 @@ class FakeUnitOfWork:
         self.commit = AsyncMock(side_effect=self._mark_committed)
         self.rollback = AsyncMock(side_effect=self._mark_rolled_back)
 
-    async def __aenter__(self) -> "FakeUnitOfWork":
+    async def __aenter__(self) -> FakeUnitOfWork:
         return self
 
     async def __aexit__(

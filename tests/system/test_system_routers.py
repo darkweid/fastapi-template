@@ -1,8 +1,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import FastAPI
+import httpx
 import pytest
 
 from src.core.database.session import get_session
@@ -18,18 +18,15 @@ class FakeHealthService:
     async def get_status(self, session) -> HealthCheckResponse:
         return HealthCheckResponse(status="ok")
 
+
 @pytest.mark.asyncio
 async def test_check_health_endpoint(
     app: FastAPI,
     dependency_overrides: DependencyOverrides,
     fake_session: FakeAsyncSession,
 ) -> None:
-    dependency_overrides.set(
-        get_health_service, ProvideValue(FakeHealthService())
-    )
-    dependency_overrides.set(
-        get_session, ProvideAsyncValue(fake_session)
-    )
+    dependency_overrides.set(get_health_service, ProvideValue(FakeHealthService()))
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(

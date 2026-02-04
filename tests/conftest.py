@@ -1,8 +1,8 @@
-import os
 from collections.abc import AsyncGenerator, Generator
+import os
 
-import httpx
 from fastapi import FastAPI
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -34,7 +34,7 @@ def app() -> FastAPI:
 
 
 @pytest.fixture
-def dependency_overrides(app: FastAPI) -> Generator[DependencyOverrides, None, None]:
+def dependency_overrides(app: FastAPI) -> Generator[DependencyOverrides]:
     overrides = DependencyOverrides(app)
     yield overrides
     overrides.reset()
@@ -91,7 +91,7 @@ def app_with_fakes(
 
 
 @pytest_asyncio.fixture
-async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient, None]:
+async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
@@ -102,7 +102,7 @@ async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient, None]:
 @pytest_asyncio.fixture
 async def async_client_with_fakes(
     app_with_fakes: FastAPI,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app_with_fakes)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"

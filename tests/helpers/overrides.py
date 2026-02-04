@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -10,9 +11,7 @@ class DependencyOverrides:
         self._app = app
         self._original: dict[Callable[..., Any], Callable[..., Any] | None] = {}
 
-    def set(
-        self, dependency: Callable[..., Any], override: Callable[..., Any]
-    ) -> None:
+    def set(self, dependency: Callable[..., Any], override: Callable[..., Any]) -> None:
         if dependency not in self._original:
             self._original[dependency] = self._app.dependency_overrides.get(dependency)
         self._app.dependency_overrides[dependency] = override
