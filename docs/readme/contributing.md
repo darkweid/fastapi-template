@@ -3,7 +3,7 @@
 ## How to Contribute
 1. Fork and branch: `git checkout -b feature/your-feature`.
 2. Follow typing, linters.
-3. Run checks: `make lint`, `make test`.
+3. Run checks: `make lint`, `make test` (or `make test-cov` for coverage).
 4. Commit and open a PR with a clear description.
 
 ## CI/CD Pipelines (GitHub Actions)

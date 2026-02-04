@@ -133,6 +133,9 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   ├── auth/                            # Auth tests
 │   ├── core/                            # Core tests
 │   ├── email/                           # Email tests
+│   ├── factories/                       # Test data factories
+│   ├── fakes/                           # In-memory fakes for external systems
+│   ├── helpers/                         # Test helpers and dependency overrides
 │   ├── main/                            # Main module tests
 │   ├── storage/                         # Storage adapter tests
 │   └── system/                          # System routes tests
