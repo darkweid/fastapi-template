@@ -7,7 +7,7 @@ from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import mask_email
+from src.core.utils.security import hash_password, mask_email
 from src.main.config import config
 from src.user.auth.schemas import ResetPasswordModel
 from src.user.auth.token_helpers import invalidate_all_user_sessions
@@ -31,7 +31,7 @@ class ResetPasswordConfirmUseCase:
     Workflow:
     1) Decode and validate the JWT reset token.
     2) Extract email from the token payload.
-    3) Update the user's password in the database.
+    3) Hash and update the user's password in the database.
     4) Invalidate all active sessions for the user in Redis.
     5) Commit the transaction.
 
@@ -74,7 +74,7 @@ class ResetPasswordConfirmUseCase:
 
                     user = await uow.users.update(
                         uow.session,
-                        {"password": data.password},
+                        {"password_hash": hash_password(data.password)},
                         email=email,
                     )
                     await uow.session.flush()
@@ -92,7 +92,8 @@ class ResetPasswordConfirmUseCase:
                     )
                     await uow.commit()
                     logger.info(
-                        "[ResetPasswordConfirm] Successfully changed password for user with email %s.",
+                        "[ResetPasswordConfirm] Successfully changed password for user "
+                        "with email %s.",
                         mask_email(email),
                     )
                     return SuccessResponse(success=True)

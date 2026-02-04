@@ -23,12 +23,39 @@ def test_mask_email_valid_and_invalid() -> None:
 
 
 def test_generate_otp_range(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(security.random, "randint", lambda a, b: 12345)
+    digits = iter(["0", "0", "1", "2", "3"])
+    monkeypatch.setattr(security.secrets, "choice", lambda _: next(digits))
 
-    otp = security.generate_otp()
+    otp = security.generate_otp(5)
 
-    assert otp == "12345"
+    assert otp == "00123"
     assert len(otp) == 5
+
+
+def test_generate_otp_invalid_length() -> None:
+    with pytest.raises(ValueError, match="OTP length must be greater than 0, given 0."):
+        security.generate_otp(0)
+
+
+def test_is_password_hash_recognizes_hash() -> None:
+    hashed = security.hash_password("strong-pass")
+
+    assert security.is_password_hash(hashed) is True
+    assert security.is_password_hash("plain-password") is False
+
+
+def test_needs_password_rehash_false_for_fresh_hash() -> None:
+    hashed = security.hash_password("strong-pass")
+
+    assert security.needs_password_rehash(hashed) is False
+
+
+def test_needs_password_rehash_true_when_context_requires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(security.pwd_context, "needs_update", lambda _: True)
+
+    assert security.needs_password_rehash("any-hash") is True
 
 
 def test_build_email_throttle_key_and_normalize() -> None:

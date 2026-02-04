@@ -12,9 +12,15 @@ from src.core.errors.exceptions import (
 )
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
-from src.core.utils.security import hash_password, mask_email, verify_password
+from src.core.utils.security import (
+    hash_password,
+    mask_email,
+    needs_password_rehash,
+    verify_password,
+)
 from src.user.auth.schemas import LoginUserModel
 from src.user.auth.security import create_access_token, create_refresh_token
+from src.user.models import User
 
 INVALID_CREDENTIALS_MESSAGE = "Incorrect email or password."
 INVALID_CREDENTIALS_PASSWORD_HASH = hash_password("dummy-password")
@@ -39,14 +45,16 @@ class LoginUserUseCase:
     2) Verify password (using dummy hash if user not found to prevent timing attacks).
     3) Check if user is verified.
     4) Check if user is active.
-    5) Generate access and refresh tokens.
+    5) Rehash and persist the password if needed.
+    6) Generate access and refresh tokens.
 
     Side effects:
-    - None (Token creation handles its own caching).
+    - Persists password hash updates when rehashing is required.
+    - Token creation handles its own caching.
 
     Errors:
-    - InstanceProcessingException: if credentials invalid or user not verified.
-    - PermissionDeniedException: if user is blocked.
+    - InstanceProcessingException: if credentials are invalid or the user is not verified.
+    - PermissionDeniedException: if the user is blocked.
 
     Returns:
     - TokenModel with access and refresh tokens.
@@ -74,7 +82,7 @@ class LoginUserUseCase:
                 await verify_password(data.password, INVALID_CREDENTIALS_PASSWORD_HASH)
                 raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
-            correct_password = await verify_password(data.password, user.password)
+            correct_password = await verify_password(data.password, user.password_hash)
             if not correct_password:
                 logger.debug(
                     "[LoginUser] Incorrect password for user '%s'",
@@ -96,11 +104,13 @@ class LoginUserUseCase:
                 )
                 raise PermissionDeniedException("User is blocked")
 
+            await self._rehash_password_if_needed(uow, user, data.password)
+            await uow.session.flush()
             token_data = {"sub": str(user.id)}
 
             session_id = str(uuid4())
             family = str(uuid4())
-
+            await uow.commit()
             return TokenModel(
                 access_token=await create_access_token(
                     token_data, redis_client=self.redis_client, session_id=session_id
@@ -112,6 +122,20 @@ class LoginUserUseCase:
                     family=family,
                 ),
             )
+
+    async def _rehash_password_if_needed(
+        self,
+        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        user: User,
+        raw_password: str,
+    ) -> None:
+        if not needs_password_rehash(user.password_hash):
+            return
+        await uow.users.update(
+            uow.session,
+            {"password_hash": hash_password(raw_password)},
+            id=user.id,
+        )
 
 
 def get_login_user_use_case(

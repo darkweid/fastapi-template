@@ -8,7 +8,7 @@ from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import mask_email
+from src.core.utils.security import hash_password, mask_email
 from src.user.auth.schemas import UserNewPassword
 from src.user.auth.token_helpers import invalidate_all_user_sessions
 
@@ -27,7 +27,7 @@ class UpdateUserPasswordUseCase:
     - User must exist in the database.
 
     Workflow:
-    1) Update user password in the database (automatically hashed by model).
+    1) Hash and update user password in the database.
     2) Flush session and log success.
     3) Invalidate all active Redis sessions for the user.
     4) Commit the transaction.
@@ -53,7 +53,7 @@ class UpdateUserPasswordUseCase:
 
     async def execute(self, data: UserNewPassword, user_id: UUID) -> SuccessResponse:
         async with self.uow as uow:
-            update_data = {"password": data.password}
+            update_data = {"password_hash": hash_password(data.password)}
             updated_user = await uow.users.update(uow.session, update_data, id=user_id)
             if not updated_user:
                 logger.info("[UpdateUserPassword] User not found.")

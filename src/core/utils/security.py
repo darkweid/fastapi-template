@@ -1,6 +1,6 @@
 import asyncio
 import hashlib
-import random
+import secrets
 
 from passlib.context import CryptContext
 from pydantic import EmailStr
@@ -20,12 +20,42 @@ pwd_context = CryptContext(
 
 def hash_password(password: str) -> str:
     """
-    Hashes the provided password using Argon2 with the configured parameters.
+    Hashes a given plaintext password using a secure hashing algorithm.
 
-    :param password: The plaintext password as a string.
-    :return: The hashed password as a string.
+    This function uses a password hashing context to hash the input password securely.
+
+    Args:
+        password: A plaintext password string to be hashed.
+
+    Returns:
+        The securely hashed password as a string.
     """
     return pwd_context.hash(password)
+
+
+def is_password_hash(value: str) -> bool:
+    """
+    Check whether the given value looks like a password hash.
+    """
+    return pwd_context.identify(value) is not None
+
+
+def needs_password_rehash(hashed_password: str) -> bool:
+    """
+    Determines if a hashed password needs to be rehashed to maintain security.
+
+    This function evaluates whether a given hashed password requires rehashing based
+    on the current settings of the password hashing context. Rehashing is necessary
+    if the algorithm, iteration count, or salt length has changed since the password
+    was first hashed.
+
+    Args:
+        hashed_password: The hashed password to be evaluated as a string.
+
+    Returns:
+        bool: True if the hashed password needs to be rehashed, False otherwise.
+    """
+    return pwd_context.needs_update(hashed_password)
 
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -44,11 +74,14 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def generate_otp() -> str:
+def generate_otp(length: int = 5) -> str:
     """
-    Generate a random OTP
+    Generate a random numeric OTP with a fixed length.
     """
-    return str(random.randint(10000, 99999))
+    if length <= 0:
+        raise ValueError(f"OTP length must be greater than 0, given {length}.")
+
+    return "".join(secrets.choice("0123456789") for _ in range(length))
 
 
 def mask_email(email: str | EmailStr) -> str:
