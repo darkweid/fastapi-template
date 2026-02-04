@@ -7,16 +7,6 @@ from src.core.email_service.service import EmailService
 from tests.email.mocks import MockMailer
 
 
-@pytest.fixture
-def mock_mailer() -> MockMailer:
-    return MockMailer()
-
-
-@pytest.fixture
-def email_service(mock_mailer) -> EmailService:
-    return EmailService(mock_mailer)
-
-
 @pytest.mark.asyncio
 async def test_send_template_email_valid(
     email_service: EmailService, mock_mailer: MockMailer

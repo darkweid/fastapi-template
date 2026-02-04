@@ -92,7 +92,7 @@ def app_with_fakes(
 
 @pytest_asyncio.fixture
 async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient, None]:
-    transport = httpx.ASGITransport(app=app, lifespan="off")
+    transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -103,7 +103,7 @@ async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient, None]:
 async def async_client_with_fakes(
     app_with_fakes: FastAPI,
 ) -> AsyncGenerator[httpx.AsyncClient, None]:
-    transport = httpx.ASGITransport(app=app_with_fakes, lifespan="off")
+    transport = httpx.ASGITransport(app=app_with_fakes)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:

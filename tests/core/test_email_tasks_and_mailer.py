@@ -6,40 +6,34 @@ import pytest
 from src.core.email_service import tasks
 from src.core.email_service.fastapi_mailer import FastAPIMailer
 from src.core.email_service.tasks import send_email_task, send_email_with_file_task
-
-
-@pytest.fixture()
-def mailer_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    mock = MagicMock()
-    mock.send_template = AsyncMock()
-    mock.send_with_attachments = AsyncMock()
-    return mock
+from tests.email.mocks import MockMailer
+from tests.helpers.providers import ProvideValue
 
 
 def test_send_email_task_calls_mailer(
-    mailer_mock: MagicMock, monkeypatch: pytest.MonkeyPatch
+    mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(tasks, "get_mailer", lambda: mailer_mock)
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
     send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
 
-    mailer_mock.send_template.assert_called_once_with(
-        subject="Subj",
-        recipients=["a@b.com"],
-        template_name="tpl.html",
-        template_data={"k": "v"},
-        subtype="html",
-    )
+    assert len(mock_mailer.sent_template_emails) == 1
+    payload = mock_mailer.sent_template_emails[0]
+    assert payload["subject"] == "Subj"
+    assert payload["recipients"] == ["a@b.com"]
+    assert payload["template_name"] == "tpl.html"
+    assert payload["template_data"] == {"k": "v"}
+    assert payload["subtype"] == "html"
 
 
 def test_send_email_with_file_task_calls_mailer(
-    mailer_mock: MagicMock, monkeypatch: pytest.MonkeyPatch
+    mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(tasks, "get_mailer", lambda: mailer_mock)
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
     send_email_with_file_task("S", ["a@b.com"], ["/tmp/a.txt"], "plain")
 
-    mailer_mock.send_with_attachments.assert_called_once()
+    assert len(mock_mailer.sent_attachments) == 1
 
 
 @pytest.mark.asyncio
@@ -67,10 +61,12 @@ async def test_fastapi_mailer_wrappers(
 
 
 def test_email_tasks_propagate_exceptions(
-    mailer_mock: MagicMock, monkeypatch: pytest.MonkeyPatch
+    mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mailer_mock.send_template.side_effect = RuntimeError("fail")
-    monkeypatch.setattr(tasks, "get_mailer", lambda: mailer_mock)
+    monkeypatch.setattr(
+        mock_mailer, "send_template", AsyncMock(side_effect=RuntimeError("fail"))
+    )
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
     with pytest.raises(RuntimeError):
         send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")

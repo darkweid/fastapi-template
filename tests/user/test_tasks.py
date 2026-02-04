@@ -1,91 +1,92 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.user.repositories import UserRepository
 from src.user.tasks import _soft_delete_unverified_users
+from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
+from tests.helpers.providers import ProvideValue
+
+
+class SessionContext:
+    def __init__(self, session: FakeAsyncSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> FakeAsyncSession:
+        return self._session
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
+        return None
+
+
+class FakeUsersRepository:
+    def __init__(
+        self, result: int | None = None, error: Exception | None = None
+    ) -> None:
+        if error is not None:
+            self.batch_soft_delete = AsyncMock(side_effect=error)
+        else:
+            self.batch_soft_delete = AsyncMock(return_value=result or 0)
+
+
+def build_uow(
+    session: FakeAsyncSession, users_repo: FakeUsersRepository
+) -> FakeUnitOfWork:
+    return FakeUnitOfWork(session=session, repositories={"users": users_repo})
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_unverified_users_success() -> None:
-    # Setup mocks
-    mock_session = AsyncMock()
-    mock_session_context = AsyncMock()
-    mock_session_context.__aenter__.return_value = mock_session
+async def test_soft_delete_unverified_users_success(
+    fake_session: FakeAsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed_now = datetime(2024, 1, 10, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "src.user.tasks.get_utc_now", ProvideValue(fixed_now)
+    )
+    users_repo = FakeUsersRepository(result=5)
+    uow = build_uow(fake_session, users_repo)
 
-    # Mock local_async_session to return our mock_session_context
-    with patch("src.user.tasks.local_async_session", return_value=mock_session_context):
-        # Mock ApplicationUnitOfWork
-        mock_uow = AsyncMock()
-        mock_uow.session = mock_session
-        mock_uow.users = AsyncMock()
-        mock_uow.users.batch_soft_delete.return_value = 5
+    with patch(
+        "src.user.tasks.local_async_session",
+        return_value=SessionContext(fake_session),
+    ), patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
+        result = await _soft_delete_unverified_users()
 
-        # ApplicationUnitOfWork is used as a context manager
-        mock_uow.__aenter__.return_value = mock_uow
-
-        with patch("src.user.tasks.ApplicationUnitOfWork", return_value=mock_uow):
-            # Execute
-            result = await _soft_delete_unverified_users()
-
-            # Assertions
-            assert result == 5
-            mock_uow.users.batch_soft_delete.assert_called_once()
-            mock_uow.commit.assert_called_once()
+    assert result == 5
+    users_repo.batch_soft_delete.assert_awaited_once()
+    uow.commit.assert_awaited_once()
+    uow.rollback.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_unverified_users_failure() -> None:
-    # We use a mock that correctly implements the context manager protocol
-    # to avoid the 'coroutine' object error during safe_begin/begin_nested
-    class MockSession:
-        def __init__(self):
-            self.in_transaction = MagicMock(return_value=False)
-            self.begin = MagicMock()
-            self.begin_nested = MagicMock()
-            self.rollback = AsyncMock()
-            self.commit = AsyncMock()
+async def test_soft_delete_unverified_users_failure(
+    fake_session: FakeAsyncSession,
+) -> None:
+    users_repo = FakeUsersRepository(error=Exception("DB Error"))
+    uow = build_uow(fake_session, users_repo)
 
-    class MockContextManager:
-        async def __aenter__(self):
-            return MagicMock()
+    with patch(
+        "src.user.tasks.local_async_session",
+        return_value=SessionContext(fake_session),
+    ), patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
+        result = await _soft_delete_unverified_users()
 
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
-
-    mock_session = MockSession()
-    mock_session.begin.return_value = MockContextManager()
-    mock_session.begin_nested.return_value = MockContextManager()
-
-    mock_session_context = AsyncMock()
-    mock_session_context.__aenter__.return_value = mock_session
-
-    with patch("src.user.tasks.local_async_session", return_value=mock_session_context):
-        from src.core.database.uow import ApplicationUnitOfWork
-
-        uow = ApplicationUnitOfWork(mock_session)  # type: ignore
-
-        mock_users_repo = AsyncMock()
-        mock_users_repo.batch_soft_delete.side_effect = Exception("DB Error")
-
-        with patch.object(
-            ApplicationUnitOfWork, "users", new_callable=lambda: mock_users_repo
-        ):
-            with patch.object(
-                ApplicationUnitOfWork, "rollback", wraps=uow.rollback
-            ) as mock_rollback:
-                result = await _soft_delete_unverified_users()
-
-                assert result == 0
-                mock_rollback.assert_called_once()
-                assert uow.completed is True
+    assert result == 0
+    uow.rollback.assert_awaited_once()
+    assert uow.completed is True
 
 
 @pytest.mark.asyncio
-async def test_batch_soft_delete_raises_value_error_on_empty_filters() -> None:
-    from src.user.repositories import UserRepository
-
+async def test_batch_soft_delete_raises_value_error_on_empty_filters(
+    fake_session: FakeAsyncSession,
+) -> None:
     repo = UserRepository()
-    mock_session = AsyncMock()
 
     with pytest.raises(ValueError, match="At least one filter must be provided"):
-        await repo.batch_soft_delete(mock_session)
+        await repo.batch_soft_delete(fake_session)

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -15,15 +16,19 @@ class MockMailer(AbstractMailer):
         subject: str,
         recipients: list[str],
         template_name: str,
-        template_data: BaseModel,
+        template_data: BaseModel | dict[str, Any],
         subtype: str = "html",
     ) -> None:
+        if isinstance(template_data, BaseModel):
+            payload = template_data.model_dump()
+        else:
+            payload = dict(template_data)
         self.sent_template_emails.append(
             {
                 "subject": subject,
                 "recipients": recipients,
                 "template_name": template_name,
-                "template_data": template_data.model_dump(),
+                "template_data": payload,
                 "subtype": subtype,
             }
         )

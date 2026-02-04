@@ -1,66 +1,40 @@
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, Mock
-from uuid import UUID, uuid4
 
 import pytest
 
 from src.user.auth.schemas import LoginUserModel
 import src.user.auth.usecases.login as login_usecase
 from src.user.auth.usecases.login import LoginUserUseCase
-
-
-@dataclass
-class FakeUser:
-    id: UUID
-    password_hash: str
-    is_verified: bool
-    is_active: bool
-
-
-class FakeSession:
-    def __init__(self) -> None:
-        self.flush = AsyncMock()
+from src.user.models import User
+from tests.factories.user_factory import build_user
+from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
+from tests.fakes.redis import InMemoryRedis
 
 
 class FakeUserRepository:
-    def __init__(self, user: FakeUser) -> None:
+    def __init__(self, user: User) -> None:
         self._user = user
         self.update = AsyncMock(return_value=user)
 
-    async def get_single(self, session: FakeSession, **filters: object) -> FakeUser:
+    async def get_single(self, session: FakeAsyncSession, **filters: object) -> User:
         return self._user
 
 
-class FakeUnitOfWork:
-    def __init__(self, user: FakeUser) -> None:
-        self.session = FakeSession()
-        self.users = FakeUserRepository(user)
-        self.commit = AsyncMock()
-
-    async def __aenter__(self) -> "FakeUnitOfWork":
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object | None,
-    ) -> None:
-        return None
+def build_uow(user: User, session: FakeAsyncSession) -> FakeUnitOfWork:
+    return FakeUnitOfWork(
+        session=session,
+        repositories={"users": FakeUserRepository(user)},
+    )
 
 
 @pytest.mark.asyncio
 async def test_login_rehashes_password_when_needed(
     monkeypatch: pytest.MonkeyPatch,
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
 ) -> None:
-    user = FakeUser(
-        id=uuid4(),
-        password_hash="existing-hash",
-        is_verified=True,
-        is_active=True,
-    )
-    uow = FakeUnitOfWork(user)
-    redis_client = AsyncMock()
+    user = build_user()
+    uow = build_uow(user, fake_session)
 
     needs_rehash_mock = Mock(return_value=True)
     hash_mock = Mock(return_value="new-hash")
@@ -74,7 +48,7 @@ async def test_login_rehashes_password_when_needed(
     monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=redis_client)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
     result = await use_case.execute(
         LoginUserModel(email="user@example.com", password="plain-pass")
     )
@@ -95,15 +69,11 @@ async def test_login_rehashes_password_when_needed(
 @pytest.mark.asyncio
 async def test_login_does_not_rehash_when_not_needed(
     monkeypatch: pytest.MonkeyPatch,
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
 ) -> None:
-    user = FakeUser(
-        id=uuid4(),
-        password_hash="existing-hash",
-        is_verified=True,
-        is_active=True,
-    )
-    uow = FakeUnitOfWork(user)
-    redis_client = AsyncMock()
+    user = build_user()
+    uow = build_uow(user, fake_session)
 
     needs_rehash_mock = Mock(return_value=False)
     verify_mock = AsyncMock(return_value=True)
@@ -115,7 +85,7 @@ async def test_login_does_not_rehash_when_not_needed(
     monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=redis_client)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
     result = await use_case.execute(
         LoginUserModel(email="user@example.com", password="plain-pass")
     )
