@@ -3,7 +3,9 @@
 ![CI](https://github.com/darkweid/fastapi-template/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Coverage](https://coveralls.io/repos/github/darkweid/fastapi-template/badge.svg?branch=main)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
+![Mypy](https://img.shields.io/badge/mypy-strict-success)
 ![License](https://img.shields.io/github/license/darkweid/fastapi-template)
+
 
 Production-ready FastAPI template with modular architecture, async stack, Celery, and full Docker setup.
 
@@ -20,6 +22,11 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Observability/resilience: structured logging (loggers), retry utils, health route.
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
+
+## Tooling
+![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)
+![Black](https://img.shields.io/badge/black-formatter-000000?logo=black&logoColor=white)
+![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
 
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
