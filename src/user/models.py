@@ -7,7 +7,7 @@ from src.core.database.mixins import (
     TimestampMixin,
     UUIDIDMixin,
 )
-from src.core.utils.security import hash_password
+from src.core.utils.security import is_password_hash
 from src.user.enums import UserRole
 
 
@@ -33,7 +33,7 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
     email: Mapped[str] = mapped_column(String(255))
     username: Mapped[str] = mapped_column(String(60))
     phone_number: Mapped[str] = mapped_column(String(20))
-    password: Mapped[str] = mapped_column(String(255))
+    password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(
         SQLEnum(UserRole), nullable=False, default=UserRole.VIEWER
     )
@@ -43,24 +43,26 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
     """relationships"""
     # Add relationships here
 
-    @validates("password")
-    def validate_password(self, _: str, value: str) -> str:
+    @validates("password_hash")
+    def validate_password_hash(self, _: str, value: str) -> str:
         """
-        Validates and processes the 'password' field. Ensures the provided value is correctly hashed if it does not match
-        the existing password or has been updated.
+        Validate that the password hash looks like a supported hash format.
 
         Args:
             _: str
                 Unused parameter
             value: str
-                The new or updated password value provided for validation.
+                The new or updated password hash provided for validation.
 
         Returns:
             str
-                The validated and potentially hashed password value.
+                The validated password hash.
+
+        Raises:
+            ValueError: If the value is not a valid password hash.
         """
-        if value != self.password:
-            value = hash_password(value)
+        if not is_password_hash(value):
+            raise ValueError("Password hash must be a valid hash.")
         return value
 
     @property
@@ -68,4 +70,7 @@ class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
         return f"{self.first_name} {self.last_name}"
 
     def __repr__(self) -> str:
-        return f"<User(id={str(self.id)},first_name={self.first_name!r}, email={self.email!r})"
+        return (
+            f"<User(id={self.id}, first_name={self.first_name!r}, "
+            f"email={self.email!r})>"
+        )

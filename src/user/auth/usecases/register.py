@@ -4,7 +4,7 @@ from starlette.datastructures import URL
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
-from src.core.utils.security import build_email_throttle_key
+from src.core.utils.security import build_email_throttle_key, hash_password
 from src.user.auth.schemas import CreateUserModel
 from src.user.auth.services.verification_notifier import (
     VerificationNotifier,
@@ -57,9 +57,12 @@ class RegisterUseCase:
         self, data: CreateUserModel, request_base_url: URL
     ) -> UserProfileViewModel:
         async with self.uow as uow:
+            user_data = data.model_dump()
+            raw_password = user_data.pop("password")
+            user_data["password_hash"] = hash_password(raw_password)
             user = await uow.users.create(
                 session=uow.session,
-                data=data.model_dump(),
+                data=user_data,
             )
             await uow.session.flush()
 

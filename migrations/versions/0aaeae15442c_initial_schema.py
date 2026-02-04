@@ -29,7 +29,7 @@ def upgrade() -> None:
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("username", sa.String(length=60), nullable=False),
         sa.Column("phone_number", sa.String(length=20), nullable=False),
-        sa.Column("password", sa.String(length=255), nullable=False),
+        sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column(
             "role",
             postgresql.ENUM(
