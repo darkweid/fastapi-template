@@ -26,7 +26,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
-- Stop: `make down`; logs: `make logs`; tests: `make test`; lint: `make lint`.
+- Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
 
 ## Ports
 - Nginx: 8000 → app:8001
@@ -48,6 +48,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - `make logs` / `make logs-app` — view logs
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
+- `make test-cov` — tests with coverage report
 
 ## Pre-commit Hooks
 - Install dev deps: `pip install -r infra/requirements/dev.txt`

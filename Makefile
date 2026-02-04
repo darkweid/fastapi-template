@@ -135,6 +135,10 @@ check-lint:
 test:
 	TESTING=true pytest
 
+.PHONY: test-cov
+test-cov:
+	TESTING=true pytest --cov=src --cov-report=term-missing --cov-report=xml
+
 .PHONY: check-coverage
 check-coverage:
 	pytest --cov --cov-report=term-missing

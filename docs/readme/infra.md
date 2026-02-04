@@ -49,6 +49,7 @@ make logs-app         # app logs
 make migrate          # alembic upgrade head
 make migration        # create alembic revision
 make test             # pytest
+make test-cov         # pytest + coverage
 make lint             # pre-commit hooks
 make down             # stop stack
 make clean            # remove stack + volumes/images/orphans
@@ -56,6 +57,6 @@ make clean            # remove stack + volumes/images/orphans
 
 ## Troubleshooting
 - Ensure Docker/Compose are installed.
-- `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test`.
+- `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test` / `make test-cov`.
 - Use `make logs` or service-specific logs to inspect errors.
 - If migrations fail, check Postgres health first.
