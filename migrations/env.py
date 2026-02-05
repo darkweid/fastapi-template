@@ -12,7 +12,6 @@ import models  # noqa
 from src.core.database.base import Base
 from src.main.config import config as app_config
 
-
 config: Config = context.config
 target_metadata: MetaData = Base.metadata
 logger = logging.getLogger(__name__)

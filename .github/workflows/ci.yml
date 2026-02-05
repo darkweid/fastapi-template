@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: |
           export PATH="$PWD/.venv/bin:$PATH"
-          TESTING=true pytest --cov=src --cov-report=term-missing --cov-report=xml
+          make test-cov
 
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2.3.6

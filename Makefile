@@ -12,6 +12,15 @@ CELERY_BEAT_CONTAINER = celery_beat
 POSTGRES_CONTAINER = postgres
 REDIS_CONTAINER = redis
 
+# Requirements management
+REQ_DIR = infra/requirements
+REQ_BASE_IN = $(REQ_DIR)/base.in
+REQ_DEV_IN = $(REQ_DIR)/dev.in
+REQ_PROD_IN = $(REQ_DIR)/prod.in
+REQ_BASE_TXT = $(REQ_DIR)/base.txt
+REQ_DEV_TXT = $(REQ_DIR)/dev.txt
+REQ_PROD_TXT = $(REQ_DIR)/prod.txt
+
 # Build Docker containers
 .PHONY: build
 build:
@@ -127,6 +136,20 @@ logs-postgres:
 lint:
 	pre-commit run --all-files
 
+.PHONY: req-compile
+req-compile:
+	python -m piptools compile -o $(REQ_BASE_TXT) $(REQ_BASE_IN)
+	python -m piptools compile -o $(REQ_DEV_TXT) $(REQ_DEV_IN)
+	python -m piptools compile -o $(REQ_PROD_TXT) $(REQ_PROD_IN)
+
+.PHONY: req-sync-dev
+req-sync-dev:
+	python -m piptools sync $(REQ_DEV_TXT)
+
+.PHONY: req-sync-prod
+req-sync-prod:
+	python -m piptools sync $(REQ_PROD_TXT)
+
 .PHONY: check-lint
 check-lint:
 	pre-commit run --all-files --hook-stage push --verbose
@@ -201,4 +224,9 @@ info:
 	@echo "   • make check-coverage     # Check coverage report"
 	@echo "   • make lint               # Run linting on all files"
 	@echo "   • make check-lint         # Check linting during push"
+	@echo ""
+	@echo "📦 Dependencies:"
+	@echo "   • make req-compile        # Compile requirements (*.in -> *.txt)"
+	@echo "   • make req-sync-dev       # Sync dev environment with requirements"
+	@echo "   • make req-sync-prod      # Sync prod environment with requirements"
 	@echo ""
