@@ -4,6 +4,7 @@
 black
 mypy
 pre-commit
+pip-tools
 
 # Testing dependencies
 pytest

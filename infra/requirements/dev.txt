@@ -59,6 +59,8 @@ botocore==1.40.61
     #   aiobotocore
     #   boto3
     #   s3transfer
+build==1.4.0
+    # via pip-tools
 celery==5.6.2
     # via
     #   -r infra/requirements/base.in
@@ -81,6 +83,7 @@ click==8.3.1
     #   click-didyoumean
     #   click-plugins
     #   click-repl
+    #   pip-tools
     #   uvicorn
 click-didyoumean==0.3.1
     # via celery
@@ -173,16 +176,20 @@ nodeenv==1.10.0
 packaging==26.0
     # via
     #   black
+    #   build
     #   geoalchemy2
     #   gunicorn
     #   kombu
     #   pytest
+    #   wheel
 passlib==1.7.4
     # via -r infra/requirements/base.in
 pathspec==1.0.4
     # via
     #   black
     #   mypy
+pip-tools==7.5.2
+    # via -r infra/requirements/dev.in
 platformdirs==4.5.1
     # via
     #   black
@@ -219,6 +226,10 @@ pygments==2.19.2
     # via pytest
 pyjwt==2.11.0
     # via -r infra/requirements/base.in
+pyproject-hooks==1.2.0
+    # via
+    #   build
+    #   pip-tools
 pytest==9.0.2
     # via
     #   -r infra/requirements/dev.in
@@ -310,7 +321,13 @@ wcwidth==0.5.3
     # via prompt-toolkit
 websockets==16.0
     # via -r infra/requirements/dev.in
+wheel==0.46.3
+    # via pip-tools
 wrapt==1.17.3
     # via aiobotocore
 yarl==1.22.0
     # via aiohttp
+
+# The following packages are considered to be unsafe in a requirements file:
+# pip
+# setuptools
