@@ -15,7 +15,7 @@ services:
     container_name: template-postgres
     build:
       context: ..
-      dockerfile: infra/postgres/Dockerfile-postgis
+      dockerfile: infra/postgres/Dockerfile
     image: template-postgres-postgis:18
     restart: always
     healthcheck:
