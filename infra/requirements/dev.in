@@ -1,0 +1,17 @@
+-r base.in
+
+# Development tools
+black
+mypy
+pre-commit
+
+# Testing dependencies
+pytest
+pytest-asyncio
+pytest-cov
+
+# Type stubs
+types-passlib
+types-pytz
+
+websockets
