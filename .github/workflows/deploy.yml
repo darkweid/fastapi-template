@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Set up SSH for secure connection to the deployment server
       - name: Set up SSH
@@ -53,7 +53,7 @@ jobs:
 
       # Check out the exact commit that triggered this workflow
       - name: Checkout correct commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_commit.id }}
 
