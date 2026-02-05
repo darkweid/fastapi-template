@@ -73,7 +73,7 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   │   ├── main.conf                    # Shared proxy settings (upgrade headers, etc.)
 │   │   └── dev-nginx.conf               # Dev-only reverse-proxy config
 │   ├── postgres/                        # PostgreSQL configuration
-│   │   ├── Dockerfile-postgis           # Dockerfile for PostgreSQL with PostGIS
+│   │   ├── Dockerfile                   # Dockerfile for PostgreSQL with PostGIS
 │   │   ├── init-postgis.sh              # Initialization script
 │   │   └── postgresql.conf              # PostgreSQL configuration
 │   ├── redis.conf                       # Redis configuration

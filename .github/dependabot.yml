@@ -36,7 +36,24 @@ updates:
         patterns:
           - "*"
   - package-ecosystem: "docker"
-    directory: "/infra"
+    directory: "/infra/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "Chore:"
+      include: "scope"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+  - package-ecosystem: "docker"
+    directory: "/infra/postgres"
     schedule:
       interval: "weekly"
       day: "monday"

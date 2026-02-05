@@ -11,7 +11,7 @@
 Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requirements).
 
 ## Containers
-- **Postgres:** `infra/postgres/Dockerfile-postgis`, stores data in volume.
+- **Postgres:** `infra/postgres/Dockerfile`, stores data in volume.
 - **App:** Uvicorn/Gunicorn serving FastAPI.
 - **Celery_worker:** Background tasks.
 - **Celery_beat:** Schedules periodic tasks.
