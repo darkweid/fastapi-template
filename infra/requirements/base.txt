@@ -5,7 +5,7 @@
 #    pip-compile --output-file=infra/requirements/base.txt infra/requirements/base.in
 #
 aioboto3==15.5.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 aiobotocore[boto3]==2.25.1
     # via aioboto3
 aiofiles==25.1.0
@@ -22,10 +22,10 @@ aiosmtplib==5.1.0
     # via fastapi-mail
 alembic==1.18.3
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   alembic-postgresql-enum
 alembic-postgresql-enum==1.9.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 amqp==5.3.1
     # via kombu
 annotated-doc==0.0.4
@@ -37,13 +37,13 @@ anyio==4.12.1
     #   httpx
     #   starlette
 argon2-cffi==25.1.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 argon2-cffi-bindings==25.1.0
     # via argon2-cffi
 asgiref==3.11.1
-    # via -r infra/requirements/base.in
+    # via -r base.in
 asyncpg==0.31.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 attrs==25.4.0
     # via aiohttp
 billiard==4.2.4
@@ -59,7 +59,7 @@ botocore==1.40.61
     #   s3transfer
 celery==5.6.2
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   flower
 certifi==2026.1.4
     # via
@@ -89,24 +89,24 @@ dnspython==2.8.0
     # via email-validator
 email-validator==2.3.0
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   fastapi-mail
-fastapi==0.128.1
-    # via -r infra/requirements/base.in
+fastapi==0.128.5
+    # via -r base.in
 fastapi-mail==1.6.1
-    # via -r infra/requirements/base.in
+    # via -r base.in
 flower==2.0.1
-    # via -r infra/requirements/base.in
+    # via -r base.in
 frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
 geoalchemy2==0.18.1
-    # via -r infra/requirements/base.in
+    # via -r base.in
 greenlet==3.3.1
     # via sqlalchemy
-gunicorn==25.0.1
-    # via -r infra/requirements/base.in
+gunicorn==25.0.3
+    # via -r base.in
 h11==0.16.0
     # via
     #   httpcore
@@ -114,7 +114,7 @@ h11==0.16.0
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
-    # via -r infra/requirements/base.in
+    # via -r base.in
 humanize==4.15.0
     # via flower
 idna==3.11
@@ -133,7 +133,7 @@ jmespath==1.1.0
 kombu==5.6.2
     # via celery
 loguru==0.7.3
-    # via -r infra/requirements/base.in
+    # via -r base.in
 mako==1.3.10
     # via alembic
 markupsafe==3.0.3
@@ -151,7 +151,7 @@ packaging==26.0
     #   gunicorn
     #   kombu
 passlib==1.7.4
-    # via -r infra/requirements/base.in
+    # via -r base.in
 prometheus-client==0.24.1
     # via flower
 prompt-toolkit==3.0.52
@@ -164,7 +164,7 @@ pycparser==3.0
     # via cffi
 pydantic==2.12.5
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   fastapi
     #   fastapi-mail
     #   pydantic-settings
@@ -172,10 +172,10 @@ pydantic-core==2.41.5
     # via pydantic
 pydantic-settings==2.12.0
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   fastapi-mail
 pyjwt==2.11.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
@@ -183,27 +183,27 @@ python-dateutil==2.9.0.post0
     #   celery
 python-dotenv==1.2.1
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   pydantic-settings
 python-multipart==0.0.22
-    # via -r infra/requirements/base.in
+    # via -r base.in
 pytz==2025.2
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   flower
 redis==7.1.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
 sentry-sdk==2.52.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 six==1.17.0
     # via python-dateutil
 sqlalchemy==2.0.46
     # via
-    #   -r infra/requirements/base.in
+    #   -r base.in
     #   alembic
     #   alembic-postgresql-enum
     #   geoalchemy2
@@ -224,6 +224,7 @@ typing-extensions==4.15.0
     #   typing-inspection
 typing-inspection==0.4.2
     # via
+    #   fastapi
     #   pydantic
     #   pydantic-settings
 tzdata==2025.3
@@ -235,9 +236,9 @@ urllib3==2.6.3
     #   botocore
     #   sentry-sdk
 uuid6==2025.0.1
-    # via -r infra/requirements/base.in
+    # via -r base.in
 uvicorn==0.40.0
-    # via -r infra/requirements/base.in
+    # via -r base.in
 vine==5.1.0
     # via
     #   amqp
