@@ -207,6 +207,16 @@ class AppConfig(BaseModel):
     CORS_EXPOSE_HEADERS: list[str] = Field(["*"])
 
     TRUST_PROXY_HEADERS: bool
+    TRUST_PROXY_HOSTS: list[str] = Field(
+        [
+            "127.0.0.1",
+            "::1",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "fc00::/7",
+        ]
+    )
 
     PROJECT_NAME: str
     PROJECT_SECRET_KEY: str

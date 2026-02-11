@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
+from core.proxy_headers import TrustedProxyHeadersMiddleware
 from loggers import get_logger
 from src.core.middleware import register_middlewares
 from src.main.config import config
@@ -22,6 +23,12 @@ def get_application() -> FastAPI:
         version=config.app.VERSION,
         lifespan=lifespan,
     )
+
+    if config.app.TRUST_PROXY_HEADERS:
+        application.add_middleware(
+            TrustedProxyHeadersMiddleware,
+            trusted_hosts=config.app.TRUST_PROXY_HOSTS,
+        )
 
     # Register custom middlewares
     register_middlewares(application)
