@@ -24,6 +24,7 @@ repos:
       - id: debug-statements
       - id: check-merge-conflict
       - id: requirements-txt-fixer
+        exclude: ^infra/requirements/.*\.txt$ # Exclude compiled reqs files
       - id: check-json
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
