@@ -146,6 +146,11 @@ async def test_login_refresh_access_flow(
     async_client,
     dependency_overrides: DependencyOverrides,
 ) -> None:
+    """
+    Given: a client receives initial login tokens and later uses refreshed tokens.
+    When: login, refresh, and /users/me requests are executed in sequence.
+    Then: each step succeeds and /users/me is authorized by the latest access token.
+    """
     state = TokenState()
     user = build_user()
     payload = build_refresh_payload(str(user.id))
@@ -206,6 +211,11 @@ async def test_reset_password_flow(
     async_client,
     dependency_overrides: DependencyOverrides,
 ) -> None:
+    """
+    Given: reset request use case issues a token and confirm use case validates it.
+    When: reset request and reset confirm endpoints are called with matching token data.
+    Then: both endpoints return success and the issued token is accepted by confirm flow.
+    """
     state = ResetPasswordState()
     request_use_case = ResetPasswordRequestUseCaseFake(state, token="reset-token")
     confirm_use_case = ResetPasswordConfirmUseCaseFake(state)

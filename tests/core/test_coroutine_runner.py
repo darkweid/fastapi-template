@@ -16,15 +16,11 @@ async def _raise_error() -> None:
 
 
 def test_execute_coroutine_sync_returns_result() -> None:
-    """Base coroutine execution test."""
     result = execute_coroutine_sync(coroutine=_add(2, 3))
     assert result == 5
 
 
 def test_execute_coroutine_sync_reuses_existing_open_loop() -> None:
-    """
-    if you have an existing open event loop, function should reuse it.
-    """
     try:
         previous_loop = asyncio.get_event_loop()
     except RuntimeError:
@@ -43,10 +39,6 @@ def test_execute_coroutine_sync_reuses_existing_open_loop() -> None:
 
 
 def test_execute_coroutine_sync_creates_new_loop_if_closed() -> None:
-    """
-    if the existing event loop is closed,
-    the function should create a new one and not reuse the closed one.
-    """
     try:
         previous_loop = asyncio.get_event_loop()
     except RuntimeError:
@@ -70,7 +62,6 @@ def test_execute_coroutine_sync_creates_new_loop_if_closed() -> None:
 
 
 def test_execute_coroutine_sync_propagates_exceptions() -> None:
-    """Exception propagation test."""
     with pytest.raises(ValueError) as exc_info:
         execute_coroutine_sync(coroutine=_raise_error())
 
