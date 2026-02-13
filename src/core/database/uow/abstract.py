@@ -25,25 +25,20 @@ class UnitOfWork(ABC, Generic[R]):
     @abstractmethod
     async def __aenter__(self) -> "UnitOfWork[R]":
         """Enter the context manager, starting a transaction if needed."""
-        pass
 
     @abstractmethod
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the context manager, committing or rolling back the transaction."""
-        pass
 
     @abstractmethod
     async def commit(self) -> None:
         """Commit the transaction."""
-        pass
 
     @abstractmethod
     async def rollback(self) -> None:
         """Rollback the transaction."""
-        pass
 
     @property
     @abstractmethod
     def completed(self) -> bool:
         """Check if the unit of work has been completed (committed or rolled back)."""
-        pass

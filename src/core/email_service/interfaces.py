@@ -16,7 +16,6 @@ class AbstractMailer(ABC):
         subtype: str = "html",
     ) -> None:
         """Send an email based on a template with dynamic content."""
-        pass
 
     @abstractmethod
     async def send_with_attachments(
@@ -28,4 +27,3 @@ class AbstractMailer(ABC):
         subtype: str = "plain",
     ) -> None:
         """Send an email with multiple file attachments."""
-        pass
