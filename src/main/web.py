@@ -4,9 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
-from core.proxy_headers import TrustedProxyHeadersMiddleware
 from loggers import get_logger
 from src.core.middleware import register_middlewares
+from src.core.proxy_headers import TrustedProxyHeadersMiddleware
 from src.main.config import config
 from src.main.lifespan import lifespan
 from src.main.presentation import include_exceptions_handlers, include_routers
