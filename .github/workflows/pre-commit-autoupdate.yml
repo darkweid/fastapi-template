@@ -1,0 +1,64 @@
+name: Pre-commit Autoupdate
+
+on:
+  schedule:
+    - cron: "20 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pre-commit-autoupdate
+  cancel-in-progress: true
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned pre-commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRE_COMMIT_VERSION="$(awk -F'==' '/^pre-commit==/{print $2; exit}' infra/requirements/dev.txt)"
+          if [ -z "${PRE_COMMIT_VERSION}" ]; then
+            echo "pre-commit is not pinned in infra/requirements/dev.txt"
+            exit 1
+          fi
+          python -m pip install --upgrade pip
+          python -m pip install "pre-commit==${PRE_COMMIT_VERSION}"
+
+      - name: Update pre-commit hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          pre-commit autoupdate
+          python scripts/sync_precommit_mypy_deps.py
+          pre-commit validate-config
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.PRECOMMIT_BOT_TOKEN || github.token }}
+          add-paths: .pre-commit-config.yaml
+          branch: chore/pre-commit-autoupdate
+          delete-branch: true
+          base: ${{ github.event.repository.default_branch }}
+          commit-message: "Chore: update pre-commit hooks"
+          title: "Chore: update pre-commit hooks"
+          body: |
+            Automated update of `.pre-commit-config.yaml` hook revisions via `pre-commit autoupdate`.
+          labels: |
+            dependencies
+            ci

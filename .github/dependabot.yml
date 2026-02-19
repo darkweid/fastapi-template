@@ -1,23 +1,5 @@
 version: 2
 updates:
-  - package-ecosystem: "pre-commit"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "ci"
-    commit-message:
-      prefix: "Chore:"
-      include: "scope"
-    groups:
-      pre-commit-hooks:
-        patterns:
-          - "*"
   - package-ecosystem: "pip"
     directory: "/infra/requirements"
     schedule:
