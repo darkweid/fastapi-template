@@ -91,7 +91,8 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │
 ├── scripts/                             # Utility scripts for the application
 │   ├── __init__.py                      # Package initialization
-│   └── check_env.py                     # Environment validation script
+│   ├── check_env.py                     # Environment validation script
+│   └── sync_precommit_mypy_deps.py      # Sync mypy pre-commit deps with pinned requirements
 │
 ├── src/                                 # Application source code
 │   ├── core/                            # Core components shared across the application
