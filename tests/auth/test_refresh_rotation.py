@@ -9,6 +9,8 @@ from src.user.auth.security import rotate_refresh_token
 import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
 
+TEST_JWT_USER_SECRET_KEY = "test_jwt_user_secret_key_for_tests_32_chars"
+
 
 def _base_payload() -> dict[str, str | int]:
     return {
@@ -25,7 +27,7 @@ def _base_payload() -> dict[str, str | int]:
 def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_USED_TTL_SECONDS", 100)
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_EXPIRE_MINUTES", 10)
-    monkeypatch.setattr(config.jwt, "JWT_USER_SECRET_KEY", "secret")
+    monkeypatch.setattr(config.jwt, "JWT_USER_SECRET_KEY", TEST_JWT_USER_SECRET_KEY)
     monkeypatch.setattr(config.jwt, "ALGORITHM", "HS256")
 
 
