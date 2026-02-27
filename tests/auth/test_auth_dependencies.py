@@ -56,7 +56,7 @@ async def test_verify_jti_expired_token(fake_redis: InMemoryRedis) -> None:
 @pytest.mark.asyncio
 async def test_verify_jti_invalid_signature(fake_redis: InMemoryRedis) -> None:
     payload = build_access_payload("user-1")
-    token = encode_token(payload, "wrong-secret")
+    token = encode_token(payload, "wrong_secret_key_for_tests_more_than_32")
 
     with pytest.raises(UnauthorizedException, match="Invalid token"):
         await verify_jti(token, fake_redis)

@@ -52,6 +52,58 @@ async def test_sqlalchemy_uow_rollback_twice_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sqlalchemy_uow_flush_delegates_to_session() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+
+    await uow.flush()
+
+    session.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_refresh_delegates_to_session() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+    instance = object()
+
+    await uow.refresh(instance)
+
+    session.refresh.assert_awaited_once_with(
+        instance,
+        attribute_names=None,
+        with_for_update=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_flush_after_commit_raises() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+
+    await uow.commit()
+
+    with pytest.raises(RuntimeError):
+        await uow.flush()
+
+    session.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_refresh_after_rollback_raises() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+    instance = object()
+
+    await uow.rollback()
+
+    with pytest.raises(RuntimeError):
+        await uow.refresh(instance)
+
+    session.refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sqlalchemy_uow_aexit_rolls_back_on_exception() -> None:
     session = FakeAsyncSession()
     uow = SQLAlchemyUnitOfWork(session)

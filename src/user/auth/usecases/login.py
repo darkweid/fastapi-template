@@ -105,7 +105,7 @@ class LoginUserUseCase:
                 raise PermissionDeniedException("User is blocked")
 
             await self._rehash_password_if_needed(uow, user, data.password)
-            await uow.session.flush()
+            await uow.flush()
             token_data = {"sub": str(user.id)}
 
             session_id = str(uuid4())

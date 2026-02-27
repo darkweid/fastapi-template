@@ -11,6 +11,10 @@ import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.providers import ProvideValue
 
+TEST_JWT_USER_SECRET_KEY = "test_jwt_user_secret_key_for_tests_32_chars"
+TEST_JWT_VERIFY_SECRET_KEY = "test_jwt_verify_secret_key_for_tests_32_chars"
+TEST_JWT_RESET_SECRET_KEY = "test_jwt_reset_secret_key_for_tests_32_chars"
+
 
 def access_jti_key(user_id: str, session_id: str) -> str:
     return f"access:{user_id}:{session_id}"
@@ -30,9 +34,21 @@ def used_refresh_key(user_id: str, jti: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(security.config.jwt, "JWT_USER_SECRET_KEY", "secret")
-    monkeypatch.setattr(security.config.jwt, "JWT_VERIFY_SECRET_KEY", "verify")
-    monkeypatch.setattr(security.config.jwt, "JWT_RESET_PASSWORD_SECRET_KEY", "reset")
+    monkeypatch.setattr(
+        security.config.jwt,
+        "JWT_USER_SECRET_KEY",
+        TEST_JWT_USER_SECRET_KEY,
+    )
+    monkeypatch.setattr(
+        security.config.jwt,
+        "JWT_VERIFY_SECRET_KEY",
+        TEST_JWT_VERIFY_SECRET_KEY,
+    )
+    monkeypatch.setattr(
+        security.config.jwt,
+        "JWT_RESET_PASSWORD_SECRET_KEY",
+        TEST_JWT_RESET_SECRET_KEY,
+    )
     monkeypatch.setattr(security.config.jwt, "ALGORITHM", "HS256")
     monkeypatch.setattr(security.config.jwt, "ACCESS_TOKEN_EXPIRE_MINUTES", 5)
     monkeypatch.setattr(security.config.jwt, "REFRESH_TOKEN_EXPIRE_MINUTES", 10)
@@ -55,7 +71,10 @@ async def test_create_access_token_stores_jti(
 
     token = await security.create_access_token({"sub": "user"}, redis_client=fake_redis)
     decoded = jwt.decode(
-        token, "secret", algorithms=["HS256"], options={"verify_exp": False}
+        token,
+        TEST_JWT_USER_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
     )
 
     assert decoded["sub"] == "user"
@@ -82,7 +101,10 @@ async def test_create_refresh_token_stores_family(
         {"sub": "user"}, redis_client=fake_redis
     )
     decoded = jwt.decode(
-        token, "secret", algorithms=["HS256"], options={"verify_exp": False}
+        token,
+        TEST_JWT_USER_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
     )
 
     assert decoded["mode"] == "refresh_token"
