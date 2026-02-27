@@ -58,7 +58,7 @@ class UpdateUserPasswordUseCase:
             if not updated_user:
                 logger.info("[UpdateUserPassword] User not found.")
                 return SuccessResponse(success=False)
-            await uow.session.flush()
+            await uow.flush()
             logger.debug(
                 "[UpdateUserPassword] %s password updated successfully.",
                 mask_email(updated_user.email),

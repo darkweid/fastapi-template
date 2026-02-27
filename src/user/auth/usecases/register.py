@@ -64,7 +64,7 @@ class RegisterUseCase:
                 session=uow.session,
                 data=user_data,
             )
-            await uow.session.flush()
+            await uow.flush()
 
             throttle_key = build_email_throttle_key("signup", user.email)
             await self.notifier.send_verification(
