@@ -23,7 +23,9 @@
 - Updates hook revisions in `.pre-commit-config.yaml` via `pre-commit autoupdate`.
 - Syncs `mypy.additional_dependencies` in `.pre-commit-config.yaml` from pinned versions in `infra/requirements/dev.txt` via `scripts/sync_precommit_mypy_deps.py`.
 - Validates resulting config with `pre-commit validate-config`.
-- Creates or updates PR `chore/pre-commit-autoupdate` with labels `dependencies`, `ci`.
+- Creates an autoupdate PR from a timestamped branch (`chore/pre-commit-autoupdate-*`) with labels `dependencies`, `ci`.
+- When a new autoupdate PR is created, closes superseded open autoupdate PRs and tries to delete their branches.
+- If posting a "superseded" comment fails, the workflow still proceeds to close the superseded PR.
 
 ### Required Secrets
 - SSH_PRIVATE_KEY, SERVER_IP, SSH_USER — server access.
@@ -36,6 +38,7 @@
 2. Set repository access to this repository (`Only select repositories`).
 3. Grant repository permissions:
    - `Contents: Read and write`
+   - `Issues: Read and write`
    - `Pull requests: Read and write`
 4. Copy the generated token.
 5. Add it to repository secrets:
