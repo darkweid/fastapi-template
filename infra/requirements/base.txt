@@ -24,7 +24,7 @@ alembic==1.18.4
     # via
     #   -r base.in
     #   alembic-postgresql-enum
-alembic-postgresql-enum==1.9.0
+alembic-postgresql-enum==1.10.0
     # via -r base.in
 amqp==5.3.1
     # via kombu
@@ -91,7 +91,7 @@ email-validator==2.3.0
     # via
     #   -r base.in
     #   fastapi-mail
-fastapi==0.131.0
+fastapi==0.135.1
     # via -r base.in
 fastapi-mail==1.6.2
     # via -r base.in
@@ -101,7 +101,7 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-geoalchemy2==0.18.1
+geoalchemy2==0.18.3
     # via -r base.in
 greenlet==3.3.1
     # via sqlalchemy
@@ -181,7 +181,7 @@ python-dateutil==2.9.0.post0
     #   aiobotocore
     #   botocore
     #   celery
-python-dotenv==1.2.1
+python-dotenv==1.2.2
     # via
     #   -r base.in
     #   pydantic-settings
@@ -191,7 +191,7 @@ pytz==2025.2
     # via
     #   -r base.in
     #   flower
-redis==7.2.0
+redis==7.2.1
     # via -r base.in
 regex==2025.11.3
     # via fastapi-mail
@@ -201,7 +201,7 @@ sentry-sdk==2.53.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
-sqlalchemy==2.0.46
+sqlalchemy==2.0.47
     # via
     #   -r base.in
     #   alembic
