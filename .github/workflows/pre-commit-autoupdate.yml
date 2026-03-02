@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 concurrency:
@@ -48,11 +49,13 @@ jobs:
           pre-commit validate-config
 
       - name: Create or update pull request
+        id: create_pr
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.PRECOMMIT_BOT_TOKEN || github.token }}
           add-paths: .pre-commit-config.yaml
           branch: chore/pre-commit-autoupdate
+          branch-suffix: timestamp
           delete-branch: true
           base: ${{ github.event.repository.default_branch }}
           commit-message: "Chore: update pre-commit hooks"
@@ -62,3 +65,88 @@ jobs:
           labels: |
             dependencies
             ci
+
+      - name: Close superseded pull requests
+        if: steps.create_pr.outputs.pull-request-operation == 'created'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PRECOMMIT_BOT_TOKEN || github.token }}
+          script: |
+            const currentPullRequestNumber = Number("${{ steps.create_pr.outputs.pull-request-number }}");
+            const targetTitle = "Chore: update pre-commit hooks";
+            const targetHeadPrefix = "chore/pre-commit-autoupdate-";
+            const currentRepositoryFullName = `${context.repo.owner}/${context.repo.repo}`;
+
+            if (!Number.isInteger(currentPullRequestNumber) || currentPullRequestNumber <= 0) {
+              core.setFailed("create-pull-request did not provide a valid pull request number.");
+              return;
+            }
+
+            const openPullRequests = await github.paginate(
+              github.rest.pulls.list,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: "open",
+                per_page: 100,
+              }
+            );
+
+            const supersededPullRequests = openPullRequests.filter((pullRequest) => {
+              if (pullRequest.number === currentPullRequestNumber) {
+                return false;
+              }
+              if (pullRequest.title !== targetTitle) {
+                return false;
+              }
+              if (!pullRequest.head.ref.startsWith(targetHeadPrefix)) {
+                return false;
+              }
+              if (pullRequest.head.repo?.full_name !== currentRepositoryFullName) {
+                return false;
+              }
+
+              const labelNames = pullRequest.labels.map((label) => label.name);
+              return labelNames.includes("dependencies") && labelNames.includes("ci");
+            });
+
+            for (const pullRequest of supersededPullRequests) {
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullRequest.number,
+                  body: `Superseded by #${currentPullRequestNumber} from a newer pre-commit autoupdate run.`,
+                });
+              } catch (error) {
+                core.warning(
+                  `Failed to comment on PR #${pullRequest.number}: ${error?.message ?? error}`
+                );
+              }
+
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullRequest.number,
+                state: "closed",
+              });
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${pullRequest.head.ref}`,
+                });
+              } catch (error) {
+                const status = error?.status;
+                if (status === 404 || status === 422) {
+                  core.info(
+                    `Branch ${pullRequest.head.ref} was not deleted (status: ${status}).`
+                  );
+                  continue;
+                }
+                throw error;
+              }
+            }
+
+            core.info(`Closed ${supersededPullRequests.length} superseded pull request(s).`);

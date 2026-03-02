@@ -74,8 +74,7 @@ class FastAPILimiter:
 
         redis_instance: aredis.Redis
         if isinstance(redis_client, str):
-            # Type ignored since the function is known to return Redis despite missing type stub
-            redis_instance = aredis.from_url(redis_client)  # type: ignore
+            redis_instance = aredis.from_url(redis_client)
         else:
             redis_instance = redis_client
 

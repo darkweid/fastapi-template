@@ -28,7 +28,7 @@ repos:
       - id: check-json
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.2
+    rev: v0.15.4
     hooks:
       - id: ruff
         args:
@@ -56,15 +56,15 @@ repos:
         ]
         exclude: ^(tests/|migrations/|scripts/)
         additional_dependencies:
-          - fastapi==0.129.0
+          - fastapi==0.135.1
           - pydantic==2.12.5
-          - sqlalchemy==2.0.46
+          - sqlalchemy==2.0.47
           - celery==5.6.2
-          - sentry-sdk==2.52.0
-          - pydantic-settings==2.13.0
-          - redis==7.1.1
+          - sentry-sdk==2.53.0
+          - pydantic-settings==2.13.1
+          - redis==7.2.1
           - pytest==9.0.2
           - alembic==1.18.4
-          - fastapi-mail==1.6.1
+          - fastapi-mail==1.6.2
           - types-passlib==1.7.7.20260211
           - types-pytz==2025.2.0.20251108
