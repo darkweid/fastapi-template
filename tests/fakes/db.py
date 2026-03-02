@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -59,6 +60,8 @@ class FakeUnitOfWork:
         self._completed = False
         self.commit = AsyncMock(side_effect=self._mark_committed)
         self.rollback = AsyncMock(side_effect=self._mark_rolled_back)
+        self.flush = AsyncMock(side_effect=self._flush)
+        self.refresh = AsyncMock(side_effect=self._refresh)
 
     async def __aenter__(self) -> FakeUnitOfWork:
         return self
@@ -78,6 +81,27 @@ class FakeUnitOfWork:
 
     def _mark_rolled_back(self) -> None:
         self._completed = True
+
+    def _ensure_not_completed(self) -> None:
+        if self._completed:
+            raise RuntimeError("This unit of work has already been completed")
+
+    async def _flush(self) -> None:
+        self._ensure_not_completed()
+        await self._session.flush()
+
+    async def _refresh(
+        self,
+        instance: Any,
+        attribute_names: Sequence[str] | None = None,
+        with_for_update: Any | None = None,
+    ) -> None:
+        self._ensure_not_completed()
+        await self._session.refresh(
+            instance,
+            attribute_names=attribute_names,
+            with_for_update=with_for_update,
+        )
 
     @property
     def completed(self) -> bool:

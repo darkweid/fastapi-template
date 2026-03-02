@@ -77,7 +77,7 @@ class ResetPasswordConfirmUseCase:
                         {"password_hash": hash_password(data.password)},
                         email=email,
                     )
-                    await uow.session.flush()
+                    await uow.flush()
                     if not user:
                         logger.info(
                             "[ResetPasswordConfirm] User with email %s not found.",

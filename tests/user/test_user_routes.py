@@ -4,15 +4,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.database.session import get_session
 from src.core.schemas import SuccessResponse
 from src.user.auth.dependencies import get_current_user
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
 from src.user.usecases.update_password import get_update_user_password_use_case
 from tests.factories.user_factory import build_user
+from tests.fakes.db import FakeAsyncSession
 from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
-from tests.helpers.providers import ProvideValue
+from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 
 
 class FakeUpdatePasswordUseCase:
@@ -53,6 +55,7 @@ async def test_get_user_profile(
 async def test_get_user_info_by_id(
     async_client,
     dependency_overrides: DependencyOverrides,
+    fake_session: FakeAsyncSession,
 ) -> None:
     admin_user = build_user(role=UserRole.ADMIN)
     target_user = build_user()
@@ -60,6 +63,7 @@ async def test_get_user_info_by_id(
     dependency_overrides.set(
         get_user_service, ProvideValue(FakeUserService(target_user))
     )
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     response = await async_client.get(f"/v1/users/{target_user.id}")
 

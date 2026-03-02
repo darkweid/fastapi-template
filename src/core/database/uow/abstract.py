@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
 
@@ -37,6 +38,19 @@ class UnitOfWork(ABC, Generic[R]):
     @abstractmethod
     async def rollback(self) -> None:
         """Rollback the transaction."""
+
+    @abstractmethod
+    async def flush(self) -> None:
+        """Flush pending changes within the current transaction."""
+
+    @abstractmethod
+    async def refresh(
+        self,
+        instance: Any,
+        attribute_names: Sequence[str] | None = None,
+        with_for_update: Any | None = None,
+    ) -> None:
+        """Refresh an instance from the database."""
 
     @property
     @abstractmethod

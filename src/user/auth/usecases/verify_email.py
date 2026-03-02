@@ -80,7 +80,7 @@ class VerifyEmailUseCase:
                     {"is_verified": True},
                     email=payload.get("email"),
                 )
-                await uow.session.flush()
+                await uow.flush()
 
                 await uow.commit()
                 logger.info(

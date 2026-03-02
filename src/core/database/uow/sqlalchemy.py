@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from typing import Any, Self, TypeVar
 
@@ -58,6 +59,10 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
 
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
+    def _ensure_not_completed(self) -> None:
+        if self._is_completed:
+            raise RuntimeError("This unit of work has already been completed")
+
     async def commit(self) -> None:
         """
         Commit the transaction.
@@ -65,9 +70,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         Raises:
             RuntimeError: If the unit of work has already been completed
         """
-        if self._is_completed:
-            raise RuntimeError("This unit of work has already been completed")
-
+        self._ensure_not_completed()
         await self._session.commit()
         self._is_completed = True
 
@@ -78,11 +81,28 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         Raises:
             RuntimeError: If the unit of work has already been completed
         """
-        if self._is_completed:
-            raise RuntimeError("This unit of work has already been completed")
-
+        self._ensure_not_completed()
         await self._session.rollback()
         self._is_completed = True
+
+    async def flush(self) -> None:
+        """Flush pending changes to the database."""
+        self._ensure_not_completed()
+        await self._session.flush()
+
+    async def refresh(
+        self,
+        instance: Any,
+        attribute_names: Sequence[str] | None = None,
+        with_for_update: Any | None = None,
+    ) -> None:
+        """Refresh an ORM instance from the database."""
+        self._ensure_not_completed()
+        await self._session.refresh(
+            instance,
+            attribute_names=attribute_names,
+            with_for_update=with_for_update,
+        )
 
     @property
     def completed(self) -> bool:
