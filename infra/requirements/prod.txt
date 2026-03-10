@@ -101,7 +101,7 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-geoalchemy2==0.18.3
+geoalchemy2==0.18.4
     # via -r base.in
 greenlet==3.3.1
     # via sqlalchemy
@@ -187,21 +187,21 @@ python-dotenv==1.2.2
     #   pydantic-settings
 python-multipart==0.0.22
     # via -r base.in
-pytz==2025.2
+pytz==2026.1.post1
     # via
     #   -r base.in
     #   flower
-redis==7.2.1
+redis==7.3.0
     # via -r base.in
 regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.53.0
+sentry-sdk==2.54.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
-sqlalchemy==2.0.47
+sqlalchemy==2.0.48
     # via
     #   -r base.in
     #   alembic
