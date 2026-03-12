@@ -60,6 +60,7 @@ repos:
           - pydantic==2.12.5
           - sqlalchemy==2.0.47
           - celery==5.6.2
+          - PyJWT==2.11.0
           - sentry-sdk==2.53.0
           - pydantic-settings==2.13.1
           - redis==7.2.1
