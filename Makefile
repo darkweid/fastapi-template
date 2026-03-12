@@ -138,9 +138,11 @@ lint:
 
 .PHONY: req-compile
 req-compile:
-	python -m piptools compile -o $(REQ_BASE_TXT) $(REQ_BASE_IN)
-	python -m piptools compile -o $(REQ_DEV_TXT) $(REQ_DEV_IN)
-	python -m piptools compile -o $(REQ_PROD_TXT) $(REQ_PROD_IN)
+	python -m pip install --upgrade pip pip-tools
+	python scripts/sort_requirements_in.py infra/requirements/base.in infra/requirements/dev.in infra/requirements/prod.in
+	cd infra/requirements && python -m piptools compile base.in -o base.txt
+	cd infra/requirements && python -m piptools compile dev.in -o dev.txt
+	cd infra/requirements && python -m piptools compile prod.in -o prod.txt
 
 .PHONY: req-sync-dev
 req-sync-dev:

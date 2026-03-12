@@ -3,8 +3,8 @@
 # Development tools
 black
 mypy
-pre-commit
 pip-tools
+pre-commit
 
 # Testing dependencies
 pytest
@@ -14,5 +14,8 @@ pytest-cov
 # Type stubs
 types-passlib
 types-pytz
+types-PyYAML
+types-requests
+types-ujson
 
 websockets

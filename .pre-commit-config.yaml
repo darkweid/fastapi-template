@@ -27,6 +27,14 @@ repos:
         exclude: ^infra/requirements/.*\.txt$ # Exclude compiled reqs files
       - id: check-json
 
+  - repo: local
+    hooks:
+      - id: sort-requirements-in
+        name: sort requirements .in
+        entry: python scripts/sort_requirements_in.py
+        language: python
+        files: ^infra/requirements/.*\.in$
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.4
     hooks:
@@ -69,3 +77,6 @@ repos:
           - fastapi-mail==1.6.2
           - types-passlib==1.7.7.20260211
           - types-pytz==2025.2.0.20251108
+          - types-PyYAML==6.0.12.20250915
+          - types-requests==2.32.4.20260107
+          - types-ujson==5.10.0.20250822
