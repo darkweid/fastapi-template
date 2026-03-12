@@ -37,7 +37,9 @@ class BaseRepository(Generic[T]):
             if commit:
                 await session.commit()
                 await session.refresh(instance)
-                logger.info("%s created successfully [Committed].", self.model.__name__)
+                logger.debug(
+                    "%s created successfully [Committed].", self.model.__name__
+                )
             else:
                 logger.debug(
                     "%s created [Staged, pending commit].", self.model.__name__
@@ -211,7 +213,7 @@ class BaseRepository(Generic[T]):
                 if commit:
                     await session.commit()
                     await session.refresh(instance)
-                    logger.info(
+                    logger.debug(
                         "%s updated successfully [Committed].", self.model.__name__
                     )
                 else:
@@ -242,7 +244,7 @@ class BaseRepository(Generic[T]):
                 await session.delete(instance)
                 if commit:
                     await session.commit()
-                    logger.info(
+                    logger.debug(
                         "%s deleted successfully [Committed].", self.model.__name__
                     )
                 else:
@@ -410,7 +412,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
                 if commit:
                     await session.commit()
                     await session.refresh(instance)
-                    logger.info(
+                    logger.debug(
                         "%s soft-deleted successfully [Committed].", self.model.__name__
                     )
                 else:

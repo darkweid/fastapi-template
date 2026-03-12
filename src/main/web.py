@@ -9,6 +9,7 @@ from src.core.middleware import register_middlewares
 from src.core.proxy_headers import TrustedProxyHeadersMiddleware
 from src.main.config import config
 from src.main.lifespan import lifespan
+from src.main.openapi import SWAGGER_UI_PARAMETERS
 from src.main.presentation import include_exceptions_handlers, include_routers
 from src.main.route_logging import log_routes_summary
 
@@ -22,6 +23,7 @@ def get_application() -> FastAPI:
         debug=config.app.DEBUG,
         version=config.app.VERSION,
         lifespan=lifespan,
+        swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
     )
 
     if config.app.TRUST_PROXY_HEADERS:

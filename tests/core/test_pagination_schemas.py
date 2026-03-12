@@ -17,6 +17,11 @@ class ItemSchema(Base):
 
 
 def test_pagination_params_validation() -> None:
+    params = PaginationParams()
+
+    assert params.page == 1
+    assert params.size == 50
+
     PaginationParams(page=1, size=10)
 
     with pytest.raises(ValidationError):

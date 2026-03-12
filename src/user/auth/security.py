@@ -156,9 +156,10 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
         "session_id": session_id,
         "family": family_id,
     }
+    token_data: dict[str, Any] = dict(payload)
 
     encoded_jwt = jwt.encode(
-        payload, config.jwt.JWT_USER_SECRET_KEY, config.jwt.ALGORITHM
+        token_data, config.jwt.JWT_USER_SECRET_KEY, config.jwt.ALGORITHM
     )
 
     await redis_client.set(

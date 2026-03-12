@@ -14,12 +14,12 @@ ItemT = TypeVar("ItemT")
 class PaginationParams(Base):
     """Pagination request parameters.
 
-    - page: page number starting from 1
-    - size: page size from 1 to 100
+    - page: page number starting from 1 (default: 1)
+    - size: page size from 1 to 100 (default: 50)
     """
 
-    page: int = Field(..., ge=1)
-    size: int = Field(..., ge=1, le=100)
+    page: int = Field(default=1, ge=1)
+    size: int = Field(default=50, ge=1, le=100)
 
 
 class PaginatedResponse(Base, Generic[T]):
