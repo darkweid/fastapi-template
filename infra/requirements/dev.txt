@@ -274,7 +274,7 @@ starlette==0.50.0
     # via
     #   fastapi
     #   fastapi-mail
-tornado==6.5.4
+tornado==6.5.5
     # via flower
 types-passlib==1.7.7.20260211
     # via -r dev.in
