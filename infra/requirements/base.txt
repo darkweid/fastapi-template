@@ -211,7 +211,7 @@ starlette==0.50.0
     # via
     #   fastapi
     #   fastapi-mail
-tornado==6.5.4
+tornado==6.5.5
     # via flower
 typing-extensions==4.15.0
     # via
