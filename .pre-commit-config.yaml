@@ -36,14 +36,14 @@ repos:
         files: ^infra/requirements/.*\.in$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.15.6
     hooks:
       - id: ruff
         args:
           - --fix
 
   - repo: https://github.com/psf/black
-    rev: 26.3.0
+    rev: 26.3.1
     hooks:
       - id: black
 
@@ -66,17 +66,17 @@ repos:
         additional_dependencies:
           - fastapi==0.135.1
           - pydantic==2.12.5
-          - sqlalchemy==2.0.47
+          - sqlalchemy==2.0.48
           - celery==5.6.2
           - PyJWT==2.11.0
-          - sentry-sdk==2.53.0
+          - sentry-sdk==2.54.0
           - pydantic-settings==2.13.1
-          - redis==7.2.1
+          - redis==7.3.0
           - pytest==9.0.2
           - alembic==1.18.4
           - fastapi-mail==1.6.2
           - types-passlib==1.7.7.20260211
-          - types-pytz==2025.2.0.20251108
+          - types-pytz==2026.1.1.20260304
           - types-PyYAML==6.0.12.20250915
           - types-requests==2.32.4.20260107
           - types-ujson==5.10.0.20250822
