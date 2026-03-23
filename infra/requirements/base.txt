@@ -103,6 +103,8 @@ frozenlist==1.8.0
     #   aiosignal
 geoalchemy2==0.18.4
     # via -r base.in
+greenlet==3.3.2
+    # via sqlalchemy
 gunicorn==25.1.0
     # via -r base.in
 h11==0.16.0
@@ -170,7 +172,7 @@ pydantic-settings==2.13.1
     # via
     #   -r base.in
     #   fastapi-mail
-pyjwt==2.11.0
+pyjwt==2.12.1
     # via -r base.in
 python-dateutil==2.9.0.post0
     # via
@@ -193,7 +195,7 @@ regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.54.0
+sentry-sdk==2.55.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -233,7 +235,7 @@ urllib3==2.6.3
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.41.0
+uvicorn==0.42.0
     # via -r base.in
 vine==5.1.0
     # via
