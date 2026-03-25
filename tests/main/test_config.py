@@ -15,7 +15,7 @@ def _base_app_config_data() -> dict[str, object]:
         "LOG_LEVEL": "INFO",
         "LOG_LEVEL_FILE": "WARNING",
         "CORS_ALLOWED_ORIGINS": "*",
-        "CORS_ALLOW_CREDENTIALS": True,
+        "CORS_ALLOWED_CREDENTIALS": True,
         "CORS_ALLOWED_METHODS": "*",
         "CORS_ALLOWED_HEADERS": "*",
         "CORS_EXPOSE_HEADERS": "*",
@@ -43,6 +43,15 @@ def test_parse_cors_list_semicolon_delimiter() -> None:
     app_config = AppConfig(**data)
 
     assert app_config.CORS_ALLOWED_METHODS == ["GET", "POST", "PUT"]
+
+
+def test_app_config_reads_cors_allowed_credentials_flag() -> None:
+    data = _base_app_config_data()
+    data["CORS_ALLOWED_CREDENTIALS"] = False
+
+    app_config = AppConfig(**data)
+
+    assert app_config.CORS_ALLOWED_CREDENTIALS is False
 
 
 def test_find_project_root_robust_finds_marker(

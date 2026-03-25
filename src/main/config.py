@@ -201,7 +201,7 @@ class AppConfig(BaseModel):
     LOG_LEVEL_FILE: str
 
     CORS_ALLOWED_ORIGINS: list[str] = Field(["*"])
-    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOWED_CREDENTIALS: bool = True
     CORS_ALLOWED_METHODS: list[str] = Field(["*"])
     CORS_ALLOWED_HEADERS: list[str] = Field(["*"])
     CORS_EXPOSE_HEADERS: list[str] = Field(["*"])
