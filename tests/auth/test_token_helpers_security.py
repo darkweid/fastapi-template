@@ -6,6 +6,7 @@ import pytest
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.redis_keys import auth_redis_keys
 import src.user.auth.security as security
 import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
@@ -17,19 +18,19 @@ TEST_JWT_RESET_SECRET_KEY = "test_jwt_reset_secret_key_for_tests_32_chars"
 
 
 def access_jti_key(user_id: str, session_id: str) -> str:
-    return f"access:{user_id}:{session_id}"
+    return auth_redis_keys.access(user_id, session_id)
 
 
 def refresh_jti_key(user_id: str, session_id: str) -> str:
-    return f"refresh:{user_id}:{session_id}"
+    return auth_redis_keys.refresh(user_id, session_id)
 
 
 def refresh_family_key(user_id: str, family_id: str) -> str:
-    return f"family:{user_id}:{family_id}"
+    return auth_redis_keys.family(user_id, family_id)
 
 
 def used_refresh_key(user_id: str, jti: str) -> str:
-    return f"used:{user_id}:{jti}"
+    return auth_redis_keys.used(user_id, jti)
 
 
 @pytest.fixture(autouse=True)

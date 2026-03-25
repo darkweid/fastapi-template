@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.token_helpers import (
     execute_token_rotation,
     validate_token_family,
@@ -48,7 +49,7 @@ async def create_access_token(
     )
 
     await redis_client.set(
-        f"access:{data['sub']}:{session_id}",
+        auth_redis_keys.access(data["sub"], session_id),
         jti,
         ex=config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -98,14 +99,14 @@ async def create_refresh_token(
     )
 
     await redis_client.set(
-        f"refresh:{data['sub']}:{session_id}",
+        auth_redis_keys.refresh(data["sub"], session_id),
         jti,
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
 
     # Store family under family:user_id:family_id (not session-specific)
     await redis_client.set(
-        f"family:{data['sub']}:{family}",
+        auth_redis_keys.family(data["sub"], family),
         "active",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -163,13 +164,13 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
     )
 
     await redis_client.set(
-        f"refresh:{user_id}:{session_id}",
+        auth_redis_keys.refresh(user_id, session_id),
         jti,
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
 
     # Update the family TTL (extend the family's lifetime)
-    family_key = f"family:{user_id}:{family_id}"
+    family_key = auth_redis_keys.family(user_id, family_id)
     await redis_client.expire(family_key, config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
 
     return str(encoded_jwt)

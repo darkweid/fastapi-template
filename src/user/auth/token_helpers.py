@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 
@@ -24,12 +25,7 @@ async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> Non
     Args:
         user_id: The user ID whose sessions should be invalidated
     """
-    patterns = [
-        f"access:{user_id}:*",
-        f"refresh:{user_id}:*",
-        f"family:{user_id}:*",
-        f"used:{user_id}:*",  # Also clean up used tokens
-    ]
+    patterns = auth_redis_keys.all_user_patterns(user_id)
 
     for pattern in patterns:
         cursor = 0
@@ -60,7 +56,7 @@ async def validate_token_family(
         await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Invalid token structure")
 
-    family_key = f"family:{user_id}:{family_id}"
+    family_key = auth_redis_keys.family(user_id, family_id)
     family_exists = await redis_client.exists(family_key)
 
     if not family_exists:
@@ -128,8 +124,8 @@ async def execute_token_rotation(
         refresh_ttl_seconds,
     )
 
-    old_refresh_key = f"refresh:{user_id}:{session_id}"
-    used_refresh_key = f"used:{user_id}:{jti}"
+    old_refresh_key = auth_redis_keys.refresh(user_id, session_id)
+    used_refresh_key = auth_redis_keys.used(user_id, jti)
 
     result: str = await cast(
         Awaitable[str],

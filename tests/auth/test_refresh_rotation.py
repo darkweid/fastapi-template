@@ -5,6 +5,7 @@ import pytest
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.security import rotate_refresh_token
 import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
@@ -40,12 +41,12 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
     """
     payload = _base_payload()
     await fake_redis.set(
-        f"family:{payload['sub']}:{payload['family']}",
+        auth_redis_keys.family(str(payload["sub"]), str(payload["family"])),
         "active",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
     await fake_redis.set(
-        f"refresh:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -59,9 +60,12 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
     assert decoded["session_id"] != payload["session_id"]
     assert decoded["jti"] != payload["jti"]
 
-    used_key = f"used:{payload['sub']}:{payload['jti']}"
-    old_refresh_key = f"refresh:{payload['sub']}:{payload['session_id']}"
-    family_key = f"family:{payload['sub']}:{payload['family']}"
+    used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
+    old_refresh_key = auth_redis_keys.refresh(
+        str(payload["sub"]),
+        str(payload["session_id"]),
+    )
+    family_key = auth_redis_keys.family(str(payload["sub"]), str(payload["family"]))
     assert await fake_redis.exists(used_key) == 1
     assert await fake_redis.exists(old_refresh_key) == 0
     assert await fake_redis.exists(family_key) == 1
@@ -79,11 +83,15 @@ async def test_rotate_refresh_token_reuse_detected(
     """
     payload = _base_payload()
     await fake_redis.set(
-        f"family:{payload['sub']}:{payload['family']}",
+        auth_redis_keys.family(str(payload["sub"]), str(payload["family"])),
         "active",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
-    await fake_redis.setex(f"used:{payload['sub']}:{payload['jti']}", 100, "used")
+    await fake_redis.setex(
+        auth_redis_keys.used(str(payload["sub"]), str(payload["jti"])),
+        100,
+        "used",
+    )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
 
@@ -104,12 +112,12 @@ async def test_rotate_refresh_token_invalid_state(
     """
     payload = _base_payload()
     await fake_redis.set(
-        f"family:{payload['sub']}:{payload['family']}",
+        auth_redis_keys.family(str(payload["sub"]), str(payload["family"])),
         "active",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
     await fake_redis.set(
-        f"refresh:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         "wrong-jti",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )

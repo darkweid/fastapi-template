@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Literal, cast
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
@@ -11,6 +11,7 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.token_helpers import invalidate_all_user_sessions
 from src.user.models import User
 from src.user.repositories import UserRepository
@@ -183,9 +184,13 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
     except KeyError:
         raise UnauthorizedException("Invalid token structure")
 
+    if mode not in {"access_token", "refresh_token"}:
+        raise UnauthorizedException("Invalid token structure")
+    session_mode = cast(Literal["access_token", "refresh_token"], mode)
+
     # Check for reuse
     if mode == "refresh_token":
-        used_key = f"used:{user_id}:{jti}"
+        used_key = auth_redis_keys.used(user_id, jti)
         is_used = await redis_client.exists(used_key)
 
         if is_used:
@@ -198,7 +203,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         # Token family validation
         family = payload_typed.get("family")
         if family:
-            family_key = f"family:{user_id}:{family}"
+            family_key = auth_redis_keys.family(user_id, family)
             family_exists = await redis_client.exists(family_key)
             if not family_exists:
                 await invalidate_all_user_sessions(user_id, redis_client)
@@ -207,8 +212,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
                 )
 
     # Check active tokens
-    prefix = mode.replace("_token", "")
-    active_key = f"{prefix}:{user_id}:{session_id}"
+    active_key = auth_redis_keys.session_key(session_mode, user_id, session_id)
     stored_jti = await redis_client.get(active_key)
 
     stored_jti_str = (

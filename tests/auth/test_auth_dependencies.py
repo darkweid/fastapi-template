@@ -15,6 +15,7 @@ from src.user.auth.dependencies import (
     get_user_id_from_token,
     verify_jti,
 )
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
 from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_access_payload, build_refresh_payload
@@ -33,7 +34,7 @@ async def test_verify_jti_accepts_bearer_prefix(fake_redis: InMemoryRedis) -> No
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"access:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -79,11 +80,15 @@ async def test_verify_jti_refresh_reuse_invalidates(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"refresh:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
-    await fake_redis.setex(f"used:{payload['sub']}:{payload['jti']}", 60, "used")
+    await fake_redis.setex(
+        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        60,
+        "used",
+    )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
         "src.user.auth.dependencies.invalidate_all_user_sessions",
@@ -103,7 +108,7 @@ async def test_verify_jti_refresh_family_invalidates(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"refresh:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -124,7 +129,7 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"access:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.access(payload["sub"], payload["session_id"]),
         "other-jti",
         ex=60,
     )
@@ -143,7 +148,7 @@ async def test_get_current_user_success(
     payload = build_access_payload(str(user.id))
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"access:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -165,12 +170,12 @@ async def test_get_current_user_wrong_mode(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"refresh:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
     await fake_redis.set(
-        f"family:{payload['sub']}:{payload['family']}",
+        auth_redis_keys.family(payload["sub"], payload["family"]),
         "active",
         ex=60,
     )
@@ -193,12 +198,12 @@ async def test_get_access_by_refresh_token_success(
     payload = build_refresh_payload(str(user.id))
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"refresh:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
     await fake_redis.set(
-        f"family:{payload['sub']}:{payload['family']}",
+        auth_redis_keys.family(payload["sub"], payload["family"]),
         "active",
         ex=60,
     )
@@ -230,7 +235,7 @@ async def test_get_user_id_from_token_success(
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        f"access:{payload['sub']}:{payload['session_id']}",
+        auth_redis_keys.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
