@@ -12,7 +12,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 ## Key Features
 - Async FastAPI with modular domain structure.
 - DB via SQLAlchemy async, repositories + Unit of Work for transactional work.
-- Caching: Redis cache layer (`src/core/redis/*`) with tags, decorators, lifecycle helpers.
+- Caching: Redis cache layer (`src/core/redis/*`) with tags, decorators, lifecycle helpers, and deterministic ETag support for route responses.
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
 - Messaging: Celery workers/beat + RabbitMQ broker, Flower monitoring UI.
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
@@ -34,6 +34,12 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
+
+## Testing Layout
+- Application tests mirror `src/` under `tests/unit/src/`.
+- Shared test infrastructure lives in `tests/conftest.py`, `tests/helpers/`, `tests/fakes/`, and `tests/factories/`.
+- Reserve `tests/integration/src/` for integration coverage when a scenario requires more than unit-level wiring.
+- Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 
 ## Ports
 - Nginx: 8000 → app:8001
