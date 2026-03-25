@@ -91,7 +91,7 @@ email-validator==2.3.0
     # via
     #   -r base.in
     #   fastapi-mail
-fastapi==0.135.1
+fastapi==0.135.2
     # via -r base.in
 fastapi-mail==1.6.2
     # via -r base.in
@@ -105,7 +105,7 @@ geoalchemy2==0.18.4
     # via -r base.in
 greenlet==3.3.2
     # via sqlalchemy
-gunicorn==25.1.0
+gunicorn==25.2.0
     # via -r base.in
 h11==0.16.0
     # via
@@ -172,7 +172,7 @@ pydantic-settings==2.13.1
     # via
     #   -r base.in
     #   fastapi-mail
-pyjwt==2.12.0
+pyjwt==2.12.1
     # via -r base.in
 python-dateutil==2.9.0.post0
     # via
@@ -189,13 +189,13 @@ pytz==2026.1.post1
     # via
     #   -r base.in
     #   flower
-redis==7.3.0
+redis==7.4.0
     # via -r base.in
 regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.54.0
+sentry-sdk==2.56.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -235,7 +235,7 @@ urllib3==2.6.3
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.41.0
+uvicorn==0.42.0
     # via -r base.in
 vine==5.1.0
     # via
