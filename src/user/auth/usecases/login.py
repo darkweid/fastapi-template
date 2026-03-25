@@ -6,10 +6,7 @@ from redis.asyncio import Redis
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
-from src.core.errors.exceptions import (
-    InstanceProcessingException,
-    PermissionDeniedException,
-)
+from src.core.errors.exceptions import InstanceProcessingException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import (
@@ -53,8 +50,8 @@ class LoginUserUseCase:
     - Token creation handles its own caching.
 
     Errors:
-    - InstanceProcessingException: if credentials are invalid or the user is not verified.
-    - PermissionDeniedException: if the user is blocked.
+    - InstanceProcessingException: if credentials are invalid, the user is not
+      verified, or the user is blocked.
 
     Returns:
     - TokenModel with access and refresh tokens.
@@ -95,14 +92,14 @@ class LoginUserUseCase:
                     "[LoginUser] User with email '%s' not verified.",
                     mask_email(data.email),
                 )
-                raise InstanceProcessingException("User is not verified")
+                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
             if not user.is_active:
                 logger.debug(
                     "[LoginUser] User with email '%s' is blocked.",
                     mask_email(data.email),
                 )
-                raise PermissionDeniedException("User is blocked")
+                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
             await self._rehash_password_if_needed(uow, user, data.password)
             await uow.flush()
