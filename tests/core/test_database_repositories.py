@@ -178,6 +178,19 @@ async def test_base_repository_get_single_returns_first() -> None:
 
 
 @pytest.mark.asyncio
+async def test_base_repository_get_single_applies_for_update_scope() -> None:
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_single(session=session, for_update=True, id=1)
+
+    query = session.execute.await_args.args[0]
+    assert query._for_update_arg is not None
+    assert query._for_update_arg.of == [RepositoryModel.__table__.c.id]
+
+
+@pytest.mark.asyncio
 async def test_base_repository_get_list_returns_all() -> None:
     repo = RepositoryModelRepository()
     session = RepositorySession()
@@ -187,6 +200,19 @@ async def test_base_repository_get_list_returns_all() -> None:
     result = await repo.get_list(session=session)
 
     assert result == items
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_list_applies_for_update_scope() -> None:
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(session=session, for_update=True)
+
+    query = session.execute.await_args.args[0]
+    assert query._for_update_arg is not None
+    assert query._for_update_arg.of == [RepositoryModel.__table__.c.id]
 
 
 @pytest.mark.asyncio

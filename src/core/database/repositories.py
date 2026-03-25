@@ -101,16 +101,7 @@ class BaseRepository(Generic[T]):
         if eager:
             query = query.options(*eager)
         if for_update:
-            # Limit lock scope to this table to avoid Postgres outer-join restriction
-            table = getattr(self.model, "__table__")
-            pk_columns = tuple(
-                cast("ColumnElement[Any]", column)
-                for column in table.primary_key.columns
-            )
-            if pk_columns:
-                query = query.with_for_update(of=pk_columns)
-            else:
-                query = query.with_for_update(of=(table,))
+            query = self._apply_for_update(query)
 
         result = await session.execute(query)
         return result.unique().scalars().first()
@@ -127,16 +118,7 @@ class BaseRepository(Generic[T]):
         if eager:
             query = query.options(*eager)
         if for_update:
-            # Limit lock scope to this table to avoid Postgres outer-join restriction
-            table = getattr(self.model, "__table__")
-            pk_columns = tuple(
-                cast("ColumnElement[Any]", column)
-                for column in table.primary_key.columns
-            )
-            if pk_columns:
-                query = query.with_for_update(of=pk_columns)
-            else:
-                query = query.with_for_update(of=(table,))
+            query = self._apply_for_update(query)
 
         order_by = getattr(self.model, "created_at", None)
         if order_by is None:
@@ -321,6 +303,16 @@ class BaseRepository(Generic[T]):
     def _ensure_filters_present(filters: dict[str, Any]) -> None:
         if not filters:
             raise ValueError("At least one filter must be provided for update/delete")
+
+    def _apply_for_update(self, query: Any) -> Any:
+        """Limit row locking to the current model table to avoid outer-join issues."""
+        table = getattr(self.model, "__table__")
+        pk_columns = tuple(
+            cast("ColumnElement[Any]", column) for column in table.primary_key.columns
+        )
+        if pk_columns:
+            return query.with_for_update(of=pk_columns)
+        return query.with_for_update(of=(table,))
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):
