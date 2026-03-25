@@ -6,7 +6,7 @@ import pytest
 from src.core.email_service import tasks
 from src.core.email_service.fastapi_mailer import FastAPIMailer
 from src.core.email_service.tasks import send_email_task, send_email_with_file_task
-from tests.email.mocks import MockMailer
+from tests.fakes.email import MockMailer
 from tests.helpers.providers import ProvideValue
 
 

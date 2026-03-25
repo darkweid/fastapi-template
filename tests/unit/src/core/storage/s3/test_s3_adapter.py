@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
-import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -15,16 +13,12 @@ try:
 except ImportError:
     pytest.skip("aioboto3/botocore not installed", allow_module_level=True)
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from src.core.errors.exceptions import (  # noqa: E402
+from src.core.errors.exceptions import (
     InfrastructureException,
     InstanceProcessingException,
     PayloadTooLargeException,
 )
-from src.core.storage.s3.adapter import (  # noqa: E402
+from src.core.storage.s3.adapter import (
     MAX_MULTIPART_PARTS,
     S3Adapter,
 )

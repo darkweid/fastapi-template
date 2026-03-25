@@ -6,7 +6,7 @@ import pytest
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.schemas import MailTemplateBodyFile, MailTemplateDataBody
 from src.core.email_service.service import EmailService
-from tests.email.mocks import MockMailer
+from tests.fakes.email import MockMailer
 
 
 class FakeCeleryTask:

@@ -1,17 +1,10 @@
-from pathlib import Path
-import sys
-
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import src.core.middleware as middleware  # noqa: E402
+import src.core.middleware as middleware
 
 
 class DummyUnique:
