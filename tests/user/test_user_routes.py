@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.core.database.session import get_session
+from src.core.errors.exceptions import InstanceNotFoundException
 from src.core.schemas import SuccessResponse
 from src.user.auth.dependencies import get_current_user
 from src.user.dependencies import get_user_service
@@ -25,6 +26,13 @@ class FakeUpdatePasswordUseCase:
 class FakeUserService:
     def __init__(self, user) -> None:
         self.get_single = AsyncMock(return_value=user)
+        self.get_single_or_404 = AsyncMock()
+        if user is None:
+            self.get_single_or_404.side_effect = InstanceNotFoundException(
+                "User not found"
+            )
+        else:
+            self.get_single_or_404.return_value = user
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +79,27 @@ async def test_get_user_info_by_id(
     payload = response.json()
     assert payload["id"] == str(target_user.id)
     assert payload["username"] == target_user.username
+
+
+@pytest.mark.asyncio
+async def test_get_user_info_by_id_returns_404_when_user_is_missing(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_session: FakeAsyncSession,
+) -> None:
+    admin_user = build_user(role=UserRole.ADMIN)
+    missing_user_id = build_user().id
+    dependency_overrides.set(get_current_user, ProvideValue(admin_user))
+    dependency_overrides.set(get_user_service, ProvideValue(FakeUserService(None)))
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+
+    response = await async_client.get(f"/v1/users/{missing_user_id}")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": "Instance not found",
+        "message": "User not found",
+    }
 
 
 @pytest.mark.asyncio
