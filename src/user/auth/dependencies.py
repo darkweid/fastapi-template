@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Literal, cast
 
 from fastapi import Depends, Request, Security
@@ -19,6 +20,12 @@ from src.user.repositories import UserRepository
 
 access_token_header = APIKeyHeader(name="Authorization", scheme_name="access-token")
 refresh_token_header = APIKeyHeader(name="Authorization", scheme_name="refresh-token")
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedUser:
+    user: User
+    session_id: str
 
 
 async def get_current_user(
@@ -43,20 +50,49 @@ async def get_current_user(
         UnauthorizedException: If the token is invalid, is not an access token,
             or the user cannot be loaded.
     """
+    authenticated = await get_current_user_with_session(
+        token=token,
+        session=session,
+        redis_client=redis_client,
+        user_repository=user_repository,
+    )
+    return authenticated.user
+
+
+async def get_current_user_with_session(
+    token: str = Security(access_token_header),
+    session: AsyncSession = Depends(get_session),
+    redis_client: Redis = Depends(get_redis_client),
+    user_repository: UserRepository = Depends(get_user_repository),
+) -> AuthenticatedUser:
+    """
+    Resolve the authenticated user and current access-token session identifier.
+
+    Args:
+        token: The JWT access token from the Authorization header.
+        session: Database session.
+        redis_client: Redis client used to validate the active token JTI.
+        user_repository: Repository used to load the user entity.
+
+    Returns:
+        AuthenticatedUser: The authenticated user and current session identifier.
+
+    Raises:
+        UnauthorizedException: If the token is invalid, is not an access token,
+            or the user cannot be loaded.
+    """
     credentials_exception = UnauthorizedException(
         "Could not validate credentials",
     )
 
-    # verify_jti also validates the token and throws appropriate exceptions
     payload = await verify_jti(token, redis_client)
 
     try:
         user_id = payload["sub"]
         mode = payload["mode"]
-
+        session_id = payload["session_id"]
         if mode != "access_token":
             raise credentials_exception
-
     except KeyError:
         raise credentials_exception
 
@@ -64,7 +100,7 @@ async def get_current_user(
     if not user:
         raise credentials_exception
 
-    return user
+    return AuthenticatedUser(user=user, session_id=session_id)
 
 
 async def get_access_by_refresh_token(

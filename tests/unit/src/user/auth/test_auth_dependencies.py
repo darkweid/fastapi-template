@@ -10,8 +10,10 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 from src.user.auth import dependencies
 from src.user.auth.dependencies import (
+    AuthenticatedUser,
     get_access_by_refresh_token,
     get_current_user,
+    get_current_user_with_session,
     get_user_id_from_token,
     verify_jti,
 )
@@ -166,6 +168,34 @@ async def test_get_current_user_success(
 
     assert isinstance(result, User)
     assert result.id == user.id
+    user_repository.get_single.assert_awaited_once_with(fake_session, id=str(user.id))
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_with_session_success(
+    fake_redis: InMemoryRedis,
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user()
+    payload = build_access_payload(str(user.id))
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        payload["jti"],
+        ex=60,
+    )
+    user_repository = FakeUserRepository(user)
+
+    result = await get_current_user_with_session(
+        token=token,
+        session=fake_session,
+        redis_client=fake_redis,
+        user_repository=user_repository,
+    )
+
+    assert isinstance(result, AuthenticatedUser)
+    assert result.user.id == user.id
+    assert result.session_id == payload["session_id"]
     user_repository.get_single.assert_awaited_once_with(fake_session, id=str(user.id))
 
 

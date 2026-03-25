@@ -7,13 +7,18 @@ import pytest
 
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
-from src.user.auth.dependencies import get_access_by_refresh_token
+from src.user.auth.dependencies import (
+    AuthenticatedUser,
+    get_access_by_refresh_token,
+    get_current_user_with_session,
+)
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.routers import router
 from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )
 from src.user.auth.usecases.login import get_login_user_use_case
+from src.user.auth.usecases.logout import get_logout_use_case
 from src.user.auth.usecases.register import get_register_use_case
 from src.user.auth.usecases.resend_verification import get_send_verification_use_case
 from src.user.auth.usecases.reset_password_confirm import (
@@ -121,6 +126,59 @@ async def test_refresh_endpoint(
 
     assert response.status_code == 200
     assert response.json() == {"access_token": "a", "refresh_token": "r"}
+
+
+@pytest.mark.asyncio
+async def test_logout_endpoint(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    authenticated = AuthenticatedUser(user=user, session_id="session-1")
+    dependency_overrides.set(
+        get_current_user_with_session,
+        ProvideValue(authenticated),
+    )
+    logout_use_case = FakeUseCase(SuccessResponse(success=True))
+    dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
+
+    response = await async_client.post("/v1/users/auth/logout")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True}
+    logout_use_case.execute.assert_awaited_once_with(
+        user_id=str(user.id),
+        session_id="session-1",
+        terminate_all_sessions=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_logout_endpoint_can_terminate_all_sessions(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    authenticated = AuthenticatedUser(user=user, session_id="session-1")
+    dependency_overrides.set(
+        get_current_user_with_session,
+        ProvideValue(authenticated),
+    )
+    logout_use_case = FakeUseCase(SuccessResponse(success=True))
+    dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
+
+    response = await async_client.post(
+        "/v1/users/auth/logout",
+        params={"terminate_all_sessions": "true"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True}
+    logout_use_case.execute.assert_awaited_once_with(
+        user_id=str(user.id),
+        session_id="session-1",
+        terminate_all_sessions=True,
+    )
 
 
 @pytest.mark.asyncio

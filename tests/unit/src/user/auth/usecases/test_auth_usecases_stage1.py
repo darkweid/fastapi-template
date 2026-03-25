@@ -23,6 +23,7 @@ from src.user.auth.schemas import (
     SendResetPasswordRequestModel,
 )
 from src.user.auth.usecases.get_access_by_refresh import GetTokensByRefreshUserUseCase
+from src.user.auth.usecases.logout import LogoutUseCase
 from src.user.auth.usecases.register import RegisterUseCase
 from src.user.auth.usecases.resend_verification import SendVerificationUseCase
 from src.user.auth.usecases.reset_password_confirm import ResetPasswordConfirmUseCase
@@ -265,6 +266,46 @@ async def test_reset_password_request_user_not_found(
 
     assert result == SuccessResponse(success=True)
     notifier.send_password_reset_email.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_usecase_invalidates_current_session(
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.usecases.logout.invalidate_user_session",
+        invalidate_mock,
+    )
+
+    use_case = LogoutUseCase(redis_client=fake_redis)
+    result = await use_case.execute(user_id="user-1", session_id="session-1")
+
+    assert result == SuccessResponse(success=True)
+    invalidate_mock.assert_awaited_once_with("user-1", "session-1", fake_redis)
+
+
+@pytest.mark.asyncio
+async def test_logout_usecase_can_invalidate_all_sessions(
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.usecases.logout.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    use_case = LogoutUseCase(redis_client=fake_redis)
+    result = await use_case.execute(
+        user_id="user-1",
+        session_id="session-1",
+        terminate_all_sessions=True,
+    )
+
+    assert result == SuccessResponse(success=True)
+    invalidate_mock.assert_awaited_once_with("user-1", fake_redis)
 
 
 @pytest.mark.asyncio

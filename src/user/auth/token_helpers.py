@@ -40,6 +40,25 @@ async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> Non
                 break
 
 
+async def invalidate_user_session(
+    user_id: str,
+    session_id: str,
+    redis_client: Redis,
+) -> None:
+    """
+    Invalidates a single user session by deleting its access and refresh keys.
+
+    Args:
+        user_id: The user ID whose session should be invalidated.
+        session_id: The session identifier to invalidate.
+        redis_client: Redis client used to delete the active token keys.
+    """
+    await redis_client.delete(
+        auth_redis_keys.access(user_id, session_id),
+        auth_redis_keys.refresh(user_id, session_id),
+    )
+
+
 async def store_active_one_time_token(
     purpose: OneTimeTokenPurpose,
     email: str,

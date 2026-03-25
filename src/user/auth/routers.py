@@ -6,7 +6,9 @@ from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.dependencies import (
+    AuthenticatedUser,
     get_access_by_refresh_token,
+    get_current_user_with_session,
     get_user_id_from_token,
 )
 from src.user.auth.jwt_payload_schema import JWTPayload
@@ -22,6 +24,7 @@ from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )
 from src.user.auth.usecases.login import LoginUserUseCase, get_login_user_use_case
+from src.user.auth.usecases.logout import LogoutUseCase, get_logout_use_case
 from src.user.auth.usecases.register import RegisterUseCase, get_register_use_case
 from src.user.auth.usecases.resend_verification import (
     SendVerificationUseCase,
@@ -147,6 +150,25 @@ async def get_access_by_refresh(
     current_user, old_payload = user_and_payload
 
     return await use_case.execute(user=current_user, old_token_payload=old_payload)
+
+
+@router.post(
+    "/logout",
+    response_model=SuccessResponse,
+)
+async def logout_user(
+    authenticated: Annotated[AuthenticatedUser, Depends(get_current_user_with_session)],
+    use_case: Annotated[LogoutUseCase, Depends(get_logout_use_case)],
+    terminate_all_sessions: bool = False,
+) -> SuccessResponse:
+    """
+    Invalidate the current session or all user sessions.
+    """
+    return await use_case.execute(
+        user_id=str(authenticated.user.id),
+        session_id=authenticated.session_id,
+        terminate_all_sessions=terminate_all_sessions,
+    )
 
 
 @router.post(

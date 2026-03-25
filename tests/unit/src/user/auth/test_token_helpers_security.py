@@ -375,6 +375,30 @@ async def test_invalidate_all_user_sessions(fake_redis: InMemoryRedis) -> None:
 
 
 @pytest.mark.asyncio
+async def test_invalidate_user_session_removes_only_target_session(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """
+    Given: Redis contains auth keys for multiple sessions of the same user.
+    When: a single session is invalidated.
+    Then: only the target session access and refresh keys are removed.
+    """
+    await fake_redis.set(access_jti_key("1", "s1"), "x", ex=60)
+    await fake_redis.set(refresh_jti_key("1", "s1"), "x", ex=60)
+    await fake_redis.set(access_jti_key("1", "s2"), "y", ex=60)
+    await fake_redis.set(refresh_jti_key("1", "s2"), "y", ex=60)
+    await fake_redis.set(refresh_family_key("1", "family-1"), "active", ex=60)
+
+    await token_helpers.invalidate_user_session("1", "s1", fake_redis)
+
+    assert await fake_redis.exists(access_jti_key("1", "s1")) == 0
+    assert await fake_redis.exists(refresh_jti_key("1", "s1")) == 0
+    assert await fake_redis.exists(access_jti_key("1", "s2")) == 1
+    assert await fake_redis.exists(refresh_jti_key("1", "s2")) == 1
+    assert await fake_redis.exists(refresh_family_key("1", "family-1")) == 1
+
+
+@pytest.mark.asyncio
 async def test_invalidate_all_user_sessions_keeps_other_users_keys(
     fake_redis: InMemoryRedis,
 ) -> None:
