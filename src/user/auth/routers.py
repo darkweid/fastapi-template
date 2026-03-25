@@ -152,6 +152,14 @@ async def get_access_by_refresh(
 @router.post(
     "/password/reset",
     response_model=SuccessResponse,
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=3,
+                minutes=15,
+            )
+        )
+    ],
 )
 async def send_reset_password_request(
     request: Request,
@@ -163,7 +171,18 @@ async def send_reset_password_request(
     return await use_case.execute(data=data, request_base_url=request.base_url)
 
 
-@router.put("/password/reset/confirm", response_model=SuccessResponse)
+@router.put(
+    "/password/reset/confirm",
+    response_model=SuccessResponse,
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=5,
+                minutes=15,
+            )
+        )
+    ],
+)
 async def confirm_reset_password_request(
     data: ResetPasswordModel,
     use_case: Annotated[

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+from fastapi.routing import APIRoute
 import pytest
 
+from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
 from src.user.auth.dependencies import get_access_by_refresh_token
 from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.routers import router
 from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )
@@ -31,6 +34,24 @@ from tests.helpers.providers import ProvideValue
 class FakeUseCase:
     def __init__(self, result) -> None:
         self.execute = AsyncMock(return_value=result)
+
+
+def _get_auth_route(*, path: str, method: str) -> APIRoute:
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if route.path == path and method in route.methods:
+            return route
+
+    raise AssertionError(f"Route {method} {path} not found")
+
+
+def _get_route_rate_limiters(route: APIRoute) -> list[RateLimiter]:
+    return [
+        dependency.call
+        for dependency in route.dependant.dependencies
+        if isinstance(dependency.call, RateLimiter)
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -173,3 +194,23 @@ async def test_reset_password_confirm_endpoint(
 
     assert response.status_code == 200
     assert response.json() == {"success": True}
+
+
+def test_reset_password_request_route_has_rate_limit() -> None:
+    route = _get_auth_route(path="/password/reset", method="POST")
+
+    rate_limiters = _get_route_rate_limiters(route)
+
+    assert len(rate_limiters) == 1
+    assert rate_limiters[0].times == 3
+    assert rate_limiters[0].milliseconds == 15 * 60_000
+
+
+def test_reset_password_confirm_route_has_rate_limit() -> None:
+    route = _get_auth_route(path="/password/reset/confirm", method="PUT")
+
+    rate_limiters = _get_route_rate_limiters(route)
+
+    assert len(rate_limiters) == 1
+    assert rate_limiters[0].times == 5
+    assert rate_limiters[0].milliseconds == 15 * 60_000
