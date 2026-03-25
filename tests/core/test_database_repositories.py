@@ -11,7 +11,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.repositories import (
     BaseRepository,
-    LastEntryRepository,
     SoftDeleteRepository,
 )
 
@@ -42,10 +41,6 @@ class RepositoryModelRepository(BaseRepository[RepositoryModel]):
 
 
 class RepositorySoftDeleteRepository(SoftDeleteRepository[RepositoryModel]):
-    model = RepositoryModel
-
-
-class RepositoryLastEntryRepository(LastEntryRepository[RepositoryModel]):
     model = RepositoryModel
 
 
@@ -399,43 +394,3 @@ async def test_soft_delete_repository_batch_soft_delete_requires_filters_async()
 
     with pytest.raises(ValueError):
         await repo.batch_soft_delete(session=session)
-
-
-@pytest.mark.asyncio
-async def test_last_entry_repository_create_commits() -> None:
-    repo = RepositoryLastEntryRepository()
-    session = RepositorySession()
-
-    instance = await repo.create(
-        data={"name": "alpha"},
-        session=session,
-    )
-
-    assert isinstance(instance, RepositoryModel)
-    session.commit.assert_awaited_once()
-    session.refresh.assert_awaited_once_with(instance)
-
-
-@pytest.mark.asyncio
-async def test_last_entry_repository_create_rolls_back_on_integrity_error() -> None:
-    repo = RepositoryLastEntryRepository()
-    session = RepositorySession()
-    session.commit.side_effect = IntegrityError("stmt", "params", "orig")
-
-    with pytest.raises(IntegrityError):
-        await repo.create(data={"name": "alpha"}, session=session)
-
-    session.rollback.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_last_entry_repository_get_single_returns_first() -> None:
-    repo = RepositoryLastEntryRepository()
-    session = RepositorySession()
-    first = RepositoryModel(name="alpha")
-    second = RepositoryModel(name="beta")
-    session.execute.return_value = FakeResult(items=[first, second])
-
-    result = await repo.get_single(session=session)
-
-    assert result is first
