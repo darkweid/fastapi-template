@@ -17,14 +17,11 @@ from src.core.schemas import Base as PydanticBase
 
 ModelType = TypeVar("ModelType", bound=SQLAlchemyBase)
 CreateSchema = TypeVar("CreateSchema", bound=PydanticBase)
-UpdateSchema = TypeVar("UpdateSchema", bound=PydanticBase)
-RepositoryType = TypeVar("RepositoryType", bound=BaseRepository)  # type: ignore
+RepositoryType = TypeVar("RepositoryType", bound=BaseRepository[Any])
 ResponseSchema = TypeVar("ResponseSchema", bound=PydanticBase)
 
 
-class BaseService(
-    Generic[ModelType, CreateSchema, UpdateSchema, RepositoryType, ResponseSchema]
-):
+class BaseService(Generic[ModelType, CreateSchema, RepositoryType, ResponseSchema]):
     """
     Lightweight generic service that wraps a repository to perform straightforward CRUD operations.
 
@@ -114,7 +111,7 @@ class BaseService(
     async def update(
         self,
         session: AsyncSession,
-        data: UpdateSchema,
+        data: PydanticBase,
         **filters: Any,
     ) -> ModelType | None:
         """Update a record matching the filters."""
