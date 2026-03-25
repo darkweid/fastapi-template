@@ -1,3 +1,5 @@
+from typing import cast
+
 from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
@@ -17,26 +19,85 @@ from src.core.errors.exceptions import (
     UnauthorizedException,
 )
 from src.core.errors.handlers import (
-    AccessForbiddenExceptionHandler,
-    CoreExceptionHandler,
-    FilteringErrorHandler,
-    InfrastructureExceptionHandler,
-    InstanceAlreadyExistsExceptionHandler,
-    InstanceNotFoundExceptionHandler,
-    InstanceProcessingExceptionHandler,
-    NotAcceptableExceptionHandler,
-    PayloadTooLargeExceptionHandler,
-    PermissionDeniedExceptionHandler,
-    RequestValidationExceptionHandler,
-    TooManyRequestsExceptionHandler,
-    UnauthorizedExceptionHandler,
-    ValidationErrorExceptionHandler,
-    as_exception_handler,
+    HandlerCallable,
+    handle_access_forbidden_exception,
+    handle_core_exception,
+    handle_filtering_error,
+    handle_infrastructure_exception,
+    handle_instance_already_exists_exception,
+    handle_instance_not_found_exception,
+    handle_instance_processing_exception,
+    handle_not_acceptable_exception,
+    handle_payload_too_large_exception,
+    handle_permission_denied_exception,
+    handle_request_validation_exception,
+    handle_too_many_requests_exception,
+    handle_unauthorized_exception,
+    handle_validation_error,
 )
 from src.system import routers as system_routers
 
 # Import routers here
 from src.user import routers as user_routers
+
+EXCEPTION_HANDLERS: tuple[tuple[type[Exception], HandlerCallable], ...] = (
+    (
+        InfrastructureException,
+        cast(HandlerCallable, handle_infrastructure_exception),
+    ),
+    (
+        RequestValidationError,
+        cast(HandlerCallable, handle_request_validation_exception),
+    ),
+    (
+        ValidationError,
+        cast(HandlerCallable, handle_validation_error),
+    ),
+    (
+        InstanceNotFoundException,
+        cast(HandlerCallable, handle_instance_not_found_exception),
+    ),
+    (
+        InstanceAlreadyExistsException,
+        cast(HandlerCallable, handle_instance_already_exists_exception),
+    ),
+    (
+        InstanceProcessingException,
+        cast(HandlerCallable, handle_instance_processing_exception),
+    ),
+    (
+        PayloadTooLargeException,
+        cast(HandlerCallable, handle_payload_too_large_exception),
+    ),
+    (
+        FilteringError,
+        cast(HandlerCallable, handle_filtering_error),
+    ),
+    (
+        CoreException,
+        cast(HandlerCallable, handle_core_exception),
+    ),
+    (
+        AccessForbiddenException,
+        cast(HandlerCallable, handle_access_forbidden_exception),
+    ),
+    (
+        UnauthorizedException,
+        cast(HandlerCallable, handle_unauthorized_exception),
+    ),
+    (
+        NotAcceptableException,
+        cast(HandlerCallable, handle_not_acceptable_exception),
+    ),
+    (
+        PermissionDeniedException,
+        cast(HandlerCallable, handle_permission_denied_exception),
+    ),
+    (
+        TooManyRequestsException,
+        cast(HandlerCallable, handle_too_many_requests_exception),
+    ),
+)
 
 
 def include_routers(app: FastAPI) -> None:
@@ -69,54 +130,5 @@ def include_exceptions_handlers(app: FastAPI) -> None:
     Returns:
         None
     """
-    app.add_exception_handler(
-        InfrastructureException, as_exception_handler(InfrastructureExceptionHandler())
-    )
-    app.add_exception_handler(
-        RequestValidationError,
-        as_exception_handler(RequestValidationExceptionHandler()),
-    )
-    app.add_exception_handler(
-        ValidationError, as_exception_handler(ValidationErrorExceptionHandler())
-    )
-    app.add_exception_handler(
-        InstanceNotFoundException,
-        as_exception_handler(InstanceNotFoundExceptionHandler()),
-    )
-    app.add_exception_handler(
-        InstanceAlreadyExistsException,
-        as_exception_handler(InstanceAlreadyExistsExceptionHandler()),
-    )
-    app.add_exception_handler(
-        InstanceProcessingException,
-        as_exception_handler(InstanceProcessingExceptionHandler()),
-    )
-    app.add_exception_handler(
-        PayloadTooLargeException,
-        as_exception_handler(PayloadTooLargeExceptionHandler()),
-    )
-    app.add_exception_handler(
-        FilteringError, as_exception_handler(FilteringErrorHandler())
-    )
-    app.add_exception_handler(
-        CoreException,
-        as_exception_handler(CoreExceptionHandler()),
-    )
-    app.add_exception_handler(
-        AccessForbiddenException,
-        as_exception_handler(AccessForbiddenExceptionHandler()),
-    )
-    app.add_exception_handler(
-        UnauthorizedException, as_exception_handler(UnauthorizedExceptionHandler())
-    )
-    app.add_exception_handler(
-        NotAcceptableException, as_exception_handler(NotAcceptableExceptionHandler())
-    )
-    app.add_exception_handler(
-        PermissionDeniedException,
-        as_exception_handler(PermissionDeniedExceptionHandler()),
-    )
-    app.add_exception_handler(
-        TooManyRequestsException,
-        as_exception_handler(TooManyRequestsExceptionHandler()),
-    )
+    for exception_type, handler in EXCEPTION_HANDLERS:
+        app.add_exception_handler(exception_type, handler)

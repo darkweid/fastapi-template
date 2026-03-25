@@ -105,11 +105,13 @@ def test_format_log_message_truncates_long_text() -> None:
 
 @pytest.mark.asyncio
 async def test_core_exception_handler(caplog: pytest.LogCaptureFixture) -> None:
-    handler = handlers.CoreExceptionHandler()
     request = _build_request()
     caplog.set_level(logging.INFO, logger="response_logger_test")
 
-    response = await handler(request, CoreException("failed to process"))
+    response = await handlers.handle_core_exception(
+        request,
+        CoreException("failed to process"),
+    )
 
     assert response.status_code == 400
     assert json.loads(response.body) == {
@@ -123,11 +125,13 @@ async def test_core_exception_handler(caplog: pytest.LogCaptureFixture) -> None:
 async def test_filtering_error_handler_logs_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    handler = handlers.FilteringErrorHandler()
     request = _build_request()
     caplog.set_level(logging.WARNING, logger="response_logger_test")
 
-    response = await handler(request, FilteringError("invalid filter"))
+    response = await handlers.handle_filtering_error(
+        request,
+        FilteringError("invalid filter"),
+    )
 
     assert response.status_code == 400
     assert json.loads(response.body) == {
@@ -142,10 +146,10 @@ async def test_filtering_error_handler_logs_warning(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "handler_cls,exc_cls,status,error_type,log_level,include_path",
+    "handler_fn,exc_cls,status,error_type,log_level,include_path",
     [
         (
-            handlers.InstanceNotFoundExceptionHandler,
+            handlers.handle_instance_not_found_exception,
             InstanceNotFoundException,
             404,
             "Instance not found",
@@ -153,7 +157,7 @@ async def test_filtering_error_handler_logs_warning(
             False,
         ),
         (
-            handlers.InstanceAlreadyExistsExceptionHandler,
+            handlers.handle_instance_already_exists_exception,
             InstanceAlreadyExistsException,
             409,
             "Instance already exists",
@@ -161,7 +165,7 @@ async def test_filtering_error_handler_logs_warning(
             False,
         ),
         (
-            handlers.InstanceProcessingExceptionHandler,
+            handlers.handle_instance_processing_exception,
             InstanceProcessingException,
             400,
             "Instance processing error",
@@ -169,7 +173,7 @@ async def test_filtering_error_handler_logs_warning(
             False,
         ),
         (
-            handlers.UnauthorizedExceptionHandler,
+            handlers.handle_unauthorized_exception,
             UnauthorizedException,
             401,
             "Unauthorized",
@@ -177,7 +181,7 @@ async def test_filtering_error_handler_logs_warning(
             True,
         ),
         (
-            handlers.AccessForbiddenExceptionHandler,
+            handlers.handle_access_forbidden_exception,
             AccessForbiddenException,
             403,
             "Forbidden",
@@ -185,7 +189,7 @@ async def test_filtering_error_handler_logs_warning(
             True,
         ),
         (
-            handlers.NotAcceptableExceptionHandler,
+            handlers.handle_not_acceptable_exception,
             NotAcceptableException,
             406,
             "Not Acceptable",
@@ -193,7 +197,7 @@ async def test_filtering_error_handler_logs_warning(
             False,
         ),
         (
-            handlers.PermissionDeniedExceptionHandler,
+            handlers.handle_permission_denied_exception,
             PermissionDeniedException,
             403,
             "Permission Denied",
@@ -203,7 +207,7 @@ async def test_filtering_error_handler_logs_warning(
     ],
 )
 async def test_other_handlers(
-    handler_cls: type[handlers.HandlerCallable],
+    handler_fn: handlers.HandlerCallable,
     exc_cls: type[CoreException],
     status: int,
     error_type: str,
@@ -212,7 +216,6 @@ async def test_other_handlers(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handler_instance = handler_cls()
     request = _build_request()
     caplog.set_level(log_level, logger="response_logger_test")
 
@@ -223,7 +226,7 @@ async def test_other_handlers(
             LogMessageWithPath(handlers.format_log_message),
         )
 
-    response = await handler_instance(request, exc_cls("failure"))
+    response = await handler_fn(request, exc_cls("failure"))
 
     assert response.status_code == status
     assert json.loads(response.body) == {"error": error_type, "message": "failure"}
@@ -237,12 +240,14 @@ async def test_other_handlers(
 async def test_infrastructure_exception_handler_captures_sentry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handler = handlers.InfrastructureExceptionHandler()
     request = _build_request()
     capture = MagicMock()
     monkeypatch.setattr(handlers.sentry_sdk, "capture_exception", capture)
 
-    response = await handler(request, InfrastructureException("infra fail"))
+    response = await handlers.handle_infrastructure_exception(
+        request,
+        InfrastructureException("infra fail"),
+    )
 
     assert response.status_code == 500
     assert json.loads(response.body) == {
@@ -254,7 +259,6 @@ async def test_infrastructure_exception_handler_captures_sentry(
 
 @pytest.mark.asyncio
 async def test_request_validation_exception_handler_returns_422() -> None:
-    handler = handlers.RequestValidationExceptionHandler()
     request = _build_request()
     exc = RequestValidationError(
         [
@@ -266,7 +270,7 @@ async def test_request_validation_exception_handler_returns_422() -> None:
         ]
     )
 
-    response = await handler(request, exc)
+    response = await handlers.handle_request_validation_exception(request, exc)
 
     assert response.status_code == 422
     payload = json.loads(response.body)
@@ -278,7 +282,6 @@ async def test_request_validation_exception_handler_returns_422() -> None:
 async def test_validation_error_exception_handler_returns_500_and_captures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handler = handlers.ValidationErrorExceptionHandler()
     request = _build_request()
     capture = MagicMock()
     monkeypatch.setattr(handlers.sentry_sdk, "capture_exception", capture)
@@ -286,7 +289,7 @@ async def test_validation_error_exception_handler_returns_500_and_captures(
     with pytest.raises(ValidationError) as exc_info:
         SampleModel.model_validate({"field": "bad"})
 
-    response = await handler(request, exc_info.value)
+    response = await handlers.handle_validation_error(request, exc_info.value)
 
     assert response.status_code == 500
     assert json.loads(response.body) == {"detail": "Unexpected error"}
@@ -295,10 +298,12 @@ async def test_validation_error_exception_handler_returns_500_and_captures(
 
 @pytest.mark.asyncio
 async def test_payload_too_large_exception_handler_returns_413() -> None:
-    handler = handlers.PayloadTooLargeExceptionHandler()
     request = _build_request()
 
-    response = await handler(request, PayloadTooLargeException("too large"))
+    response = await handlers.handle_payload_too_large_exception(
+        request,
+        PayloadTooLargeException("too large"),
+    )
 
     assert response.status_code == 413
     assert json.loads(response.body) == {
@@ -309,10 +314,9 @@ async def test_payload_too_large_exception_handler_returns_413() -> None:
 
 @pytest.mark.asyncio
 async def test_too_many_requests_exception_handler_sets_retry_after() -> None:
-    handler = handlers.TooManyRequestsExceptionHandler()
     request = _build_request()
 
-    response = await handler(
+    response = await handlers.handle_too_many_requests_exception(
         request, TooManyRequestsException("slow down", retry_after=5)
     )
 
