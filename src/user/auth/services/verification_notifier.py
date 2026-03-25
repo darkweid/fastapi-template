@@ -49,7 +49,13 @@ class VerificationNotifier:
         self, user: User, base_url: URL, throttle_key: str | None = None
     ) -> None:
         await self._throttle_or_touch(throttle_key)
-        token = create_verification_token({"email": user.email})
+        if self.redis_client is None:
+            raise RuntimeError("Redis client is required for verification tokens.")
+
+        token = await create_verification_token(
+            {"email": user.email},
+            redis_client=self.redis_client,
+        )
         link = self._build_link(base_url, token)
         await self.email_service.send_template_email_with_delay(
             subject="Verification Message",

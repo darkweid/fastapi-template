@@ -15,6 +15,7 @@ from src.core.errors.exceptions import (
 from src.core.schemas import SuccessResponse, TokenModel
 from src.core.utils.security import build_email_throttle_key
 from src.main.config import config
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import (
     CreateUserModel,
     ResendVerificationModel,
@@ -29,7 +30,11 @@ from src.user.auth.usecases.reset_password_request import ResetPasswordRequestUs
 from src.user.auth.usecases.verify_email import VerifyEmailUseCase
 from src.user.models import User
 from src.user.schemas import UserProfileViewModel
-from tests.factories.token_factory import build_refresh_payload
+from tests.factories.token_factory import (
+    build_refresh_payload,
+    build_reset_password_token,
+    build_verification_token,
+)
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 from tests.fakes.redis import InMemoryRedis
@@ -277,13 +282,9 @@ async def test_reset_password_confirm_success(
         invalidate_mock,
     )
 
-    payload = {
-        "email": user.email,
-        "mode": "reset_password_token",
-        "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
-    }
-    token = jwt.encode(
-        payload, config.jwt.JWT_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
+    token = await build_reset_password_token(
+        {"email": user.email},
+        fake_redis,
     )
 
     use_case = ResetPasswordConfirmUseCase(uow=uow, redis_client=fake_redis)
@@ -294,6 +295,12 @@ async def test_reset_password_confirm_success(
     assert result == SuccessResponse(success=True)
     invalidate_mock.assert_awaited_once()
     uow.commit.assert_awaited_once()
+    assert (
+        await fake_redis.exists(
+            auth_redis_keys.one_time_token("reset_password", user.email)
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -321,18 +328,66 @@ async def test_reset_password_confirm_invalid_mode(
 
 
 @pytest.mark.asyncio
+async def test_reset_password_confirm_rejects_inactive_jti(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    token = await build_reset_password_token({"email": user.email}, fake_redis)
+    await fake_redis.delete(
+        auth_redis_keys.one_time_token("reset_password", user.email)
+    )
+
+    use_case = ResetPasswordConfirmUseCase(uow=uow, redis_client=fake_redis)
+    result = await use_case.execute(
+        data=ResetPasswordModel(token=token, password="StrongPass1!")
+    )
+
+    assert result == SuccessResponse(success=False)
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reset_password_confirm_cannot_reuse_successful_token(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+    token = await build_reset_password_token({"email": user.email}, fake_redis)
+    use_case = ResetPasswordConfirmUseCase(uow=uow, redis_client=fake_redis)
+
+    first_result = await use_case.execute(
+        data=ResetPasswordModel(token=token, password="StrongPass1!")
+    )
+    second_result = await use_case.execute(
+        data=ResetPasswordModel(token=token, password="StrongPass1!")
+    )
+
+    assert first_result == SuccessResponse(success=True)
+    assert second_result == SuccessResponse(success=False)
+    assert invalidate_mock.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_verify_email_usecase_user_not_found(
     fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
 ) -> None:
     users_repo = FakeUsersRepository(user=None)
     uow = build_uow(fake_session, users_repo)
-    use_case = VerifyEmailUseCase(uow=uow)
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
 
-    payload = {
-        "email": "missing@example.com",
-        "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
-    }
-    token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
+    token = await build_verification_token({"email": "missing@example.com"}, fake_redis)
 
     result = await use_case.execute(token)
 
@@ -342,56 +397,100 @@ async def test_verify_email_usecase_user_not_found(
 @pytest.mark.asyncio
 async def test_verify_email_usecase_already_verified(
     fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
 ) -> None:
     user = build_user(is_verified=True)
     users_repo = FakeUsersRepository(user=user, updated_user=user)
     uow = build_uow(fake_session, users_repo)
-    use_case = VerifyEmailUseCase(uow=uow)
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
 
-    payload = {
-        "email": user.email,
-        "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
-    }
-    token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
+    token = await build_verification_token({"email": user.email}, fake_redis)
 
     result = await use_case.execute(token)
 
     assert result == SuccessResponse(success=True)
+    assert (
+        await fake_redis.exists(
+            auth_redis_keys.one_time_token("verification", user.email)
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
 async def test_verify_email_usecase_success(
     fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
 ) -> None:
     user = build_user(is_verified=False)
     users_repo = FakeUsersRepository(user=user, updated_user=user)
     uow = build_uow(fake_session, users_repo)
-    use_case = VerifyEmailUseCase(uow=uow)
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
 
-    payload = {
-        "email": user.email,
-        "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
-    }
-    token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
+    token = await build_verification_token({"email": user.email}, fake_redis)
 
     result = await use_case.execute(token)
 
     assert result == SuccessResponse(success=True)
+    assert (
+        await fake_redis.exists(
+            auth_redis_keys.one_time_token("verification", user.email)
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
 async def test_verify_email_usecase_invalid_token(
     fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
 ) -> None:
     users_repo = FakeUsersRepository(user=None)
     uow = build_uow(fake_session, users_repo)
-    use_case = VerifyEmailUseCase(uow=uow)
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
 
     payload = {
         "email": "user@example.com",
         "exp": int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()),
     }
     token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
+
+    with pytest.raises(UnauthorizedException):
+        await use_case.execute(token)
+
+
+@pytest.mark.asyncio
+async def test_verify_email_usecase_rejects_inactive_jti(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+) -> None:
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
+    token = await build_verification_token({"email": user.email}, fake_redis)
+    await fake_redis.delete(auth_redis_keys.one_time_token("verification", user.email))
+
+    with pytest.raises(UnauthorizedException):
+        await use_case.execute(token)
+
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_verify_email_usecase_cannot_reuse_successful_token(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+) -> None:
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
+    token = await build_verification_token({"email": user.email}, fake_redis)
+
+    first_result = await use_case.execute(token)
+
+    assert first_result == SuccessResponse(success=True)
 
     with pytest.raises(UnauthorizedException):
         await use_case.execute(token)

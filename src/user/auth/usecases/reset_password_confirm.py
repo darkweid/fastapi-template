@@ -5,12 +5,17 @@ from redis.asyncio import Redis
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import hash_password, mask_email
+from src.core.utils.security import hash_password, mask_email, normalize_email
 from src.main.config import config
 from src.user.auth.schemas import ResetPasswordModel
-from src.user.auth.token_helpers import invalidate_all_user_sessions
+from src.user.auth.token_helpers import (
+    invalidate_active_one_time_token,
+    invalidate_all_user_sessions,
+    validate_active_one_time_token,
+)
 
 logger = get_logger(__name__)
 
@@ -25,18 +30,20 @@ class ResetPasswordConfirmUseCase:
     Validations:
     - Token must be valid and not expired.
     - Token mode must be 'reset_password_token'.
+    - Token JTI must match the active Redis entry for the email.
     - Email must be present in the token.
     - User must exist in the database.
 
     Workflow:
     1) Decode and validate the JWT reset token.
-    2) Extract email from the token payload.
+    2) Extract email and validate the active JTI in Redis.
     3) Hash and update the user's password in the database.
-    4) Invalidate all active sessions for the user in Redis.
+    4) Delete the active reset-token key and invalidate all user sessions.
     5) Commit the transaction.
 
     Side effects:
     - Updates user record in the database.
+    - Deletes the active reset-token key from Redis.
     - Deletes user session keys from Redis.
 
     Errors:
@@ -72,29 +79,42 @@ class ResetPasswordConfirmUseCase:
                         logger.info("[ResetPasswordConfirm] Email not found in token.")
                         return SuccessResponse(success=False)
 
+                    normalized_email = normalize_email(email)
+                    await validate_active_one_time_token(
+                        purpose="reset_password",
+                        email=normalized_email,
+                        jti=payload.get("jti"),
+                        redis_client=self.redis_client,
+                    )
+
                     user = await uow.users.update(
                         uow.session,
                         {"password_hash": hash_password(data.password)},
-                        email=email,
+                        email=normalized_email,
                     )
                     await uow.flush()
                     if not user:
                         logger.info(
                             "[ResetPasswordConfirm] User with email %s not found.",
-                            mask_email(email),
+                            mask_email(normalized_email),
                         )
                         return SuccessResponse(success=False)
 
+                    await invalidate_active_one_time_token(
+                        purpose="reset_password",
+                        email=normalized_email,
+                        redis_client=self.redis_client,
+                    )
                     await invalidate_all_user_sessions(str(user.id), self.redis_client)
                     logger.debug(
                         "[ResetPasswordConfirm] All user %s sessions invalidated.",
-                        mask_email(email),
+                        mask_email(normalized_email),
                     )
                     await uow.commit()
                     logger.info(
                         "[ResetPasswordConfirm] Successfully changed password for user "
                         "with email %s.",
-                        mask_email(email),
+                        mask_email(normalized_email),
                     )
                     return SuccessResponse(success=True)
                 else:
@@ -103,6 +123,10 @@ class ResetPasswordConfirmUseCase:
 
             except jwt.ExpiredSignatureError:
                 logger.info("[ResetPasswordConfirm] Token has expired.")
+                return SuccessResponse(success=False)
+
+            except UnauthorizedException:
+                logger.info("[ResetPasswordConfirm] Token JTI is inactive or invalid.")
                 return SuccessResponse(success=False)
 
             except jwt.InvalidTokenError:

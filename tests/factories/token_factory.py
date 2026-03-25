@@ -82,9 +82,9 @@ async def build_refresh_token(
     )
 
 
-def build_verification_token(data: dict[str, Any]) -> str:
-    return create_verification_token(data)
+async def build_verification_token(data: dict[str, Any], redis_client: Any) -> str:
+    return await create_verification_token(data, redis_client)
 
 
-def build_reset_password_token(data: dict[str, Any]) -> str:
-    return create_reset_password_token(data)
+async def build_reset_password_token(data: dict[str, Any], redis_client: Any) -> str:
+    return await create_reset_password_token(data, redis_client)

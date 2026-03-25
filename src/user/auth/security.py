@@ -6,11 +6,13 @@ import jwt
 from redis.asyncio import Redis
 
 from src.core.utils.datetime_utils import get_utc_now
+from src.core.utils.security import normalize_email
 from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.token_helpers import (
     execute_token_rotation,
+    store_active_one_time_token,
     validate_token_family,
     validate_token_structure,
 )
@@ -176,59 +178,83 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
     return str(encoded_jwt)
 
 
-def create_verification_token(data: dict[str, Any]) -> str:
+async def create_verification_token(data: dict[str, Any], redis_client: Redis) -> str:
     """
-    Create a new JWT verification token
+    Create a new JWT verification token and store its active JTI in Redis.
 
     Args:
         data: Dictionary containing token data (must include 'email' key)
+        redis_client: Redis client used for active JTI tracking
 
     Returns:
         str: Encoded JWT verification token
     """
+    email = normalize_email(str(data.get("email", "")))
+    jti = str(uuid4())
     expire = get_utc_now() + timedelta(
         minutes=config.jwt.VERIFICATION_TOKEN_EXPIRE_MINUTES
     )
 
     payload: JWTPayload = {
-        "sub": data.get("email", ""),  # email as a subject identifier
+        "sub": email,
         "exp": int(expire.timestamp()),
         "mode": "verification_token",
+        "jti": jti,
     }
 
-    token_data = {**data, **payload}
+    token_data = {**data, "email": email, **payload}
 
     encoded_jwt = jwt.encode(
         token_data, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM
     )
 
+    await store_active_one_time_token(
+        purpose="verification",
+        email=email,
+        jti=jti,
+        ttl_seconds=config.jwt.VERIFICATION_TOKEN_EXPIRE_MINUTES * 60,
+        redis_client=redis_client,
+    )
+
     return str(encoded_jwt)
 
 
-def create_reset_password_token(data: dict[str, Any]) -> str:
+async def create_reset_password_token(data: dict[str, Any], redis_client: Redis) -> str:
     """
-    Create a new JWT password-reset token
+    Create a new JWT password-reset token and store its active JTI in Redis.
 
     Args:
         data: Dictionary containing token data (must include 'email' key)
+        redis_client: Redis client used for active JTI tracking
 
     Returns:
         str: Encoded JWT password reset token
     """
+    email = normalize_email(str(data.get("email", "")))
+    jti = str(uuid4())
     expire = get_utc_now() + timedelta(
         minutes=config.jwt.RESET_PASSWORD_TOKEN_EXPIRE_MINUTES
     )
 
     payload: JWTPayload = {
-        "sub": data.get("email", ""),  # email as a subject identifier
+        "sub": email,
         "exp": int(expire.timestamp()),
         "mode": "reset_password_token",
+        "jti": jti,
     }
 
-    token_data = {**data, **payload}
+    token_data = {**data, "email": email, **payload}
 
     encoded_jwt = jwt.encode(
         token_data, config.jwt.JWT_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
+    )
+
+    await store_active_one_time_token(
+        purpose="reset_password",
+        email=email,
+        jti=jti,
+        ttl_seconds=config.jwt.RESET_PASSWORD_TOKEN_EXPIRE_MINUTES * 60,
+        redis_client=redis_client,
     )
 
     return str(encoded_jwt)

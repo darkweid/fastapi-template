@@ -6,7 +6,7 @@ import pytest
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.redis_keys import auth_redis_keys
+from src.user.auth.redis_keys import OneTimeTokenPurpose, auth_redis_keys
 import src.user.auth.security as security
 import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
@@ -31,6 +31,10 @@ def refresh_family_key(user_id: str, family_id: str) -> str:
 
 def used_refresh_key(user_id: str, jti: str) -> str:
     return auth_redis_keys.used(user_id, jti)
+
+
+def one_time_token_key(purpose: OneTimeTokenPurpose, email: str) -> str:
+    return auth_redis_keys.one_time_token(purpose, email)
 
 
 @pytest.fixture(autouse=True)
@@ -117,6 +121,128 @@ async def test_create_refresh_token_stores_family(
     assert (
         await fake_redis.exists(refresh_family_key(decoded["sub"], decoded["family"]))
         == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_verification_token_stores_active_jti(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+
+    token = await security.create_verification_token(
+        {"email": "User@Example.com"},
+        redis_client=fake_redis,
+    )
+    decoded = jwt.decode(
+        token,
+        TEST_JWT_VERIFY_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+
+    assert decoded["mode"] == "verification_token"
+    assert decoded["email"] == "user@example.com"
+    assert decoded["sub"] == "user@example.com"
+    assert decoded["jti"]
+    assert (
+        await fake_redis.get(one_time_token_key("verification", "user@example.com"))
+        == decoded["jti"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_verification_token_invalidates_previous_jti(
+    fake_redis: InMemoryRedis,
+) -> None:
+    first_token = await security.create_verification_token(
+        {"email": "user@example.com"},
+        redis_client=fake_redis,
+    )
+    second_token = await security.create_verification_token(
+        {"email": "user@example.com"},
+        redis_client=fake_redis,
+    )
+
+    first_decoded = jwt.decode(
+        first_token,
+        TEST_JWT_VERIFY_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    second_decoded = jwt.decode(
+        second_token,
+        TEST_JWT_VERIFY_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+
+    assert first_decoded["jti"] != second_decoded["jti"]
+    assert (
+        await fake_redis.get(one_time_token_key("verification", "user@example.com"))
+        == second_decoded["jti"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_reset_password_token_stores_active_jti(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+
+    token = await security.create_reset_password_token(
+        {"email": "User@Example.com"},
+        redis_client=fake_redis,
+    )
+    decoded = jwt.decode(
+        token,
+        TEST_JWT_RESET_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+
+    assert decoded["mode"] == "reset_password_token"
+    assert decoded["email"] == "user@example.com"
+    assert decoded["sub"] == "user@example.com"
+    assert decoded["jti"]
+    assert (
+        await fake_redis.get(one_time_token_key("reset_password", "user@example.com"))
+        == decoded["jti"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_reset_password_token_invalidates_previous_jti(
+    fake_redis: InMemoryRedis,
+) -> None:
+    first_token = await security.create_reset_password_token(
+        {"email": "user@example.com"},
+        redis_client=fake_redis,
+    )
+    second_token = await security.create_reset_password_token(
+        {"email": "user@example.com"},
+        redis_client=fake_redis,
+    )
+
+    first_decoded = jwt.decode(
+        first_token,
+        TEST_JWT_RESET_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    second_decoded = jwt.decode(
+        second_token,
+        TEST_JWT_RESET_SECRET_KEY,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+
+    assert first_decoded["jti"] != second_decoded["jti"]
+    assert (
+        await fake_redis.get(one_time_token_key("reset_password", "user@example.com"))
+        == second_decoded["jti"]
     )
 
 
