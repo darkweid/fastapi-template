@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.core.database.filters import FilterCondition
 from src.user.repositories import UserRepository
 from src.user.tasks import _soft_delete_unverified_users
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
@@ -86,5 +87,7 @@ async def test_batch_soft_delete_raises_value_error_on_empty_filters(
 ) -> None:
     repo = UserRepository()
 
-    with pytest.raises(ValueError, match="At least one filter must be provided"):
-        await repo.batch_soft_delete(fake_session)
+    with pytest.raises(
+        ValueError, match="At least one filter condition must be provided"
+    ):
+        await repo.batch_soft_delete(fake_session, filters=FilterCondition())

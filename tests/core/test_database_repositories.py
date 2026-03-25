@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database.base import Base as SQLAlchemyBase
+from src.core.database.filters import FilterCondition
 from src.core.database.repositories import (
     BaseRepository,
     SoftDeleteRepository,
@@ -484,7 +485,9 @@ async def test_soft_delete_repository_batch_soft_delete_returns_rowcount(
         fixed_utc_now,
     )
 
-    result = await repo.batch_soft_delete(session=session, id=1)
+    result = await repo.batch_soft_delete(
+        session=session, filters=FilterCondition(eq={"id": 1})
+    )
 
     assert result == 2
 
@@ -497,4 +500,4 @@ async def test_soft_delete_repository_batch_soft_delete_requires_filters_async()
     session = RepositorySession()
 
     with pytest.raises(ValueError):
-        await repo.batch_soft_delete(session=session)
+        await repo.batch_soft_delete(session=session, filters=FilterCondition())

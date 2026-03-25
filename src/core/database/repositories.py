@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
+from src.core.database.filters import FilterCondition
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
@@ -441,30 +442,47 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
                 await session.rollback()
             raise
 
-    async def batch_soft_delete(self, session: AsyncSession, **filters: Any) -> int:
-        """
-        Soft delete multiple records matching the filters.
-        Supports suffix filters like '_lt', '_gt' for fields.
-        """
-        self._ensure_filters_present(filters)
+    async def batch_soft_delete(
+        self,
+        session: AsyncSession,
+        filters: FilterCondition,
+        commit: bool = False,
+    ) -> int:
+        """Soft delete multiple records matching the typed filter conditions."""
+        filters.validate()
+        merged = FilterCondition(
+            eq={**{"is_deleted": False}, **filters.eq},
+            ne=filters.ne,
+            lt=filters.lt,
+            gt=filters.gt,
+            lte=filters.lte,
+            gte=filters.gte,
+        )
         try:
             stmt = update(self.model).values(is_deleted=True, deleted_at=get_utc_now())
-
-            filters.setdefault("is_deleted", False)
-
-            for key, value in filters.items():
-                if key.endswith("_lt"):
-                    field = key[:-3]
-                    stmt = stmt.where(getattr(self.model, field) < value)
-                elif key.endswith("_gt"):
-                    field = key[:-3]
-                    stmt = stmt.where(getattr(self.model, field) > value)
-                else:
-                    stmt = stmt.where(getattr(self.model, key) == value)
+            for clause in merged.build_where_clauses(self.model):
+                stmt = stmt.where(clause)
 
             result = await session.execute(stmt)
-            return int(result.rowcount) if hasattr(result, "rowcount") else 0
+            count = int(result.rowcount) if hasattr(result, "rowcount") else 0
+
+            if commit:
+                await session.commit()
+                logger.debug(
+                    "%s batch soft-deleted %d record(s) [Committed].",
+                    self.model.__name__,
+                    count,
+                )
+            else:
+                logger.debug(
+                    "%s batch soft-deleted %d record(s) [Staged, pending commit].",
+                    self.model.__name__,
+                    count,
+                )
+            return count
         except SQLAlchemyError:
+            if commit:
+                await session.rollback()
             logger.exception("Batch soft-delete failed for %s", self.model.__name__)
             raise
 
