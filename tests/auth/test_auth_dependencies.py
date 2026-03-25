@@ -17,7 +17,6 @@ from src.user.auth.dependencies import (
 )
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
-from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_access_payload, build_refresh_payload
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
@@ -27,6 +26,11 @@ from tests.helpers.requests import build_request
 
 def encode_token(payload: dict[str, object], secret: str) -> str:
     return jwt.encode(payload, secret, config.jwt.ALGORITHM)
+
+
+class FakeUserRepository:
+    def __init__(self, user: User | None) -> None:
+        self.get_single = AsyncMock(return_value=user)
 
 
 @pytest.mark.asyncio
@@ -142,7 +146,6 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
 async def test_get_current_user_success(
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = build_user()
     payload = build_access_payload(str(user.id))
@@ -152,15 +155,18 @@ async def test_get_current_user_success(
         payload["jti"],
         ex=60,
     )
-    get_single_mock = AsyncMock(return_value=user)
-    monkeypatch.setattr(UserRepository, "get_single", get_single_mock)
+    user_repository = FakeUserRepository(user)
 
     result = await get_current_user(
-        token=token, session=fake_session, redis_client=fake_redis
+        token=token,
+        session=fake_session,
+        redis_client=fake_redis,
+        user_repository=user_repository,
     )
 
     assert isinstance(result, User)
     assert result.id == user.id
+    user_repository.get_single.assert_awaited_once_with(fake_session, id=str(user.id))
 
 
 @pytest.mark.asyncio
@@ -185,6 +191,7 @@ async def test_get_current_user_wrong_mode(
             token=token,
             session=fake_session,
             redis_client=fake_redis,
+            user_repository=FakeUserRepository(None),
         )
 
 
@@ -192,7 +199,6 @@ async def test_get_current_user_wrong_mode(
 async def test_get_access_by_refresh_token_success(
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = build_user()
     payload = build_refresh_payload(str(user.id))
@@ -207,15 +213,21 @@ async def test_get_access_by_refresh_token_success(
         "active",
         ex=60,
     )
-    get_single_mock = AsyncMock(return_value=user)
-    monkeypatch.setattr(UserRepository, "get_single", get_single_mock)
+    user_repository = FakeUserRepository(user)
 
     result_user, result_payload = await get_access_by_refresh_token(
-        refresh_token=token, session=fake_session, redis_client=fake_redis
+        refresh_token=token,
+        session=fake_session,
+        redis_client=fake_redis,
+        user_repository=user_repository,
     )
 
     assert result_user.id == user.id
     assert result_payload["mode"] == "refresh_token"
+    user_repository.get_single.assert_awaited_once_with(
+        fake_session,
+        id=str(user.id),
+    )
 
 
 @pytest.mark.asyncio
