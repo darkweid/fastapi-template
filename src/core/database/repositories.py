@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, Literal, TypeVar, cast
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -119,12 +119,7 @@ class BaseRepository(Generic[T]):
             query = query.options(*eager)
         if for_update:
             query = self._apply_for_update(query)
-
-        order_by = getattr(self.model, "created_at", None)
-        if order_by is None:
-            order_by = getattr(self.model, "id", None)
-        if order_by is not None:
-            query = query.order_by(order_by.desc())
+        query = self._apply_default_ordering(query)
 
         result = await session.execute(query)
         return list(result.unique().scalars().all())
@@ -146,12 +141,7 @@ class BaseRepository(Generic[T]):
         query = select(self.model).filter_by(**filters)
         if eager:
             query = query.options(*eager)
-
-        order_by = getattr(self.model, "created_at", None)
-        if order_by is None:
-            order_by = getattr(self.model, "id", None)
-        if order_by is not None:
-            query = query.order_by(order_by.desc())
+        query = self._apply_default_ordering(query)
 
         offset = (page - 1) * size
         query = query.offset(offset).limit(size)
@@ -313,6 +303,21 @@ class BaseRepository(Generic[T]):
         if pk_columns:
             return query.with_for_update(of=pk_columns)
         return query.with_for_update(of=(table,))
+
+    def _apply_default_ordering(
+        self,
+        query: Any,
+        order: Literal["asc", "desc"] = "desc",
+    ) -> Any:
+        """Apply default ordering by created_at, falling back to id."""
+        order_by = getattr(self.model, "created_at", None)
+        if order_by is None:
+            order_by = getattr(self.model, "id", None)
+        if order_by is None:
+            return query
+        if order == "asc":
+            return query.order_by(order_by.asc())
+        return query.order_by(order_by.desc())
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):

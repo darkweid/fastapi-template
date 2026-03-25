@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -203,6 +203,31 @@ async def test_base_repository_get_list_returns_all() -> None:
 
 
 @pytest.mark.asyncio
+async def test_base_repository_get_list_applies_default_created_at_ordering() -> None:
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(session=session)
+
+    query = session.execute.await_args.args[0]
+    order_by_clause = list(query._order_by_clauses)[0]
+    assert str(order_by_clause) == "repository_models.created_at DESC"
+
+
+@pytest.mark.asyncio
+async def test_base_repository_apply_default_ordering_supports_ascending_order() -> (
+    None
+):
+    repo = RepositoryModelRepository()
+
+    query = repo._apply_default_ordering(select(RepositoryModel), order="asc")
+
+    order_by_clause = list(query._order_by_clauses)[0]
+    assert str(order_by_clause) == "repository_models.created_at ASC"
+
+
+@pytest.mark.asyncio
 async def test_base_repository_get_list_applies_for_update_scope() -> None:
     repo = RepositoryModelRepository()
     session = RepositorySession()
@@ -241,6 +266,24 @@ async def test_base_repository_get_paginated_list_returns_items_and_total() -> N
 
     assert result_items == items
     assert total == 5
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_applies_default_created_at_ordering() -> (
+    None
+):
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+
+    await repo.get_paginated_list(session=session, page=1, size=10)
+
+    query = session.execute.await_args_list[0].args[0]
+    order_by_clause = list(query._order_by_clauses)[0]
+    assert str(order_by_clause) == "repository_models.created_at DESC"
 
 
 @pytest.mark.asyncio
