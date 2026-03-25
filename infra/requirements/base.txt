@@ -58,9 +58,7 @@ botocore==1.40.61
     #   boto3
     #   s3transfer
 celery==5.6.2
-    # via
-    #   -r base.in
-    #   flower
+    # via -r base.in
 certifi==2026.1.4
     # via
     #   httpcore
@@ -95,33 +93,20 @@ fastapi==0.135.2
     # via -r base.in
 fastapi-mail==1.6.2
     # via -r base.in
-flower==2.0.1
-    # via -r base.in
 frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-geoalchemy2==0.18.4
-    # via -r base.in
 greenlet==3.3.2
     # via sqlalchemy
 gunicorn==25.2.0
     # via -r base.in
 h11==0.16.0
-    # via
-    #   httpcore
-    #   uvicorn
-httpcore==1.0.9
-    # via httpx
-httpx==0.28.1
-    # via -r base.in
-humanize==4.15.0
-    # via flower
+    # via uvicorn
 idna==3.11
     # via
     #   anyio
     #   email-validator
-    #   httpx
     #   yarl
 jinja2==3.1.6
     # via fastapi-mail
@@ -145,13 +130,10 @@ multidict==6.7.1
     #   yarl
 packaging==26.0
     # via
-    #   geoalchemy2
     #   gunicorn
     #   kombu
 passlib==1.7.4
     # via -r base.in
-prometheus-client==0.24.1
-    # via flower
 prompt-toolkit==3.0.52
     # via click-repl
 propcache==0.4.1
@@ -185,10 +167,6 @@ python-dotenv==1.2.2
     #   pydantic-settings
 python-multipart==0.0.22
     # via -r base.in
-pytz==2026.1.post1
-    # via
-    #   -r base.in
-    #   flower
 redis==7.4.0
     # via -r base.in
 regex==2025.11.3
@@ -204,13 +182,10 @@ sqlalchemy==2.0.48
     #   -r base.in
     #   alembic
     #   alembic-postgresql-enum
-    #   geoalchemy2
 starlette==0.50.0
     # via
     #   fastapi
     #   fastapi-mail
-tornado==6.5.5
-    # via flower
 typing-extensions==4.15.0
     # via
     #   alembic

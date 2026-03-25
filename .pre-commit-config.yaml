@@ -76,7 +76,6 @@ repos:
           - alembic==1.18.4
           - fastapi-mail==1.6.2
           - types-passlib==1.7.7.20260211
-          - types-pytz==2026.1.1.20260304
           - types-PyYAML==6.0.12.20250915
           - types-requests==2.32.4.20260324
           - types-ujson==5.10.0.20250822

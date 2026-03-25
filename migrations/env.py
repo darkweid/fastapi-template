@@ -17,14 +17,6 @@ target_metadata: MetaData = Base.metadata
 logger = logging.getLogger(__name__)
 
 
-def include_object(object, name, type_, reflected, compare_to):
-    if name in [
-        "spatial_ref_sys",
-    ]:
-        return False
-    return True
-
-
 def _get_postgres_dsn() -> str:
     try:
         dsn = app_config.postgres.dsn_async
@@ -51,7 +43,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -62,7 +53,6 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        include_object=include_object,
     )
 
     with context.begin_transaction():

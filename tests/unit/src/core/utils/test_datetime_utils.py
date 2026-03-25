@@ -2,7 +2,6 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-import pytz
 
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.utils import datetime_utils
@@ -21,21 +20,21 @@ def fixed_now_jan_10() -> datetime:
 
 @pytest.fixture(autouse=True)
 def _patch_local_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(datetime_utils, "LOCAL_TZ", pytz.UTC)
+    monkeypatch.setattr(datetime_utils, "LOCAL_TZ", timezone.utc)
 
 
 def test_parse_date_range_single_day() -> None:
     start, end = datetime_utils.parse_date_range(None, "2024-01-15")
 
-    assert start == datetime(2024, 1, 15, tzinfo=pytz.UTC)
-    assert end == datetime(2024, 1, 15, 23, 59, 59, 999999, tzinfo=pytz.UTC)
+    assert start == datetime(2024, 1, 15, tzinfo=timezone.utc)
+    assert end == datetime(2024, 1, 15, 23, 59, 59, 999999, tzinfo=timezone.utc)
 
 
 def test_parse_date_range_from_and_to_dates() -> None:
     start, end = datetime_utils.parse_date_range(date(2024, 5, 1), date(2024, 5, 3))
 
-    assert start == datetime(2024, 5, 1, tzinfo=pytz.UTC)
-    assert end == datetime(2024, 5, 3, 23, 59, 59, 999999, tzinfo=pytz.UTC)
+    assert start == datetime(2024, 5, 1, tzinfo=timezone.utc)
+    assert end == datetime(2024, 5, 3, 23, 59, 59, 999999, tzinfo=timezone.utc)
 
 
 def test_prepare_datetime_filter_range_single_day() -> None:
@@ -79,7 +78,7 @@ def test_parse_date_range_none_returns_none() -> None:
 
 
 def test_parse_date_range_datetime_inputs_preserve_time() -> None:
-    to_date = datetime(2024, 1, 5, 10, 30, tzinfo=pytz.UTC)
+    to_date = datetime(2024, 1, 5, 10, 30, tzinfo=timezone.utc)
     start, end = datetime_utils.parse_date_range(None, to_date)
 
     assert start == to_date

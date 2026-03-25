@@ -7,13 +7,13 @@ pip-tools
 pre-commit
 
 # Testing dependencies
+httpx
 pytest
 pytest-asyncio
 pytest-cov
 
 # Type stubs
 types-passlib
-types-pytz
 types-PyYAML
 types-requests
 types-ujson

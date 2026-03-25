@@ -209,7 +209,7 @@ info:
 	@echo "   • make migrate            # Apply Alembic migrations"
 	@echo "   • make migration message='msg' # Create new Alembic migration"
 	@echo ""
-	@echo "🔍 Debugging & Monitoring:"
+	@echo "🔍 Debugging:"
 	@echo "   • make shell              # Enter bash inside the app container"
 	@echo "   • make logs               # Show all logs"
 	@echo "   • make logs-app           # Show logs from the app container"

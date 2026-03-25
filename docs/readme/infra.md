@@ -6,16 +6,14 @@
 - Postgres: 5432
 - Redis: 6379
 - RabbitMQ: 5672 (AMQP), 15672 (UI)
-- Flower: 5555
 
 Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requirements).
 
 ## Containers
 - **Postgres:** `infra/postgres/Dockerfile`, stores data in volume.
-- **App:** Uvicorn/Gunicorn serving FastAPI.
+- **App:** Uvicorn/Gunicorn serving FastAPI under a non-root runtime user.
 - **Celery_worker:** Background tasks.
-- **Celery_beat:** Schedules periodic tasks.
-- **Flower:** Celery monitoring UI.
+- **Celery_beat:** Schedules periodic tasks and stores beat state in a named volume.
 - **Nginx:** Reverse proxy to app.
 - **Redis:** Cache/result backend with password.
 - **RabbitMQ:** Broker with management UI.
@@ -38,7 +36,6 @@ Open:
 - App via Nginx: http://localhost:8000
 - Docs: http://localhost:8000/docs
 - Direct app (bypass Nginx): http://localhost:8001/docs
-- Flower: http://localhost:5555
 
 ## Common Commands
 ```bash
@@ -68,3 +65,7 @@ make clean            # remove stack + volumes/images/orphans
 - `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test` / `make test-cov`.
 - Use `make logs` or service-specific logs to inspect errors.
 - If migrations fail, check Postgres health first.
+
+## Deployment Notes
+- `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `celery_worker`, or `celery_beat`.
+- Source bind mounts remain only in `infra/docker-compose.override.yml` for local development.

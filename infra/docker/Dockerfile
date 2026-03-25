@@ -32,7 +32,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     wget \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system appuser \
+    && useradd --system --gid appuser --create-home --home-dir /home/appuser appuser \
+    && mkdir -p /data \
+    && chown appuser:appuser /app /data
 
-COPY --from=builder /install /install
-COPY . .
+COPY --from=builder --chown=appuser:appuser /install /install
+COPY --chown=appuser:appuser . .
+
+USER appuser

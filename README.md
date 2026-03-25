@@ -14,7 +14,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - DB via SQLAlchemy async, repositories + Unit of Work for transactional work.
 - Caching: Redis cache layer (`src/core/redis/*`) with tags, decorators, lifecycle helpers, and deterministic ETag support for route responses.
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
-- Messaging: Celery workers/beat + RabbitMQ broker, Flower monitoring UI.
+- Messaging: Celery workers/beat + RabbitMQ broker.
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
 - Email service: templated mailer with Celery tasks for async sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
@@ -53,11 +53,9 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Postgres: 5432
 - Redis: 6379
 - RabbitMQ: 5672 (AMQP), 15672 (UI)
-- Flower: 5555
 
 ## Common Services
 - API docs: http://localhost:8000/docs (or http://localhost:8001/docs directly)
-- Flower: http://localhost:5555
 - Health: http://localhost:8001/health/
 
 ## Useful Make Targets
