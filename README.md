@@ -23,6 +23,12 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
+## Rate Limiting Notes
+- Primary rate limiting uses Redis-backed `RateLimiter` dependencies from `src/core/limiter`.
+- If Redis is temporarily unavailable, the limiter falls back to an in-memory per-process window so protection still works in degraded mode.
+- Be careful in multi-instance deployments: this fallback is not distributed, so each instance enforces its own local counter and the effective global limit becomes higher than the configured value.
+- Even with that limitation, the fallback is still useful because requests remain best-effort rate-limited instead of becoming completely unlimited during a Redis outage.
+
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/black-formatter-000000?logo=black&logoColor=white)

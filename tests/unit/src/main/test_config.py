@@ -45,6 +45,15 @@ def test_parse_cors_list_semicolon_delimiter() -> None:
     assert app_config.CORS_ALLOWED_METHODS == ["GET", "POST", "PUT"]
 
 
+def test_parse_trust_proxy_hosts_json_string() -> None:
+    data = _base_app_config_data()
+    data["TRUST_PROXY_HOSTS"] = '["127.0.0.1", "::1", "10.0.0.0/8"]'
+
+    app_config = AppConfig(**data)
+
+    assert app_config.TRUST_PROXY_HOSTS == ["127.0.0.1", "::1", "10.0.0.0/8"]
+
+
 def test_app_config_reads_cors_allowed_credentials_flag() -> None:
     data = _base_app_config_data()
     data["CORS_ALLOWED_CREDENTIALS"] = False

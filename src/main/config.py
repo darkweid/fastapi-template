@@ -231,6 +231,7 @@ class AppConfig(BaseModel):
         "CORS_ALLOWED_METHODS",
         "CORS_ALLOWED_HEADERS",
         "CORS_EXPOSE_HEADERS",
+        "TRUST_PROXY_HOSTS",
         mode="before",
     )
     @classmethod
