@@ -25,6 +25,30 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
         self.if_none_header = "If-None-Match"
 
     @staticmethod
+    def _build_etag(payload: bytes) -> str:
+        digest = hashlib.sha256(payload).hexdigest()
+        return f'W/"{digest}"'
+
+    @staticmethod
+    def _normalize_etag_for_weak_compare(etag: str) -> str:
+        normalized = etag.strip()
+        if normalized.startswith("W/"):
+            normalized = normalized[2:]
+        return normalized
+
+    @classmethod
+    def _matches_if_none_match(cls, if_none_match: str | None, etag: str) -> bool:
+        if if_none_match is None:
+            return False
+
+        normalized_etag = cls._normalize_etag_for_weak_compare(etag)
+        for candidate in if_none_match.split(","):
+            normalized_candidate = cls._normalize_etag_for_weak_compare(candidate)
+            if normalized_candidate == "*" or normalized_candidate == normalized_etag:
+                return True
+        return False
+
+    @staticmethod
     async def key_builder(  # type: ignore
         request: Request,
         identity_id: str | None = None,
@@ -205,10 +229,11 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                         logger.exception("Failed to set tags for key %s", cache_key)
 
                     if response:
+                        etag = self._build_etag(to_cache)
                         response.headers.update(
                             {
                                 self.cache_control_header: f"max-age={ttl}",
-                                self.etag_header: f"W/{hash(to_cache)}",
+                                self.etag_header: etag,
                                 self.cache_status_header: "MISS",
                             }
                         )
@@ -216,7 +241,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                     logger.debug("Cache hit for key: %s", cache_key)
 
                     if response:
-                        etag = f"W/{hash(cached)}"
+                        etag = self._build_etag(cached)
                         response.headers.update(
                             {
                                 self.cache_control_header: f"max-age={ttl}",
@@ -225,10 +250,10 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
                             }
                         )
 
-                        if_none_match = request and request.headers.get(
+                        if_none_match: str | None = request.headers.get(
                             self.if_none_header
                         )
-                        if if_none_match == etag:
+                        if self._matches_if_none_match(if_none_match, etag):
                             response.status_code = status.HTTP_304_NOT_MODIFIED
                             return response
 
