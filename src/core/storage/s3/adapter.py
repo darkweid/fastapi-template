@@ -10,6 +10,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from starlette.datastructures import UploadFile
 
+from loggers import get_logger
 from src.core.errors.exceptions import (
     InfrastructureException,
     InstanceProcessingException,
@@ -19,6 +20,7 @@ from src.core.storage.s3.interface import S3ClientProtocol
 
 MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
 MAX_MULTIPART_PARTS = 10_000
+logger = get_logger(__name__)
 
 
 class S3Adapter(S3ClientProtocol):
@@ -320,23 +322,28 @@ class S3Adapter(S3ClientProtocol):
                 try:
                     return int(header_size)
                 except (TypeError, ValueError):
-                    pass
+                    logger.debug(
+                        "[S3Adapter] Invalid content-length header '%s' for upload.",
+                        header_size,
+                    )
         file_obj = file.file
         try:
             current_pos = file_obj.tell()
-        except Exception:
+        except (AttributeError, OSError, RuntimeError, ValueError):
             current_pos = None
         try:
             file_obj.seek(0, 2)
             size = file_obj.tell()
-        except Exception:
+        except (AttributeError, OSError, RuntimeError, ValueError):
             return None
         finally:
             if current_pos is not None:
                 try:
                     file_obj.seek(current_pos)
-                except Exception:
-                    pass
+                except (AttributeError, OSError, RuntimeError, ValueError):
+                    logger.debug(
+                        "[S3Adapter] Failed to restore upload file position after size check."
+                    )
         return size
 
     def _round_up_to_megabyte(self, size_bytes: int) -> int:
@@ -346,8 +353,8 @@ class S3Adapter(S3ClientProtocol):
     async def _read_uploadfile_with_limit(self, file: UploadFile) -> bytes:
         try:
             await file.seek(0)
-        except Exception:
-            pass
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            logger.debug("[S3Adapter] Failed to rewind UploadFile before reading.")
         max_size = self._max_upload_size_bytes
         chunk_size = min(1024 * 1024, max_size)
         buffer = bytearray()

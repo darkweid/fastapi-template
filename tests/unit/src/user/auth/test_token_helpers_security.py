@@ -12,9 +12,9 @@ import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.providers import ProvideValue
 
-TEST_JWT_USER_SECRET_KEY = "test_jwt_user_secret_key_for_tests_32_chars"
-TEST_JWT_VERIFY_SECRET_KEY = "test_jwt_verify_secret_key_for_tests_32_chars"
-TEST_JWT_RESET_SECRET_KEY = "test_jwt_reset_secret_key_for_tests_32_chars"
+TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
+TEST_JWT_VERIFY_SECRET_KEY = "test-jwt-verify-secret-key-not-real"
+TEST_JWT_RESET_SECRET_KEY = "test-jwt-reset-secret-key-not-real"
 
 
 def access_jti_key(user_id: str, session_id: str) -> str:

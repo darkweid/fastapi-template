@@ -1,4 +1,4 @@
-import pickle
+import pickle  # nosec B403
 from typing import Any
 
 from starlette.templating import _TemplateResponse as TemplateResponse
@@ -16,5 +16,5 @@ class PickleCoder(Coder):
 
     @classmethod
     def decode(cls, value: bytes) -> Any:
-        """Decode bytes back into the original value from the cache using pickle."""
-        return pickle.loads(value)  # noqa: S301
+        """Decode trusted internal cache bytes back into the original value."""
+        return pickle.loads(value)  # noqa: S301  # nosec B301

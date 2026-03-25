@@ -65,7 +65,7 @@ class RouteCacheManager(BaseCacheManager, AbstractCacheManager):
         logger.debug("%s | %s", path_params, query_params)
 
         raw = json.dumps(payload, sort_keys=True)
-        hashed = hashlib.md5(raw.encode()).hexdigest()
+        hashed = hashlib.md5(raw.encode()).hexdigest()  # nosec B324
 
         return f"cache:{func_name}:{hashed}"
 

@@ -10,7 +10,7 @@ from src.user.auth.security import rotate_refresh_token
 import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
 
-TEST_JWT_USER_SECRET_KEY = "test_jwt_user_secret_key_for_tests_32_chars"
+TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
 
 
 def _base_payload() -> dict[str, str | int]:

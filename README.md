@@ -34,6 +34,15 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 ![Black](https://img.shields.io/badge/black-formatter-000000?logo=black&logoColor=white)
 ![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
 
+## Security Checks
+- CI runs a dedicated security job in `.github/workflows/ci.yml`.
+- `bandit` scans application, migration, and script code for insecure patterns.
+- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages.
+- `gitleaks` scans the repository for committed secrets.
+- `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
+- `pip-audit` currently ignores `CVE-2026-4539` explicitly because `pygments==2.19.2` is present in the dev graph and no fix version is reported yet.
+- These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
+
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
 - Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
@@ -72,6 +81,12 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Update hooks: `pre-commit autoupdate` (and commit `.pre-commit-config.yaml` changes)
 - Clean hook envs if needed: `pre-commit clean`
 - Run all hooks locally: `pre-commit run --all-files` or `make lint`
+
+## Optional Local Security Runs
+- Install tools: `pip install bandit pip-audit`
+- Static scan: `bandit -r src scripts migrations -q`
+- Dependency audit: `pip-audit --ignore-vuln CVE-2026-4539 -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt`
+- Secret scan: `gitleaks detect --source .`
 
 ## Dependencies (pip-tools)
 - Source files: `infra/requirements/*.in` contain direct dependencies (typically without pins).

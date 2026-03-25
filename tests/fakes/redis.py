@@ -176,7 +176,7 @@ class InMemoryRedis:
         if stored_jti != expected_jti:
             return "INVALID"
 
-        await self.setex(used_key, used_ttl_seconds, "used")
+        await self.setex(used_key, used_ttl_seconds, "1")
         await self.delete(refresh_key)
         return "OK"
 
