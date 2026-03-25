@@ -33,7 +33,9 @@ The goal is simple: write solid tests quickly and consistently, without tying th
 
 ## 3) Structure and naming
 
-- Test paths should mirror the domain structure under `src/`.
+- Application code from `src/` should be tested under `tests/unit/src/` with a mirrored path.
+- Integration tests should live under `tests/integration/src/` when they appear.
+- Non-application test tooling and infrastructure checks should live under `tests/unit/` outside `src/`.
 - File names: `test_<feature>.py`.
 - Test names: `test_<scenario>_<expected_result>`.
 - For async tests, use `@pytest.mark.asyncio`.
@@ -59,7 +61,7 @@ Then: <expected result>
 """
 ```
 - Typical places where docstrings are often required: auth/user domain flows, business use cases/services, policy-heavy unhappy paths.
-- Typical places where docstrings are usually not allowed: low-level `tests/core/*`, `tests/main/*`, `tests/storage/*`, `tests/email/*`, `tests/system/*`, and trivial mapping/wiring tests.
+- Typical places where docstrings are usually not allowed: low-level `tests/unit/src/core/*`, `tests/unit/src/main/*`, `tests/unit/src/system/*`, and trivial mapping/wiring tests.
 - Quality bar for GWT docstrings:
 - The docstring must add information that is not already obvious from the test name.
 - `Given` describes domain context, not mocks/internal setup.
@@ -108,6 +110,12 @@ Also available:
 - `tests/fakes/` - in-memory/fake implementations
 - `tests/factories/` - test data factories
 - `tests/helpers/` - helpers for overrides, request building, limiter utilities
+
+Current application test layout:
+- `tests/unit/src/core/...`
+- `tests/unit/src/main/...`
+- `tests/unit/src/system/...`
+- `tests/unit/src/user/...`
 
 ## 6) Minimal unit test template
 
@@ -160,10 +168,10 @@ async def test_get_resource_returns_200(async_client_with_fakes):
 ## 9) Run commands
 
 - Run all tests: `make test`
-- Run one file: `TESTING=true python -m pytest tests/<path>/test_<name>.py -v`
-- Run one test: `TESTING=true python -m pytest tests/<path>/test_<name>.py::test_<scenario> -v`
-- Stop on first failure: `TESTING=true python -m pytest tests/<path> -x`
-- Re-run only failed tests: `TESTING=true python -m pytest tests/<path> --lf`
+- Run one file: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py -v`
+- Run one test: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py::test_<scenario> -v`
+- Stop on first failure: `TESTING=true python -m pytest tests/unit/src/<module> -x`
+- Re-run only failed tests: `TESTING=true python -m pytest tests/unit/src/<module> --lf`
 
 ## 10) Anti-patterns (do not do this)
 
