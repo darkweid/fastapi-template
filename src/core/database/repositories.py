@@ -236,18 +236,28 @@ class BaseRepository(Generic[T]):
         search: str | None = None,
         fields: Sequence[str | Any] | None = None,
     ) -> Any:
+        """Apply literal substring search without treating user input as LIKE syntax."""
         if not search or not fields:
             return query
 
+        escaped_search = self._escape_like_literal(search)
         search_query_list = []
 
         for field in fields:
             if isinstance(field, str) and hasattr(self.model, field):
                 search_query_list.append(
-                    getattr(self.model, field).ilike(f"%{search}%")
+                    getattr(self.model, field).ilike(
+                        f"%{escaped_search}%",
+                        escape="\\",
+                    )
                 )
             elif hasattr(field, "ilike"):
-                search_query_list.append(field.ilike(f"%{search}%"))
+                search_query_list.append(
+                    field.ilike(
+                        f"%{escaped_search}%",
+                        escape="\\",
+                    )
+                )
 
         if search_query_list:
             query = query.where(or_(*search_query_list))
@@ -318,6 +328,14 @@ class BaseRepository(Generic[T]):
         if order == "asc":
             return query.order_by(order_by.asc())
         return query.order_by(order_by.desc())
+
+    @staticmethod
+    def _escape_like_literal(value: str, escape_char: str = "\\") -> str:
+        return (
+            value.replace(escape_char, escape_char * 2)
+            .replace("%", f"{escape_char}%")
+            .replace("_", f"{escape_char}_")
+        )
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):

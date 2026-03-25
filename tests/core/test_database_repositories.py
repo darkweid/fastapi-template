@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -225,6 +226,40 @@ async def test_base_repository_apply_default_ordering_supports_ascending_order()
 
     order_by_clause = list(query._order_by_clauses)[0]
     assert str(order_by_clause) == "repository_models.created_at ASC"
+
+
+@pytest.mark.asyncio
+async def test_base_repository_apply_search_filter_escapes_like_wildcards() -> None:
+    repo = RepositoryModelRepository()
+
+    query = repo._apply_search_filter(
+        select(RepositoryModel),
+        search=r"100%_match\value",
+        fields=["name"],
+    )
+
+    compiled = query.compile(dialect=postgresql.dialect())
+
+    assert "ILIKE" in compiled.string
+    assert r"ESCAPE '\\'" in compiled.string
+    assert compiled.params["name_1"] == r"%100\%\_match\\value%"
+
+
+@pytest.mark.asyncio
+async def test_base_repository_apply_search_filter_supports_literal_column_objects() -> (
+    None
+):
+    repo = RepositoryModelRepository()
+
+    query = repo._apply_search_filter(
+        select(RepositoryModel),
+        search="user_100%",
+        fields=[RepositoryModel.name],
+    )
+
+    compiled = query.compile(dialect=postgresql.dialect())
+
+    assert compiled.params["name_1"] == r"%user\_100\%%"
 
 
 @pytest.mark.asyncio
