@@ -1,6 +1,7 @@
 # This docker-compose file defines services for the FastAPI application stack
 # It includes web application, database, cache, message queues, and monitoring services
 
+name: fastapi-template
 services:
   app-builder:
     container_name: template-app-builder
