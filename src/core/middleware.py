@@ -15,6 +15,14 @@ from loggers import get_logger
 logger = get_logger(__name__)
 timing_logger = get_logger("src.request.timing", plain_format=True)
 UNEXPECTED_ERROR_DETAIL = "Unexpected error"
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
 
 
 @dataclass(slots=True)
@@ -32,8 +40,8 @@ def register_middlewares(app: FastAPI) -> None:
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         response = await call_next(request)
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
         return response
 
     @app.middleware("http")

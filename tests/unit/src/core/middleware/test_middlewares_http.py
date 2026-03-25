@@ -91,8 +91,20 @@ def test_security_headers_added() -> None:
     resp = client.get("/ok")
 
     assert resp.status_code == 200
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
     assert resp.headers["X-Frame-Options"] == "DENY"
-    assert resp.headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+    assert (
+        resp.headers["Strict-Transport-Security"]
+        == "max-age=31536000; includeSubDomains; preload"
+    )
+    assert (
+        resp.headers["Content-Security-Policy"]
+        == "default-src 'self'; frame-ancestors 'none'"
+    )
+    assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert (
+        resp.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
+    )
 
 
 def test_integrity_unique_violation() -> None:
