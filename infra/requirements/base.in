@@ -8,17 +8,13 @@ celery
 email-validator
 fastapi
 fastapi_mail
-flower
-GeoAlchemy2
 gunicorn
-httpx
 passlib
 pydantic
 pydantic-settings
 pyjwt
 python-dotenv
 python-multipart
-pytz
 redis
 sentry-sdk
 sqlalchemy

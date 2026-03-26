@@ -41,7 +41,6 @@ def build_refresh_payload(
     *,
     session_id: str | None = None,
     jti: str | None = None,
-    family: str | None = None,
     expires_in_minutes: int | None = None,
 ) -> JWTPayload:
     expire = get_utc_now() + timedelta(
@@ -53,7 +52,6 @@ def build_refresh_payload(
         "mode": "refresh_token",
         "jti": jti or str(uuid4()),
         "session_id": session_id or str(uuid4()),
-        "family": family or str(uuid4()),
     }
 
 
@@ -75,16 +73,13 @@ async def build_refresh_token(
     redis_client: Any,
     *,
     session_id: str | None = None,
-    family: str | None = None,
 ) -> str:
-    return await create_refresh_token(
-        data, redis_client, session_id=session_id, family=family
-    )
+    return await create_refresh_token(data, redis_client, session_id=session_id)
 
 
-def build_verification_token(data: dict[str, Any]) -> str:
-    return create_verification_token(data)
+async def build_verification_token(data: dict[str, Any], redis_client: Any) -> str:
+    return await create_verification_token(data, redis_client)
 
 
-def build_reset_password_token(data: dict[str, Any]) -> str:
-    return create_reset_password_token(data)
+async def build_reset_password_token(data: dict[str, Any], redis_client: Any) -> str:
+    return await create_reset_password_token(data, redis_client)

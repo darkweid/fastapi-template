@@ -1,18 +1,21 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.dependencies import (
+    AuthenticatedUser,
     get_access_by_refresh_token,
+    get_current_user_with_session,
     get_user_id_from_token,
 )
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     CreateUserModel,
     LoginUserModel,
+    LogoutRequestModel,
     ResendVerificationModel,
     ResetPasswordModel,
     SendResetPasswordRequestModel,
@@ -22,6 +25,7 @@ from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )
 from src.user.auth.usecases.login import LoginUserUseCase, get_login_user_use_case
+from src.user.auth.usecases.logout import LogoutUseCase, get_logout_use_case
 from src.user.auth.usecases.register import RegisterUseCase, get_register_use_case
 from src.user.auth.usecases.resend_verification import (
     SendVerificationUseCase,
@@ -150,8 +154,37 @@ async def get_access_by_refresh(
 
 
 @router.post(
+    "/logout",
+    response_model=SuccessResponse,
+)
+async def logout_user(
+    authenticated: Annotated[AuthenticatedUser, Depends(get_current_user_with_session)],
+    use_case: Annotated[LogoutUseCase, Depends(get_logout_use_case)],
+    data: Annotated[LogoutRequestModel | None, Body()] = None,
+) -> SuccessResponse:
+    """
+    Invalidate the current session or all user sessions.
+    """
+    return await use_case.execute(
+        user_id=str(authenticated.user.id),
+        session_id=authenticated.session_id,
+        terminate_all_sessions=(
+            data.terminate_all_sessions if data is not None else False
+        ),
+    )
+
+
+@router.post(
     "/password/reset",
     response_model=SuccessResponse,
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=3,
+                minutes=15,
+            )
+        )
+    ],
 )
 async def send_reset_password_request(
     request: Request,
@@ -163,7 +196,18 @@ async def send_reset_password_request(
     return await use_case.execute(data=data, request_base_url=request.base_url)
 
 
-@router.put("/password/reset/confirm", response_model=SuccessResponse)
+@router.put(
+    "/password/reset/confirm",
+    response_model=SuccessResponse,
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=5,
+                minutes=15,
+            )
+        )
+    ],
+)
 async def confirm_reset_password_request(
     data: ResetPasswordModel,
     use_case: Annotated[

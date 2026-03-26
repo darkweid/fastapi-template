@@ -39,7 +39,7 @@ def get_application() -> FastAPI:
     application.add_middleware(
         CORSMiddleware,  # noqa
         allow_origins=config.app.CORS_ALLOWED_ORIGINS,
-        allow_credentials=config.app.CORS_ALLOW_CREDENTIALS,
+        allow_credentials=config.app.CORS_ALLOWED_CREDENTIALS,
         allow_methods=config.app.CORS_ALLOWED_METHODS,
         allow_headers=config.app.CORS_ALLOWED_HEADERS,
         expose_headers=config.app.CORS_EXPOSE_HEADERS,

@@ -67,6 +67,10 @@ class SendResetPasswordRequestModel(EmailNormalizationMixin, Base):
     email: EmailStr
 
 
+class LogoutRequestModel(Base):
+    terminate_all_sessions: bool = False
+
+
 class ResetPasswordModel(StrongPasswordValidationMixin, Base):
     token: str
     password: str

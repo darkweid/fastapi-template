@@ -59,7 +59,7 @@ async def get_user_info_by_id(
     user_service: Annotated[UserService, Depends(get_user_service)],
     session: AsyncSession = Depends(get_session),
 ) -> UserSummaryViewModel:
-    user = await user_service.get_single(session, id=user_id)
+    user = await user_service.get_single_or_404(session, id=user_id)
     return UserSummaryViewModel.model_validate(user)
 
 

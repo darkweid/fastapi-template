@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, Literal, TypeVar, cast
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
+from src.core.database.filters import FilterCondition
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
@@ -101,16 +102,7 @@ class BaseRepository(Generic[T]):
         if eager:
             query = query.options(*eager)
         if for_update:
-            # Limit lock scope to this table to avoid Postgres outer-join restriction
-            table = getattr(self.model, "__table__")
-            pk_columns = tuple(
-                cast("ColumnElement[Any]", column)
-                for column in table.primary_key.columns
-            )
-            if pk_columns:
-                query = query.with_for_update(of=pk_columns)
-            else:
-                query = query.with_for_update(of=(table,))
+            query = self._apply_for_update(query)
 
         result = await session.execute(query)
         return result.unique().scalars().first()
@@ -127,22 +119,8 @@ class BaseRepository(Generic[T]):
         if eager:
             query = query.options(*eager)
         if for_update:
-            # Limit lock scope to this table to avoid Postgres outer-join restriction
-            table = getattr(self.model, "__table__")
-            pk_columns = tuple(
-                cast("ColumnElement[Any]", column)
-                for column in table.primary_key.columns
-            )
-            if pk_columns:
-                query = query.with_for_update(of=pk_columns)
-            else:
-                query = query.with_for_update(of=(table,))
-
-        order_by = getattr(self.model, "created_at", None)
-        if order_by is None:
-            order_by = getattr(self.model, "id", None)
-        if order_by is not None:
-            query = query.order_by(order_by.desc())
+            query = self._apply_for_update(query)
+        query = self._apply_default_ordering(query)
 
         result = await session.execute(query)
         return list(result.unique().scalars().all())
@@ -164,12 +142,7 @@ class BaseRepository(Generic[T]):
         query = select(self.model).filter_by(**filters)
         if eager:
             query = query.options(*eager)
-
-        order_by = getattr(self.model, "created_at", None)
-        if order_by is None:
-            order_by = getattr(self.model, "id", None)
-        if order_by is not None:
-            query = query.order_by(order_by.desc())
+        query = self._apply_default_ordering(query)
 
         offset = (page - 1) * size
         query = query.offset(offset).limit(size)
@@ -264,18 +237,28 @@ class BaseRepository(Generic[T]):
         search: str | None = None,
         fields: Sequence[str | Any] | None = None,
     ) -> Any:
+        """Apply literal substring search without treating user input as LIKE syntax."""
         if not search or not fields:
             return query
 
+        escaped_search = self._escape_like_literal(search)
         search_query_list = []
 
         for field in fields:
             if isinstance(field, str) and hasattr(self.model, field):
                 search_query_list.append(
-                    getattr(self.model, field).ilike(f"%{search}%")
+                    getattr(self.model, field).ilike(
+                        f"%{escaped_search}%",
+                        escape="\\",
+                    )
                 )
             elif hasattr(field, "ilike"):
-                search_query_list.append(field.ilike(f"%{search}%"))
+                search_query_list.append(
+                    field.ilike(
+                        f"%{escaped_search}%",
+                        escape="\\",
+                    )
+                )
 
         if search_query_list:
             query = query.where(or_(*search_query_list))
@@ -321,6 +304,39 @@ class BaseRepository(Generic[T]):
     def _ensure_filters_present(filters: dict[str, Any]) -> None:
         if not filters:
             raise ValueError("At least one filter must be provided for update/delete")
+
+    def _apply_for_update(self, query: Any) -> Any:
+        """Limit row locking to the current model table to avoid outer-join issues."""
+        table = getattr(self.model, "__table__")
+        pk_columns = tuple(
+            cast("ColumnElement[Any]", column) for column in table.primary_key.columns
+        )
+        if pk_columns:
+            return query.with_for_update(of=pk_columns)
+        return query.with_for_update(of=(table,))
+
+    def _apply_default_ordering(
+        self,
+        query: Any,
+        order: Literal["asc", "desc"] = "desc",
+    ) -> Any:
+        """Apply default ordering by created_at, falling back to id."""
+        order_by = getattr(self.model, "created_at", None)
+        if order_by is None:
+            order_by = getattr(self.model, "id", None)
+        if order_by is None:
+            return query
+        if order == "asc":
+            return query.order_by(order_by.asc())
+        return query.order_by(order_by.desc())
+
+    @staticmethod
+    def _escape_like_literal(value: str, escape_char: str = "\\") -> str:
+        return (
+            value.replace(escape_char, escape_char * 2)
+            .replace("%", f"{escape_char}%")
+            .replace("_", f"{escape_char}_")
+        )
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):
@@ -426,30 +442,48 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
                 await session.rollback()
             raise
 
-    async def batch_soft_delete(self, session: AsyncSession, **filters: Any) -> int:
-        """
-        Soft delete multiple records matching the filters.
-        Supports suffix filters like '_lt', '_gt' for fields.
-        """
-        self._ensure_filters_present(filters)
+    async def batch_soft_delete(
+        self,
+        session: AsyncSession,
+        filters: FilterCondition,
+        commit: bool = False,
+    ) -> int:
+        """Soft delete multiple records matching the typed filter conditions."""
+        if not filters.has_conditions():
+            raise ValueError("At least one filter condition must be provided")
+        merged = FilterCondition(
+            eq={**{"is_deleted": False}, **filters.eq},
+            ne=filters.ne,
+            lt=filters.lt,
+            gt=filters.gt,
+            lte=filters.lte,
+            gte=filters.gte,
+        )
         try:
             stmt = update(self.model).values(is_deleted=True, deleted_at=get_utc_now())
-
-            filters.setdefault("is_deleted", False)
-
-            for key, value in filters.items():
-                if key.endswith("_lt"):
-                    field = key[:-3]
-                    stmt = stmt.where(getattr(self.model, field) < value)
-                elif key.endswith("_gt"):
-                    field = key[:-3]
-                    stmt = stmt.where(getattr(self.model, field) > value)
-                else:
-                    stmt = stmt.where(getattr(self.model, key) == value)
+            for clause in merged.build_where_clauses(self.model):
+                stmt = stmt.where(clause)
 
             result = await session.execute(stmt)
-            return int(result.rowcount) if hasattr(result, "rowcount") else 0
+            count = int(result.rowcount) if hasattr(result, "rowcount") else 0
+
+            if commit:
+                await session.commit()
+                logger.debug(
+                    "%s batch soft-deleted %d record(s) [Committed].",
+                    self.model.__name__,
+                    count,
+                )
+            else:
+                logger.debug(
+                    "%s batch soft-deleted %d record(s) [Staged, pending commit].",
+                    self.model.__name__,
+                    count,
+                )
+            return count
         except SQLAlchemyError:
+            if commit:
+                await session.rollback()
             logger.exception("Batch soft-delete failed for %s", self.model.__name__)
             raise
 
@@ -460,43 +494,3 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
             raise TypeError(
                 f"{self.model.__name__} must define 'is_deleted' and 'deleted_at' for SoftDeleteRepository"
             )
-
-
-class LastEntryRepository(Generic[T]):
-    """
-    Repository for CRUD operations with a focus on retrieving the latest entry.
-
-    This repository provides methods to create a new record and to retrieve the most recent
-    record based on the 'created_at' attribute of the model.
-    """
-
-    model: type[T]
-
-    async def create(self, data: dict[str, Any], session: AsyncSession) -> T:
-        """
-        Create a new record in the database using the provided session.
-        """
-        try:
-            instance = self.model(**data)
-            session.add(instance)
-            await session.commit()
-            await session.refresh(instance)
-            logger.info("%s created successfully.", self.model.__name__)
-            return instance
-        except (IntegrityError, SQLAlchemyError) as e:
-            await session.rollback()
-            logger.error("Error creating %s: %s", self.model.__name__, e)
-            raise
-
-    async def get_single(self, session: AsyncSession) -> T | None:
-        """
-        Retrieve the most recent record based on the 'created_at' field.
-        """
-        query = select(self.model)
-        if getattr(self.model, "created_at", None):
-            query = query.order_by(self.model.created_at.desc())  # type: ignore
-        else:
-            query = query.order_by(self.model.id.desc())  # type: ignore
-        query = query.limit(1)
-        result = await session.execute(query)
-        return result.scalars().first()

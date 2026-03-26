@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow committed example and test-only placeholder secrets."
+paths = [
+  '''^\.env\.example$''',
+  '''^\.env\.test$''',
+  '''^tests/unit/src/user/auth/test_token_helpers_security\.py$''',
+  '''^tests/unit/src/user/auth/test_refresh_rotation\.py$''',
+]

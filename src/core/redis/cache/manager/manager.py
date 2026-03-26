@@ -31,7 +31,7 @@ class CacheManager(BaseCacheManager, AbstractCacheManager):
 
         func = cast(FunctionType, func)
 
-        cache_key = hashlib.md5(  # noqa: S324
+        cache_key = hashlib.md5(  # noqa: S324  # nosec B324
             f"{func.__module__}:{func.__name__}:{filtered_kwargs}".encode()
         ).hexdigest()
 

@@ -1,15 +1,13 @@
 from datetime import date, datetime, time as datetime_time, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import pytz
-
 from loggers import get_logger
 from src.core.errors.exceptions import InstanceProcessingException
 from src.main.config import config
 
 logger = get_logger(__name__)
 
-LOCAL_TZ = pytz.timezone(str(config.app.LOCAL_TIMEZONE))
+LOCAL_TZ = ZoneInfo(str(config.app.LOCAL_TIMEZONE))
 
 
 def get_utc_now() -> datetime:
@@ -49,20 +47,20 @@ def parse_date_range(
         if isinstance(input_date, str):
             _date = list(map(int, input_date.split("-")))
             time_part = datetime_time.max if is_end else datetime_time.min
-            local_dt = LOCAL_TZ.localize(
-                datetime.combine(date(_date[0], _date[1], _date[2]), time_part)
+            local_dt = datetime.combine(
+                date(_date[0], _date[1], _date[2]), time_part, tzinfo=LOCAL_TZ
             )
         elif isinstance(input_date, datetime):
             local_dt = input_date.astimezone(LOCAL_TZ)
 
         elif isinstance(input_date, date):
-            local_dt = LOCAL_TZ.localize(
-                datetime.combine(
-                    input_date, datetime_time.max if is_end else datetime_time.min
-                )
+            local_dt = datetime.combine(
+                input_date,
+                datetime_time.max if is_end else datetime_time.min,
+                tzinfo=LOCAL_TZ,
             )
 
-        return local_dt.astimezone(pytz.utc)  # convert to UTC
+        return local_dt.astimezone(timezone.utc)  # convert to UTC
 
     result_from_date: datetime | None = None
     result_to_date: datetime | None = None

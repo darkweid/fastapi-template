@@ -28,13 +28,14 @@ class UpdateUserPasswordUseCase:
 
     Workflow:
     1) Hash and update user password in the database.
-    2) Flush session and log success.
+    2) Flush pending DB changes.
     3) Invalidate all active Redis sessions for the user.
     4) Commit the transaction.
 
     Side effects:
     - Updates user record in database.
-    - Deletes all user session keys from Redis.
+    - Deletes all user session keys from Redis before commit to avoid
+      partial-success password changes when Redis is unavailable.
 
     Errors:
     - InstanceProcessingException: if update fails.
@@ -59,18 +60,16 @@ class UpdateUserPasswordUseCase:
                 logger.info("[UpdateUserPassword] User not found.")
                 return SuccessResponse(success=False)
             await uow.flush()
+            await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
+            await uow.commit()
             logger.debug(
                 "[UpdateUserPassword] %s password updated successfully.",
                 mask_email(updated_user.email),
             )
-
-            await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
             logger.debug(
                 "[UpdateUserPassword] All user %s sessions invalidated.",
                 mask_email(updated_user.email),
             )
-
-            await uow.commit()
             return SuccessResponse(success=True)
 
 

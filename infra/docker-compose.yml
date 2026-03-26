@@ -1,6 +1,7 @@
 # This docker-compose file defines services for the FastAPI application stack
 # It includes web application, database, cache, message queues, and monitoring services
 
+name: fastapi-template
 services:
   app-builder:
     container_name: template-app-builder
@@ -16,7 +17,7 @@ services:
     build:
       context: ..
       dockerfile: infra/postgres/Dockerfile
-    image: template-postgres-postgis:18
+    image: template-postgres:18
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
@@ -45,6 +46,7 @@ services:
   app:
     container_name: template-app
     image: template-app-image:latest
+    env_file: ../.env
     command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
     restart: on-failure
     healthcheck:
@@ -52,8 +54,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    volumes:
-      - ..:/app
     ports:
       - "${APP_BACKEND_PORT}:${APP_BACKEND_PORT}"
     depends_on:
@@ -75,9 +75,6 @@ services:
     env_file: ../.env
     command: python -m celery -A celery_tasks.main worker --pool=solo --loglevel=info -E
     restart: unless-stopped
-    volumes:
-      - ..:/app
-      - celery-state:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -97,11 +94,10 @@ services:
     container_name: template-celery-beat
     image: template-app-image:latest
     env_file: ../.env
-    command: python -m celery -A celery_tasks.main beat --loglevel=info
+    command: python -m celery -A celery_tasks.main beat --loglevel=info --schedule /data/celerybeat-schedule
     restart: unless-stopped
     volumes:
-      - ..:/app
-      - /tmp:/tmp
+      - celery-beat-state:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -117,39 +113,9 @@ services:
           cpus: '0.5'
           memory: 512M
 
-  # Flower for Celery monitoring
-  flower:
-    container_name: template-flower
-    image: template-flower:latest
-    build:
-      context: ..
-      dockerfile: infra/docker/Dockerfile
-    restart: always
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:5555"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    env_file: ../.env
-    ports:
-      - "5555:5555"
-    command: celery -A celery_tasks.main flower --port=5555 --broker=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      celery_worker:
-        condition: service_started
-    networks:
-      - app-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-
   nginx:
     container_name: template-nginx
-    image: nginx:latest
+    image: nginx:1.29.7
     restart: always
     volumes:
       - ./nginx/main.conf:/etc/nginx/conf.d/00-main.conf:ro
@@ -220,8 +186,8 @@ volumes:
     name: app-postgres-data
   redis-data:
     name: app-redis-data
-  celery-state:
-    name: app-celery-state
+  celery-beat-state:
+    name: app-celery-beat-state
 
 networks:
   app-network:

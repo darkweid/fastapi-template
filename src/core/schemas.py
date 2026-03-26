@@ -1,7 +1,11 @@
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 from src.core.utils.security import normalize_email
-from src.core.validations import STRONG_PASSWORD_VALIDATOR
+from src.core.validations import (
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    STRONG_PASSWORD_VALIDATOR,
+)
 
 
 class Base(BaseModel):
@@ -32,6 +36,6 @@ class StrongPasswordValidationMixin(BaseModel):
     def validate_password(cls, value: str) -> str:
         if not STRONG_PASSWORD_VALIDATOR.match(value):
             raise ValueError(
-                "Password must contain at least one lowercase letter, one uppercase letter, one digit, one special character. Minimum length is 8 characters"
+                f"Password must be {PASSWORD_MIN_LENGTH}-{PASSWORD_MAX_LENGTH} characters long and contain at least one lowercase letter, one uppercase letter, one digit, and one non-alphanumeric non-space character. Printable ASCII characters are allowed."
             )
         return value

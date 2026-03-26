@@ -13,8 +13,8 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.storage.s3.dependencies import get_s3_adapter
 from src.main.config import Config, get_settings
 from src.main.web import get_application
-from tests.email.mocks import MockMailer
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
+from tests.fakes.email import MockMailer
 from tests.fakes.redis import InMemoryRedis
 from tests.fakes.s3 import InMemoryS3Client
 from tests.helpers.overrides import DependencyOverrides

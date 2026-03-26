@@ -9,6 +9,7 @@ from celery_tasks.main import (
 )
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
+from src.core.database.filters import FilterCondition
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.utils.coroutine_runner import execute_coroutine_sync
 from src.core.utils.datetime_utils import get_utc_now
@@ -31,8 +32,10 @@ async def _soft_delete_unverified_users() -> int:
             async with uow:
                 deleted_count = await uow.users.batch_soft_delete(
                     session=uow.session,
-                    is_verified=False,
-                    created_at_lt=cutoff,
+                    filters=FilterCondition(
+                        eq={"is_verified": False},
+                        lt={"created_at": cutoff},
+                    ),
                 )
                 await uow.commit()
                 return int(deleted_count)

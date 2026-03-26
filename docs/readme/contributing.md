@@ -12,6 +12,11 @@
 - Caching: venv by `infra/requirements.txt` hash, pre-commit, deps.
 - Quality: `make check-lint`, Alembic head check.
 - Tests: generates `.env` from example and runs `make test`.
+- Security: separate `security` job runs `bandit`, `pip-audit`, and `gitleaks`.
+- Dependency audit uses pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` instead of floating installs.
+- `gitleaks` keeps history scanning enabled and relies on a narrow repo allowlist only for known example/test placeholders.
+- `pip-audit` may contain a temporary ignore only for a specific CVE when no fix version is available yet.
+- The security job is expected to fail on real findings, so dependency bumps should keep lockfiles current.
 
 ### CD (`.github/workflows/deploy.yml`)
 - Deploys from `main` after successful CI.
