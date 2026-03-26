@@ -10,7 +10,6 @@ from starlette.datastructures import URL
 from src.core.errors.exceptions import (
     InstanceProcessingException,
     PermissionDeniedException,
-    UnauthorizedException,
 )
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
@@ -579,8 +578,9 @@ async def test_verify_email_usecase_invalid_token(
     }
     token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
 
-    with pytest.raises(UnauthorizedException):
-        await use_case.execute(token)
+    result = await use_case.execute(token)
+
+    assert result == SuccessResponse(success=False)
 
 
 @pytest.mark.asyncio
@@ -595,9 +595,9 @@ async def test_verify_email_usecase_rejects_inactive_jti(
     token = await build_verification_token({"email": user.email}, fake_redis)
     await fake_redis.delete(auth_redis_keys.one_time_token("verification", user.email))
 
-    with pytest.raises(UnauthorizedException):
-        await use_case.execute(token)
+    result = await use_case.execute(token)
 
+    assert result == SuccessResponse(success=False)
     uow.commit.assert_not_awaited()
 
 
@@ -616,8 +616,9 @@ async def test_verify_email_usecase_cannot_reuse_successful_token(
 
     assert first_result == SuccessResponse(success=True)
 
-    with pytest.raises(UnauthorizedException):
-        await use_case.execute(token)
+    second_result = await use_case.execute(token)
+
+    assert second_result == SuccessResponse(success=False)
 
 
 @pytest.mark.asyncio

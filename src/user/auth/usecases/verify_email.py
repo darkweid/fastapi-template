@@ -44,11 +44,9 @@ class VerifyEmailUseCase:
     - Updates user record in the database.
     - Deletes the active verification-token key from Redis after successful use.
 
-    Errors:
-    - UnauthorizedException: if token is invalid or expired.
-
     Returns:
-    - SuccessResponse: success=True if verified or already verified, False if email/user not found.
+    - SuccessResponse: success=True if verified or already verified, False if the
+      token is invalid/inactive or the email/user is not found.
     """
 
     def __init__(
@@ -115,10 +113,17 @@ class VerifyEmailUseCase:
                 )
                 return SuccessResponse(success=True)
 
-            except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-                raise UnauthorizedException(
-                    "Invalid or expired token.",
-                )
+            except UnauthorizedException:
+                logger.info("[VerifyEmail] Token JTI is inactive or invalid.")
+                return SuccessResponse(success=False)
+
+            except jwt.ExpiredSignatureError:
+                logger.info("[VerifyEmail] Token has expired.")
+                return SuccessResponse(success=False)
+
+            except jwt.InvalidTokenError:
+                logger.info("[VerifyEmail] Token is invalid.")
+                return SuccessResponse(success=False)
 
 
 def get_verify_email_use_case(
