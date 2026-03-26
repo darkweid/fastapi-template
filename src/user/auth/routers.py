@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
@@ -15,6 +15,7 @@ from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     CreateUserModel,
     LoginUserModel,
+    LogoutRequestModel,
     ResendVerificationModel,
     ResetPasswordModel,
     SendResetPasswordRequestModel,
@@ -159,7 +160,7 @@ async def get_access_by_refresh(
 async def logout_user(
     authenticated: Annotated[AuthenticatedUser, Depends(get_current_user_with_session)],
     use_case: Annotated[LogoutUseCase, Depends(get_logout_use_case)],
-    terminate_all_sessions: bool = False,
+    data: Annotated[LogoutRequestModel | None, Body()] = None,
 ) -> SuccessResponse:
     """
     Invalidate the current session or all user sessions.
@@ -167,7 +168,9 @@ async def logout_user(
     return await use_case.execute(
         user_id=str(authenticated.user.id),
         session_id=authenticated.session_id,
-        terminate_all_sessions=terminate_all_sessions,
+        terminate_all_sessions=(
+            data.terminate_all_sessions if data is not None else False
+        ),
     )
 
 

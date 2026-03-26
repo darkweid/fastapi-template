@@ -175,7 +175,7 @@ async def test_logout_endpoint_can_terminate_all_sessions(
 
     response = await async_client.post(
         "/v1/users/auth/logout",
-        params={"terminate_all_sessions": "true"},
+        json={"terminate_all_sessions": True},
     )
 
     assert response.status_code == 200
