@@ -4,6 +4,17 @@ from typing import Any
 from sqlalchemy import ColumnElement
 from sqlalchemy.orm import DeclarativeBase
 
+from src.core.errors.exceptions import FilteringError
+
+_FILTER_OPERATORS: dict[str, str] = {
+    "eq": "__eq__",
+    "ne": "__ne__",
+    "lt": "__lt__",
+    "gt": "__gt__",
+    "lte": "__le__",
+    "gte": "__ge__",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class FilterCondition:
@@ -26,19 +37,6 @@ class FilterCondition:
     lte: dict[str, Any] = field(default_factory=dict)
     gte: dict[str, Any] = field(default_factory=dict)
 
-    _OPERATORS: dict[str, str] = field(
-        init=False,
-        repr=False,
-        default_factory=lambda: {
-            "eq": "__eq__",
-            "ne": "__ne__",
-            "lt": "__lt__",
-            "gt": "__gt__",
-            "lte": "__le__",
-            "gte": "__ge__",
-        },
-    )
-
     def validate(self) -> None:
         if not any((self.eq, self.ne, self.lt, self.gt, self.lte, self.gte)):
             raise ValueError("At least one filter condition must be provided")
@@ -59,9 +57,14 @@ class FilterCondition:
         }
 
         for op_name, fields in operator_map.items():
-            sa_method = self._OPERATORS[op_name]
+            sa_method = _FILTER_OPERATORS[op_name]
             for col_name, value in fields.items():
-                column = getattr(model, col_name)
+                column = getattr(model, col_name, None)
+                if column is None:
+                    raise FilteringError(
+                        f"Unknown filter column '{col_name}' for model "
+                        f"'{model.__name__}'"
+                    )
                 clauses.append(getattr(column, sa_method)(value))
 
         return clauses
