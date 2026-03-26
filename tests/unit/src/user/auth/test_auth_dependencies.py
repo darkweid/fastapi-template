@@ -108,29 +108,6 @@ async def test_verify_jti_refresh_reuse_invalidates(
 
 
 @pytest.mark.asyncio
-async def test_verify_jti_refresh_family_invalidates(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    payload = build_refresh_payload("user-1")
-    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
-    await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
-        payload["jti"],
-        ex=60,
-    )
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
-        invalidate_mock,
-    )
-
-    with pytest.raises(UnauthorizedException, match="Token family invalidated"):
-        await verify_jti(token, fake_redis)
-
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
-
-
-@pytest.mark.asyncio
 async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> None:
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
@@ -210,11 +187,6 @@ async def test_get_current_user_wrong_mode(
         payload["jti"],
         ex=60,
     )
-    await fake_redis.set(
-        auth_redis_keys.family(payload["sub"], payload["family"]),
-        "active",
-        ex=60,
-    )
 
     with pytest.raises(UnauthorizedException):
         await get_current_user(
@@ -236,11 +208,6 @@ async def test_get_access_by_refresh_token_success(
     await fake_redis.set(
         auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
-        ex=60,
-    )
-    await fake_redis.set(
-        auth_redis_keys.family(payload["sub"], payload["family"]),
-        "active",
         ex=60,
     )
     user_repository = FakeUserRepository(user)

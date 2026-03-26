@@ -115,7 +115,7 @@ async def get_access_by_refresh_token(
     Args:
         refresh_token: The JWT refresh token from the Authorization header.
         session: Database session.
-        redis_client: Redis client used to validate token state and family.
+        redis_client: Redis client used to validate token state.
         user_repository: Repository used to load the user entity.
 
     Returns:
@@ -190,15 +190,14 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
 
     Args:
         token: The JWT token, with or without the `Bearer ` prefix.
-        redis_client: Redis client used to validate active, used, and family keys.
+        redis_client: Redis client used to validate active and used keys.
 
     Returns:
         JWTPayload: The verified JWT payload.
 
     Raises:
         UnauthorizedException: If the token is expired, malformed, has an invalid
-            structure, was reused, belongs to an invalid family, or no longer
-            matches the active Redis entry.
+            structure, was reused, or no longer matches the active Redis entry.
     """
     if isinstance(token, str) and token.lower().startswith("bearer "):
         token = token[7:].strip()
@@ -238,17 +237,6 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
             raise UnauthorizedException(
                 "Token reuse detected. All sessions invalidated."
             )
-
-        # Token family validation
-        family = payload_typed.get("family")
-        if family:
-            family_key = auth_redis_keys.family(user_id, family)
-            family_exists = await redis_client.exists(family_key)
-            if not family_exists:
-                await invalidate_all_user_sessions(user_id, redis_client)
-                raise UnauthorizedException(
-                    "Token family invalidated. All sessions terminated."
-                )
 
     # Check active tokens
     active_key = auth_redis_keys.session_key(session_mode, user_id, session_id)

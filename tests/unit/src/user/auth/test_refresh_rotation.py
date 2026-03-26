@@ -18,7 +18,6 @@ def _base_payload() -> dict[str, str | int]:
         "sub": "user-id",
         "session_id": "old-session",
         "jti": "old-jti",
-        "family": "family-id",
         "exp": 9999999999,
         "mode": "refresh_token",
     }
@@ -35,16 +34,12 @@ def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
     """
-    Given: family key and old refresh key exist for an active refresh payload.
+    Given: old refresh key exists for an active refresh payload.
     When: refresh token rotation is executed.
-    Then: a new token is issued, old refresh key is removed, and used marker is created.
+    Then: a new token is issued, the session refresh key points to the new jti,
+    and the used marker is created.
     """
     payload = _base_payload()
-    await fake_redis.set(
-        auth_redis_keys.family(str(payload["sub"]), str(payload["family"])),
-        "active",
-        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
-    )
     await fake_redis.set(
         auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
@@ -56,8 +51,7 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
         token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
     )
 
-    assert decoded["family"] == payload["family"]
-    assert decoded["session_id"] != payload["session_id"]
+    assert decoded["session_id"] == payload["session_id"]
     assert decoded["jti"] != payload["jti"]
 
     used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
@@ -65,11 +59,9 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
         str(payload["sub"]),
         str(payload["session_id"]),
     )
-    family_key = auth_redis_keys.family(str(payload["sub"]), str(payload["family"]))
     assert await fake_redis.exists(used_key) == 1
-    assert await fake_redis.exists(old_refresh_key) == 0
-    assert await fake_redis.exists(family_key) == 1
-    assert await fake_redis.ttl(family_key) > 0
+    assert await fake_redis.exists(old_refresh_key) == 1
+    assert await fake_redis.get(old_refresh_key) == decoded["jti"]
 
 
 @pytest.mark.asyncio
@@ -82,11 +74,6 @@ async def test_rotate_refresh_token_reuse_detected(
     Then: UnauthorizedException is raised and all sessions for the user are invalidated.
     """
     payload = _base_payload()
-    await fake_redis.set(
-        auth_redis_keys.family(str(payload["sub"]), str(payload["family"])),
-        "active",
-        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
-    )
     await fake_redis.setex(
         auth_redis_keys.used(str(payload["sub"]), str(payload["jti"])),
         100,
@@ -112,38 +99,12 @@ async def test_rotate_refresh_token_invalid_state(
     """
     payload = _base_payload()
     await fake_redis.set(
-        auth_redis_keys.family(str(payload["sub"]), str(payload["family"])),
-        "active",
-        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
-    )
-    await fake_redis.set(
         auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         "wrong-jti",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
-
-    with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload, fake_redis)
-
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
-
-
-@pytest.mark.asyncio
-async def test_rotate_refresh_token_missing_family_invalidates(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """
-    Given: refresh payload misses family field.
-    When: refresh token rotation is executed.
-    Then: UnauthorizedException is raised and all sessions for the user are invalidated.
-    """
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
-
-    payload = _base_payload()
-    payload.pop("family")
 
     with pytest.raises(UnauthorizedException):
         await rotate_refresh_token(payload, fake_redis)
@@ -165,26 +126,6 @@ async def test_rotate_refresh_token_missing_jti_invalidates(
 
     payload = _base_payload()
     payload.pop("jti")
-
-    with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload, fake_redis)
-
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
-
-
-@pytest.mark.asyncio
-async def test_rotate_refresh_token_family_not_found(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """
-    Given: token family key is absent in Redis for the payload user.
-    When: refresh token rotation is executed.
-    Then: UnauthorizedException is raised and all sessions for the user are invalidated.
-    """
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
-
-    payload = _base_payload()
 
     with pytest.raises(UnauthorizedException):
         await rotate_refresh_token(payload, fake_redis)

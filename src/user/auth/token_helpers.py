@@ -2,7 +2,7 @@
 Helper functions for token operations.
 
 This module contains utility functions for working with JWT tokens,
-including validation, family checking, and token invalidation.
+including validation and token invalidation.
 """
 
 from collections.abc import Awaitable
@@ -46,7 +46,7 @@ async def invalidate_user_session(
     redis_client: Redis,
 ) -> None:
     """
-    Invalidates a single user session by deleting its access and refresh keys.
+    Invalidates a single user session by deleting its active auth keys.
 
     Args:
         user_id: The user ID whose session should be invalidated.
@@ -110,37 +110,9 @@ async def invalidate_active_one_time_token(
     await redis_client.delete(auth_redis_keys.one_time_token(purpose, normalized_email))
 
 
-async def validate_token_family(
-    user_id: str, family_id: str | None, redis_client: Redis
-) -> None:
-    """
-    Validates that a token belongs to an active token family.
-
-    Args:
-        user_id: The user ID from the token
-        family_id: The family ID from the token
-
-    Raises:
-        UnauthorizedException: If the family doesn't exist or the token structure is invalid
-    """
-    if not family_id:
-        await invalidate_all_user_sessions(user_id, redis_client)
-        raise UnauthorizedException("Invalid token structure")
-
-    family_key = auth_redis_keys.family(user_id, family_id)
-    family_exists = await redis_client.exists(family_key)
-
-    if not family_exists:
-        # Family doesn't exist - possible token reuse attempt
-        await invalidate_all_user_sessions(user_id, redis_client)
-        raise UnauthorizedException("Token has been invalidated due to potential reuse")
-
-    return None
-
-
 async def validate_token_structure(
     payload: JWTPayload, redis_client: Redis
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str]:
     """
     Validates that a token payload has all required fields.
 
@@ -148,24 +120,21 @@ async def validate_token_structure(
         payload: The JWT payload to validate
 
     Returns:
-        tuple: A tuple containing user_id, session_id, jti, and family_id
+        tuple: A tuple containing user_id, session_id, and jti
 
     Raises:
         UnauthorizedException: If the token structure is invalid
     """
-    try:
-        user_id = payload["sub"]
-        session_id = payload["session_id"]
-        jti = payload.get("jti")
-        family_id = payload.get("family")
+    user_id = payload.get("sub")
+    session_id = payload.get("session_id")
+    jti = payload.get("jti")
 
-        if not jti or not family_id:
+    if not user_id or not session_id or not jti:
+        if user_id:
             await invalidate_all_user_sessions(user_id, redis_client)
-            raise UnauthorizedException("Invalid token structure")
-
-        return user_id, session_id, jti, family_id
-    except KeyError:
         raise UnauthorizedException("Invalid token structure")
+
+    return user_id, session_id, jti
 
 
 async def execute_token_rotation(

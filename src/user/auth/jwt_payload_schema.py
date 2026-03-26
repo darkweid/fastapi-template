@@ -11,4 +11,3 @@ class JWTPayload(TypedDict):
     ]
     jti: NotRequired[str]  # JWT ID for token tracking
     session_id: NotRequired[str]  # Session identifier
-    family: NotRequired[str]  # Token family for rotation tracking

@@ -134,7 +134,10 @@ async def test_logout_endpoint(
     dependency_overrides: DependencyOverrides,
 ) -> None:
     user = build_user()
-    authenticated = AuthenticatedUser(user=user, session_id="session-1")
+    authenticated = AuthenticatedUser(
+        user=user,
+        session_id="session-1",
+    )
     dependency_overrides.set(
         get_current_user_with_session,
         ProvideValue(authenticated),
@@ -159,7 +162,10 @@ async def test_logout_endpoint_can_terminate_all_sessions(
     dependency_overrides: DependencyOverrides,
 ) -> None:
     user = build_user()
-    authenticated = AuthenticatedUser(user=user, session_id="session-1")
+    authenticated = AuthenticatedUser(
+        user=user,
+        session_id="session-1",
+    )
     dependency_overrides.set(
         get_current_user_with_session,
         ProvideValue(authenticated),

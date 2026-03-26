@@ -124,7 +124,11 @@ async def test_get_tokens_by_refresh_user_usecase_success(
     assert result.refresh_token == refresh_token
     assert result.access_token == access_token
     rotate_mock.assert_awaited_once()
-    create_access_mock.assert_awaited_once()
+    create_access_mock.assert_awaited_once_with(
+        {"sub": str(user.id)},
+        redis_client=fake_redis,
+        session_id=payload["session_id"],
+    )
 
 
 @pytest.mark.asyncio
@@ -280,10 +284,17 @@ async def test_logout_usecase_invalidates_current_session(
     )
 
     use_case = LogoutUseCase(redis_client=fake_redis)
-    result = await use_case.execute(user_id="user-1", session_id="session-1")
+    result = await use_case.execute(
+        user_id="user-1",
+        session_id="session-1",
+    )
 
     assert result == SuccessResponse(success=True)
-    invalidate_mock.assert_awaited_once_with("user-1", "session-1", fake_redis)
+    invalidate_mock.assert_awaited_once_with(
+        "user-1",
+        "session-1",
+        fake_redis,
+    )
 
 
 @pytest.mark.asyncio

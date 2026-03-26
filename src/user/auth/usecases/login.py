@@ -103,10 +103,8 @@ class LoginUserUseCase:
 
             await self._rehash_password_if_needed(uow, user, data.password)
             await uow.flush()
-            token_data = {"sub": str(user.id)}
-
             session_id = str(uuid4())
-            family = str(uuid4())
+            token_data = {"sub": str(user.id)}
             await uow.commit()
             return TokenModel(
                 access_token=await create_access_token(
@@ -116,7 +114,6 @@ class LoginUserUseCase:
                     token_data,
                     redis_client=self.redis_client,
                     session_id=session_id,
-                    family=family,
                 ),
             )
 
