@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, Mock
 
-from fastapi import Response
+from fastapi import Request, Response
 import pytest
 import redis.exceptions as redis_exc
 
@@ -15,6 +15,10 @@ from tests.helpers.requests import build_request
 
 async def sample_endpoint() -> None:
     return None
+
+
+async def header_identifier(request: Request) -> str:
+    return request.headers["X-Rate-Key"]
 
 
 class ErrorRedis:
@@ -188,6 +192,66 @@ async def test_rate_limiter_fallback_window_resets_after_expiry(
     current_time_ms = 2_001
     await limiter(request, response)
 
+    callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_fallback_evicts_oldest_window_when_capacity_reached(
+    limiter_state: tuple[
+        object | None, str | None, dict[str, object], int | None, int | None
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FastAPILimiter.redis = ErrorRedis()
+    FastAPILimiter.lua_sha = "sha"
+    callback = AsyncMock()
+    warning_mock = Mock()
+    limiter = RateLimiter(
+        times=1,
+        seconds=1,
+        callback=callback,
+        identifier=header_identifier,
+    )
+
+    current_time_ms = 1_000
+
+    def fake_now_ms() -> int:
+        return current_time_ms
+
+    monkeypatch.setattr(limiter_depends, "_current_time_ms", fake_now_ms)
+    monkeypatch.setattr(RateLimiter, "_fallback_max_entries", 2)
+    monkeypatch.setattr(limiter_depends.logger, "warning", warning_mock)
+
+    first_request = build_request(
+        path="/test",
+        endpoint=sample_endpoint,
+        headers={"X-Rate-Key": "alpha"},
+    )
+    second_request = build_request(
+        path="/test",
+        endpoint=sample_endpoint,
+        headers={"X-Rate-Key": "beta"},
+    )
+    third_request = build_request(
+        path="/test",
+        endpoint=sample_endpoint,
+        headers={"X-Rate-Key": "gamma"},
+    )
+    response = Response()
+
+    await limiter(first_request, response)
+    current_time_ms += 1
+    await limiter(second_request, response)
+    current_time_ms += 1
+    await limiter(third_request, response)
+
+    assert len(RateLimiter._fallback_windows) == 2
+    fallback_keys = set(RateLimiter._fallback_windows)
+    assert "limiter:alpha:sample_endpoint" not in fallback_keys
+    assert "limiter:beta:sample_endpoint" in fallback_keys
+    assert "limiter:gamma:sample_endpoint" in fallback_keys
+    warning_mock.assert_called_once()
+    assert "In-memory fallback capacity reached" in warning_mock.call_args.args[0]
     callback.assert_not_awaited()
 
 

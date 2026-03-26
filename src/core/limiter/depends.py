@@ -19,7 +19,7 @@ def _current_time_ms() -> int:
     return int(time.monotonic() * 1000)
 
 
-@dataclass
+@dataclass(slots=True)
 class _InMemoryRateLimitWindow:
     count: int
     expires_at_ms: int
@@ -35,6 +35,9 @@ class RateLimiter:
     _fallback_lock: ClassVar[Lock] = Lock()
     _fallback_state_lock: ClassVar[Lock] = Lock()
     _fallback_sentry_cooldown_ms: ClassVar[int] = 5 * 60_000
+    _fallback_max_entries: ClassVar[int] = (
+        100_000  # Around 20-25 MB max for a fallback state
+    )
     _redis_degraded_since_ms: ClassVar[int | None] = None
     _last_redis_degraded_report_ms: ClassVar[int | None] = None
 
@@ -174,6 +177,18 @@ class RateLimiter:
         for expired_key in expired_keys:
             cls._fallback_windows.pop(expired_key, None)
 
+    @classmethod
+    def _evict_oldest_fallback_window(cls) -> str | None:
+        if not cls._fallback_windows:
+            return None
+
+        oldest_key = min(
+            cls._fallback_windows,
+            key=lambda key: cls._fallback_windows[key].expires_at_ms,
+        )
+        cls._fallback_windows.pop(oldest_key, None)
+        return oldest_key
+
     def _check_limit_in_memory(self, key: str) -> int:
         now_ms = _current_time_ms()
         with self._fallback_lock:
@@ -181,6 +196,14 @@ class RateLimiter:
             state = self._fallback_windows.get(key)
 
             if state is None:
+                if len(self._fallback_windows) >= self._fallback_max_entries:
+                    evicted_key = self._evict_oldest_fallback_window()
+                    logger.warning(
+                        "[RateLimiter] In-memory fallback capacity reached (%s). "
+                        "Evicting oldest key %s to keep fallback state bounded.",
+                        self._fallback_max_entries,
+                        evicted_key,
+                    )
                 self._fallback_windows[key] = _InMemoryRateLimitWindow(
                     count=1,
                     expires_at_ms=now_ms + self.milliseconds,
