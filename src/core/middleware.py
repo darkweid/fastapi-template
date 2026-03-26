@@ -15,14 +15,36 @@ from loggers import get_logger
 logger = get_logger(__name__)
 timing_logger = get_logger("src.request.timing", plain_format=True)
 UNEXPECTED_ERROR_DETAIL = "Unexpected error"
-SECURITY_HEADERS = {
+STRICT_CONTENT_SECURITY_POLICY = "default-src 'self'; frame-ancestors 'none'"
+DOCS_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "connect-src 'self'; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "font-src 'self' data: https://cdn.jsdelivr.net"
+)
+BASE_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+DOCS_PATHS = frozenset({"/openapi.json", "/redoc"})
+
+
+def _is_docs_route(path: str) -> bool:
+    return path in DOCS_PATHS or path == "/docs" or path.startswith("/docs/")
+
+
+def _get_content_security_policy(path: str) -> str:
+    if _is_docs_route(path):
+        return DOCS_CONTENT_SECURITY_POLICY
+    return STRICT_CONTENT_SECURITY_POLICY
 
 
 @dataclass(slots=True)
@@ -40,8 +62,12 @@ def register_middlewares(app: FastAPI) -> None:
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         response = await call_next(request)
-        for name, value in SECURITY_HEADERS.items():
+        for name, value in BASE_SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            _get_content_security_policy(request.url.path),
+        )
         return response
 
     @app.middleware("http")

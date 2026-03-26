@@ -46,6 +46,7 @@ services:
   app:
     container_name: template-app
     image: template-app-image:latest
+    env_file: ../.env
     command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
     restart: on-failure
     healthcheck:

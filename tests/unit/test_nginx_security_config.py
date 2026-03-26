@@ -12,10 +12,7 @@ def test_nginx_app_config_includes_security_headers_and_body_limit() -> None:
         "add_header Strict-Transport-Security "
         '"max-age=31536000; includeSubDomains; preload" always;'
     ) in app_conf
-    assert (
-        "add_header Content-Security-Policy "
-        "\"default-src 'self'; frame-ancestors 'none'\" always;"
-    ) in app_conf
+    assert "add_header Content-Security-Policy" not in app_conf
     assert (
         'add_header Referrer-Policy "strict-origin-when-cross-origin" always;'
     ) in app_conf

@@ -74,6 +74,10 @@ def _make_app(exception_factory) -> FastAPI:
     async def ok() -> PlainTextResponse:
         return PlainTextResponse("ok")
 
+    @app.get("/docs")
+    async def docs() -> PlainTextResponse:
+        return PlainTextResponse("docs")
+
     return app
 
 
@@ -99,11 +103,24 @@ def test_security_headers_added() -> None:
     )
     assert (
         resp.headers["Content-Security-Policy"]
-        == "default-src 'self'; frame-ancestors 'none'"
+        == middleware.STRICT_CONTENT_SECURITY_POLICY
     )
     assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
     assert (
         resp.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
+    )
+
+
+def test_docs_route_uses_docs_content_security_policy() -> None:
+    app = _make_app(lambda: None)
+    client = TestClient(app)
+
+    resp = client.get("/docs")
+
+    assert resp.status_code == 200
+    assert (
+        resp.headers["Content-Security-Policy"]
+        == middleware.DOCS_CONTENT_SECURITY_POLICY
     )
 
 
