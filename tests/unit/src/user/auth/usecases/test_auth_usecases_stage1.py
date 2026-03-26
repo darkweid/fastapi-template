@@ -13,7 +13,6 @@ from src.core.errors.exceptions import (
     UnauthorizedException,
 )
 from src.core.schemas import SuccessResponse, TokenModel
-from src.core.utils.security import build_email_throttle_key
 from src.main.config import config
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import (
@@ -176,17 +175,52 @@ async def test_register_usecase_creates_user_and_sends_email(
     )
     base_url = URL("http://testserver/")
 
+    async def assert_commit_completed(**_: object) -> None:
+        assert uow.completed is True
+
+    notifier.send_verification.side_effect = assert_commit_completed
+
     result = await use_case.execute(data=data, request_base_url=base_url)
 
     assert isinstance(result, UserProfileViewModel)
     created_data = users_repo.create.await_args.kwargs["data"]
     assert created_data["password_hash"] != data.password
-    throttle_key = build_email_throttle_key("signup", user.email)
     notifier.send_verification.assert_awaited_once()
     users_repo.create.assert_awaited_once()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
-    assert notifier.send_verification.await_args.kwargs["throttle_key"] == throttle_key
+    assert notifier.send_verification.await_args.kwargs == {
+        "user": user,
+        "base_url": base_url,
+    }
+
+
+@pytest.mark.asyncio
+async def test_register_usecase_returns_success_when_queueing_email_fails(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user(email="john@example.com")
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeVerificationNotifier()
+    notifier.send_verification.side_effect = RuntimeError("broker down")
+    use_case = RegisterUseCase(uow=uow, notifier=notifier)
+    data = CreateUserModel(
+        first_name="John",
+        last_name="Doe",
+        email="john@example.com",
+        username="john_doe",
+        phone_number="+1234567890",
+        password="StrongPass1!",
+    )
+
+    result = await use_case.execute(
+        data=data, request_base_url=URL("http://testserver/")
+    )
+
+    assert isinstance(result, UserProfileViewModel)
+    uow.commit.assert_awaited_once()
+    notifier.send_verification.assert_awaited_once()
 
 
 @pytest.mark.asyncio

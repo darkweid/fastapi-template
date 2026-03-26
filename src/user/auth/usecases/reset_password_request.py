@@ -28,10 +28,10 @@ class ResetPasswordRequestUseCase:
 
     Workflow:
     1) Retrieve user by email.
-    2) If user exists, send password reset email using the notifier with throttling.
+    2) If user exists, queue password reset email using the notifier with throttling.
 
     Side effects:
-    - Sends an external email notification.
+    - Queues an external email notification.
     - Sets/updates a throttle key in Redis.
 
     Errors:

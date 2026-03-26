@@ -4,7 +4,7 @@ from starlette.datastructures import URL
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
-from src.core.utils.security import build_email_throttle_key, hash_password
+from src.core.utils.security import hash_password
 from src.user.auth.schemas import CreateUserModel
 from src.user.auth.services.verification_notifier import (
     VerificationNotifier,
@@ -28,17 +28,15 @@ class RegisterUseCase:
 
     Workflow:
     1) Create a new user record in the database.
-    2) Generate a verification link and send it via email.
-    3) Commit the transaction.
+    2) Commit the transaction.
+    3) Queue verification email delivery.
 
     Side effects:
     - Creates a user record in the database.
-    - Sends an external email notification.
-    - Sets a throttle key in Redis via the notifier.
+    - Queues an external email notification after a successful commit.
 
     Errors:
     - InstanceAlreadyExistsException: if email or username already exists.
-    - InfrastructureException: if email sending fails.
 
     Returns:
     - UserProfileViewModel: the newly created user profile.
@@ -63,14 +61,17 @@ class RegisterUseCase:
                 session=uow.session,
                 data=user_data,
             )
-
-            throttle_key = build_email_throttle_key("signup", user.email)
-            await self.notifier.send_verification(
-                user=user,
-                base_url=request_base_url,
-                throttle_key=throttle_key,
-            )
             await uow.commit()
+            try:
+                await self.notifier.send_verification(
+                    user=user,
+                    base_url=request_base_url,
+                )
+            except Exception:
+                logger.exception(
+                    "[Register User] Failed to queue verification email for '%s'.",
+                    data.username,
+                )
             logger.info(
                 "[Register User] User '%s' registered successfully.", data.username
             )
