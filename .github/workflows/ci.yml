@@ -109,6 +109,14 @@ jobs:
       - name: Audit pinned dependencies
         shell: bash
         run: |
+          # Temporary suppression for pygments==2.19.2, pulled only via pytest in
+          # infra/requirements/dev.txt. As of March 26, 2026, pip-audit reports
+          # CVE-2026-4539 with no released fix version yet; the upstream fix was
+          # merged on March 25, 2026 in pygments/pygments#3064:
+          # https://github.com/pygments/pygments/issues/3058
+          # https://github.com/pygments/pygments/pull/3064
+          # Re-check on the next dependency refresh and remove this ignore once a
+          # Pygments release newer than 2.19.2 is available.
           pip-audit \
             --ignore-vuln CVE-2026-4539 \
             -r infra/requirements/base.txt \

@@ -115,7 +115,7 @@ services:
 
   nginx:
     container_name: template-nginx
-    image: nginx:latest
+    image: nginx:1.29.7
     restart: always
     volumes:
       - ./nginx/main.conf:/etc/nginx/conf.d/00-main.conf:ro

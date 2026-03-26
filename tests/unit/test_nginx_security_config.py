@@ -1,8 +1,10 @@
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def test_nginx_app_config_includes_security_headers_and_body_limit() -> None:
-    app_conf = Path("infra/nginx/app.conf").read_text(encoding="utf-8")
+    app_conf = (PROJECT_ROOT / "infra/nginx/app.conf").read_text(encoding="utf-8")
 
     assert "server_tokens off;" in app_conf
     assert "client_max_body_size 10m;" in app_conf
