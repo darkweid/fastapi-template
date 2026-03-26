@@ -1,5 +1,5 @@
 # --- Build stage ---
-FROM python:3.13-slim-bullseye AS builder
+FROM python:3.13-slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN pip install --upgrade pip \
     && pip install --no-cache-dir --user -r requirements/prod.txt
 
 # --- Final stage ---
-FROM python:3.13-slim-bullseye
+FROM python:3.13-slim-bookworm
 
 WORKDIR /app
 
