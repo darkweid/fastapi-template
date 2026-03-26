@@ -184,6 +184,7 @@ async def test_register_usecase_creates_user_and_sends_email(
     throttle_key = build_email_throttle_key("signup", user.email)
     notifier.send_verification.assert_awaited_once()
     users_repo.create.assert_awaited_once()
+    uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
     assert notifier.send_verification.await_args.kwargs["throttle_key"] == throttle_key
 
@@ -347,6 +348,7 @@ async def test_reset_password_confirm_success(
     assert result == SuccessResponse(success=True)
     invalidate_mock.assert_awaited_once()
     uow.commit.assert_awaited_once()
+    uow.flush.assert_not_awaited()
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("reset_password", user.email)
@@ -431,6 +433,40 @@ async def test_reset_password_confirm_cannot_reuse_successful_token(
 
 
 @pytest.mark.asyncio
+async def test_reset_password_confirm_commit_failure_keeps_token_active(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    uow.commit = AsyncMock(side_effect=RuntimeError("db down"))
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+    token = await build_reset_password_token({"email": user.email}, fake_redis)
+    use_case = ResetPasswordConfirmUseCase(uow=uow, redis_client=fake_redis)
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await use_case.execute(
+            data=ResetPasswordModel(token=token, password="StrongPass1!")
+        )
+
+    assert (
+        await fake_redis.exists(
+            auth_redis_keys.one_time_token("reset_password", user.email)
+        )
+        == 1
+    )
+    invalidate_mock.assert_not_awaited()
+    uow.flush.assert_not_awaited()
+    uow.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_verify_email_usecase_user_not_found(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
@@ -484,6 +520,8 @@ async def test_verify_email_usecase_success(
     result = await use_case.execute(token)
 
     assert result == SuccessResponse(success=True)
+    uow.commit.assert_awaited_once()
+    uow.flush.assert_not_awaited()
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("verification", user.email)
@@ -546,3 +584,28 @@ async def test_verify_email_usecase_cannot_reuse_successful_token(
 
     with pytest.raises(UnauthorizedException):
         await use_case.execute(token)
+
+
+@pytest.mark.asyncio
+async def test_verify_email_usecase_commit_failure_keeps_token_active(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+) -> None:
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    uow.commit = AsyncMock(side_effect=RuntimeError("db down"))
+    use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis)
+    token = await build_verification_token({"email": user.email}, fake_redis)
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await use_case.execute(token)
+
+    assert (
+        await fake_redis.exists(
+            auth_redis_keys.one_time_token("verification", user.email)
+        )
+        == 1
+    )
+    uow.flush.assert_not_awaited()
+    uow.rollback.assert_awaited_once()

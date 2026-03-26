@@ -28,9 +28,8 @@ class RegisterUseCase:
 
     Workflow:
     1) Create a new user record in the database.
-    2) Flush the session to obtain the user ID.
-    3) Generate a verification link and send it via email.
-    4) Commit the transaction.
+    2) Generate a verification link and send it via email.
+    3) Commit the transaction.
 
     Side effects:
     - Creates a user record in the database.
@@ -64,7 +63,6 @@ class RegisterUseCase:
                 session=uow.session,
                 data=user_data,
             )
-            await uow.flush()
 
             throttle_key = build_email_throttle_key("signup", user.email)
             await self.notifier.send_verification(

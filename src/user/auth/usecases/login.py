@@ -102,7 +102,6 @@ class LoginUserUseCase:
                 raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
 
             await self._rehash_password_if_needed(uow, user, data.password)
-            await uow.flush()
             session_id = str(uuid4())
             token_data = {"sub": str(user.id)}
             await uow.commit()

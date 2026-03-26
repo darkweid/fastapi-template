@@ -70,7 +70,7 @@ async def test_login_rehashes_password_when_needed(
         {"password_hash": "new-hash"},
         id=user.id,
     )
-    uow.flush.assert_awaited_once()
+    uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
 
 
@@ -103,7 +103,7 @@ async def test_login_does_not_rehash_when_not_needed(
     needs_rehash_mock.assert_called_once_with(user.password_hash)
     verify_mock.assert_awaited_once_with("plain-pass", user.password_hash)
     uow.users.update.assert_not_awaited()
-    uow.flush.assert_awaited_once()
+    uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
 
 

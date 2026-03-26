@@ -38,13 +38,13 @@ class ResetPasswordConfirmUseCase:
     1) Decode and validate the JWT reset token.
     2) Extract email and validate the active JTI in Redis.
     3) Hash and update the user's password in the database.
-    4) Delete the active reset-token key and invalidate all user sessions.
-    5) Commit the transaction.
+    4) Commit the transaction.
+    5) Delete the active reset-token key and invalidate all user sessions.
 
     Side effects:
     - Updates user record in the database.
-    - Deletes the active reset-token key from Redis.
-    - Deletes user session keys from Redis.
+    - Deletes the active reset-token key from Redis after a successful commit.
+    - Deletes user session keys from Redis after a successful commit.
 
     Errors:
     - None (returns success=False for invalid tokens/users).
@@ -92,7 +92,6 @@ class ResetPasswordConfirmUseCase:
                         {"password_hash": hash_password(data.password)},
                         email=normalized_email,
                     )
-                    await uow.flush()
                     if not user:
                         logger.info(
                             "[ResetPasswordConfirm] User with email %s not found.",
@@ -100,6 +99,7 @@ class ResetPasswordConfirmUseCase:
                         )
                         return SuccessResponse(success=False)
 
+                    await uow.commit()
                     await invalidate_active_one_time_token(
                         purpose="reset_password",
                         email=normalized_email,
@@ -110,7 +110,6 @@ class ResetPasswordConfirmUseCase:
                         "[ResetPasswordConfirm] All user %s sessions invalidated.",
                         mask_email(normalized_email),
                     )
-                    await uow.commit()
                     logger.info(
                         "[ResetPasswordConfirm] Successfully changed password for user "
                         "with email %s.",
@@ -130,7 +129,7 @@ class ResetPasswordConfirmUseCase:
                 return SuccessResponse(success=False)
 
             except jwt.InvalidTokenError:
-                logger.info("[ResetPasswordConfirm] Token is invalid. Ema")
+                logger.info("[ResetPasswordConfirm] Token is invalid.")
                 return SuccessResponse(success=False)
 
 

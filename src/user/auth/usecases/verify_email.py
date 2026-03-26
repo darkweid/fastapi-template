@@ -37,7 +37,8 @@ class VerifyEmailUseCase:
     3) Retrieve user by normalized email.
     4) If user is already verified, consume the token and return success.
     5) Update user's is_verified status to True.
-    6) Consume the token and commit the transaction.
+    6) Commit the transaction.
+    7) Consume the token.
 
     Side effects:
     - Updates user record in the database.
@@ -101,14 +102,13 @@ class VerifyEmailUseCase:
                     {"is_verified": True},
                     email=normalized_email,
                 )
-                await uow.flush()
+                await uow.commit()
                 await invalidate_active_one_time_token(
                     purpose="verification",
                     email=normalized_email,
                     redis_client=self.redis_client,
                 )
 
-                await uow.commit()
                 logger.info(
                     "[VerifyEmail] User with email '%s' verified successfully.",
                     mask_email(normalized_email),
