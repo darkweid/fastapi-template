@@ -48,7 +48,9 @@ async def _send_verification_email(
     verify_path: str,
     throttle_key: str | None,
 ) -> None:
-    redis_client = create_redis_client(config.redis.dsn)
+    redis_client = create_redis_client(
+        config.redis.dsn
+    )  # TODO: consider connection pooling for non-solo worker pools
     email_service = EmailService(get_mailer())
 
     try:
@@ -110,7 +112,9 @@ async def _send_reset_password_email(
     reset_link_path: str,
     throttle_key: str | None,
 ) -> None:
-    redis_client = create_redis_client(config.redis.dsn)
+    redis_client = create_redis_client(
+        config.redis.dsn
+    )  # TODO: consider connection pooling for non-solo worker pools
     email_service = EmailService(get_mailer())
 
     try:

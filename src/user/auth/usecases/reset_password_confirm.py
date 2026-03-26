@@ -38,13 +38,15 @@ class ResetPasswordConfirmUseCase:
     1) Decode and validate the JWT reset token.
     2) Extract email and validate the active JTI in Redis.
     3) Hash and update the user's password in the database.
-    4) Commit the transaction.
+    4) Flush pending DB changes.
     5) Delete the active reset-token key and invalidate all user sessions.
+    6) Commit the transaction.
 
     Side effects:
     - Updates user record in the database.
-    - Deletes the active reset-token key from Redis after a successful commit.
-    - Deletes user session keys from Redis after a successful commit.
+    - Deletes the active reset-token key from Redis before commit to avoid
+      partial-success password changes when Redis is unavailable.
+    - Deletes user session keys from Redis before commit for the same reason.
 
     Errors:
     - None (returns success=False for invalid tokens/users).
@@ -99,13 +101,14 @@ class ResetPasswordConfirmUseCase:
                         )
                         return SuccessResponse(success=False)
 
-                    await uow.commit()
+                    await uow.flush()
                     await invalidate_active_one_time_token(
                         purpose="reset_password",
                         email=normalized_email,
                         redis_client=self.redis_client,
                     )
                     await invalidate_all_user_sessions(str(user.id), self.redis_client)
+                    await uow.commit()
                     logger.debug(
                         "[ResetPasswordConfirm] All user %s sessions invalidated.",
                         mask_email(normalized_email),

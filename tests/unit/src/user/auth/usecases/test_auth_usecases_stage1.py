@@ -381,7 +381,7 @@ async def test_reset_password_confirm_success(
     assert result == SuccessResponse(success=True)
     invalidate_mock.assert_awaited_once()
     uow.commit.assert_awaited_once()
-    uow.flush.assert_not_awaited()
+    uow.flush.assert_awaited_once()
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("reset_password", user.email)
@@ -437,6 +437,39 @@ async def test_reset_password_confirm_rejects_inactive_jti(
 
 
 @pytest.mark.asyncio
+async def test_reset_password_confirm_redis_failure_skips_commit(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    invalidate_mock = AsyncMock(side_effect=RuntimeError("redis down"))
+    monkeypatch.setattr(
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+    token = await build_reset_password_token({"email": user.email}, fake_redis)
+    use_case = ResetPasswordConfirmUseCase(uow=uow, redis_client=fake_redis)
+
+    with pytest.raises(RuntimeError, match="redis down"):
+        await use_case.execute(
+            data=ResetPasswordModel(token=token, password="StrongPass1!")
+        )
+
+    uow.flush.assert_awaited_once()
+    uow.commit.assert_not_awaited()
+    uow.rollback.assert_awaited_once()
+    assert (
+        await fake_redis.exists(
+            auth_redis_keys.one_time_token("reset_password", user.email)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_reset_password_confirm_cannot_reuse_successful_token(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
@@ -466,7 +499,7 @@ async def test_reset_password_confirm_cannot_reuse_successful_token(
 
 
 @pytest.mark.asyncio
-async def test_reset_password_confirm_commit_failure_keeps_token_active(
+async def test_reset_password_confirm_commit_failure_after_invalidation_consumes_token(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
@@ -492,10 +525,10 @@ async def test_reset_password_confirm_commit_failure_keeps_token_active(
         await fake_redis.exists(
             auth_redis_keys.one_time_token("reset_password", user.email)
         )
-        == 1
+        == 0
     )
-    invalidate_mock.assert_not_awaited()
-    uow.flush.assert_not_awaited()
+    invalidate_mock.assert_awaited_once()
+    uow.flush.assert_awaited_once()
     uow.rollback.assert_awaited_once()
 
 

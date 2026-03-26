@@ -64,12 +64,40 @@ async def test_update_password_success(
 
     assert result == SuccessResponse(success=True)
     uow.commit.assert_awaited_once()
-    uow.flush.assert_not_awaited()
+    uow.flush.assert_awaited_once()
     invalidate_mock.assert_awaited_once_with(str(user.id), fake_redis)
 
 
 @pytest.mark.asyncio
-async def test_update_password_commit_failure_skips_session_invalidation(
+async def test_update_password_redis_failure_skips_commit(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    invalidate_mock = AsyncMock(side_effect=RuntimeError("redis down"))
+    monkeypatch.setattr(
+        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis)
+
+    with pytest.raises(RuntimeError, match="redis down"):
+        await use_case.execute(
+            data=UserNewPassword(password="StrongPass1!"),
+            user_id=user.id,
+        )
+
+    uow.flush.assert_awaited_once()
+    uow.commit.assert_not_awaited()
+    uow.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_password_commit_failure_after_invalidation(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
@@ -92,6 +120,6 @@ async def test_update_password_commit_failure_skips_session_invalidation(
             user_id=user.id,
         )
 
-    invalidate_mock.assert_not_awaited()
-    uow.flush.assert_not_awaited()
+    invalidate_mock.assert_awaited_once_with(str(user.id), fake_redis)
+    uow.flush.assert_awaited_once()
     uow.rollback.assert_awaited_once()
