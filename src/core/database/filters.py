@@ -37,8 +37,11 @@ class FilterCondition:
     lte: dict[str, Any] = field(default_factory=dict)
     gte: dict[str, Any] = field(default_factory=dict)
 
+    def has_conditions(self) -> bool:
+        return any((self.eq, self.ne, self.lt, self.gt, self.lte, self.gte))
+
     def validate(self) -> None:
-        if not any((self.eq, self.ne, self.lt, self.gt, self.lte, self.gte)):
+        if not self.has_conditions():
             raise ValueError("At least one filter condition must be provided")
 
     def build_where_clauses(

@@ -449,7 +449,8 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         commit: bool = False,
     ) -> int:
         """Soft delete multiple records matching the typed filter conditions."""
-        filters.validate()
+        if not filters.has_conditions():
+            raise ValueError("At least one filter condition must be provided")
         merged = FilterCondition(
             eq={**{"is_deleted": False}, **filters.eq},
             ne=filters.ne,

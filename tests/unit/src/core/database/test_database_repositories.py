@@ -501,3 +501,29 @@ async def test_soft_delete_repository_batch_soft_delete_requires_filters_async()
 
     with pytest.raises(ValueError):
         await repo.batch_soft_delete(session=session, filters=FilterCondition())
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_batch_soft_delete_validates_filters_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeExecuteResult(rowcount=1)
+    validate_calls = 0
+    original_validate = FilterCondition.validate
+
+    def counting_validate(self: FilterCondition) -> None:
+        nonlocal validate_calls
+        validate_calls += 1
+        original_validate(self)
+
+    monkeypatch.setattr(FilterCondition, "validate", counting_validate)
+
+    result = await repo.batch_soft_delete(
+        session=session,
+        filters=FilterCondition(eq={"id": 1}),
+    )
+
+    assert result == 1
+    assert validate_calls == 1
