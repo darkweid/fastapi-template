@@ -55,7 +55,7 @@ botocore==1.40.61
     #   aiobotocore
     #   boto3
     #   s3transfer
-celery==5.6.2
+celery==5.6.3
     # via -r base.in
 certifi==2026.1.4
     # via sentry-sdk
@@ -94,7 +94,7 @@ frozenlist==1.8.0
     #   aiosignal
 greenlet==3.3.2
     # via sqlalchemy
-gunicorn==25.2.0
+gunicorn==25.3.0
     # via -r base.in
 h11==0.16.0
     # via uvicorn

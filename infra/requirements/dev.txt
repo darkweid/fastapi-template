@@ -61,7 +61,7 @@ botocore==1.40.61
     #   s3transfer
 build==1.4.0
     # via pip-tools
-celery==5.6.2
+celery==5.6.3
     # via -r base.in
 certifi==2026.1.4
     # via
@@ -113,7 +113,7 @@ frozenlist==1.8.0
     #   aiosignal
 greenlet==3.3.2
     # via sqlalchemy
-gunicorn==25.2.0
+gunicorn==25.3.0
     # via -r base.in
 h11==0.16.0
     # via
@@ -264,7 +264,7 @@ types-passlib==1.7.7.20260211
     # via -r dev.in
 types-pyyaml==6.0.12.20250915
     # via -r dev.in
-types-requests==2.32.4.20260324
+types-requests==2.33.0.20260327
     # via -r dev.in
 types-ujson==5.10.0.20250822
     # via -r dev.in
