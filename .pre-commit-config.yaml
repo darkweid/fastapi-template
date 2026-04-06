@@ -36,7 +36,7 @@ repos:
         files: ^infra/requirements/.*\.in$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.7
+    rev: v0.15.9
     hooks:
       - id: ruff
         args:
@@ -54,7 +54,7 @@ repos:
         args: [ --remove-all-unused-imports, --remove-unused-variables ]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v1.20.0
     hooks:
       - id: mypy
         args: [
@@ -67,7 +67,7 @@ repos:
           - fastapi==0.135.2
           - pydantic==2.12.5
           - sqlalchemy==2.0.48
-          - celery==5.6.2
+          - celery==5.6.3
           - PyJWT==2.12.1
           - sentry-sdk==2.56.0
           - pydantic-settings==2.13.1
@@ -77,5 +77,5 @@ repos:
           - fastapi-mail==1.6.2
           - types-passlib==1.7.7.20260211
           - types-PyYAML==6.0.12.20250915
-          - types-requests==2.32.4.20260324
+          - types-requests==2.33.0.20260327
           - types-ujson==5.10.0.20250822
