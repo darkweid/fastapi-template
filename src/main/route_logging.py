@@ -1,3 +1,5 @@
+from enum import Enum
+
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
@@ -21,23 +23,25 @@ def _is_docs_route(route: APIRoute) -> bool:
 
 
 def log_routes_summary(application: FastAPI, include_debug_list: bool = False) -> None:
-    routes = [r for r in application.routes if isinstance(r, APIRoute)]
-    custom_routes = [r for r in routes if not _is_docs_route(r)]
+    routes = [route for route in application.routes if isinstance(route, APIRoute)]
+    custom_routes = [route for route in routes if not _is_docs_route(route)]
 
     total = len(custom_routes)
     by_method: dict[str, int] = {}
     by_tag: dict[str, int] = {}
 
-    for r in custom_routes:
-        methods = getattr(r, "methods", set()) or set()
-        for m in methods:
-            by_method[m] = by_method.get(m, 0) + 1
-        tags = getattr(r, "tags", []) or []
+    for route in custom_routes:
+        route_methods: set[str] = route.methods or set()
+        for method in route_methods:
+            by_method[method] = by_method.get(method, 0) + 1
+        tags: list[str] = [
+            tag.value if isinstance(tag, Enum) else tag for tag in route.tags or []
+        ]
         if not tags:
             by_tag["<untagged>"] = by_tag.get("<untagged>", 0) + 1
         else:
-            for t in tags:
-                by_tag[t] = by_tag.get(t, 0) + 1
+            for tag in tags:
+                by_tag[tag] = by_tag.get(tag, 0) + 1
 
     logger.info(
         "API endpoints summary: total=%s methods=%s tags=%s",
@@ -47,8 +51,13 @@ def log_routes_summary(application: FastAPI, include_debug_list: bool = False) -
     )
 
     if include_debug_list:
-        for r in sorted(
-            custom_routes, key=lambda x: (min(x.methods) if x.methods else "", x.path)
+        for route in sorted(
+            custom_routes,
+            key=lambda item: (min(item.methods) if item.methods else "", item.path),
         ):
-            methods = ",".join(sorted(r.methods)) if r.methods else ""
-            logger.debug("Route: %s %s -> %s", methods, r.path, r.name)
+            route_methods_repr = (
+                ",".join(sorted(route.methods)) if route.methods else ""
+            )
+            logger.debug(
+                "Route: %s %s -> %s", route_methods_repr, route.path, route.name
+            )
