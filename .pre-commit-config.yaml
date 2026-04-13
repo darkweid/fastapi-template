@@ -36,7 +36,7 @@ repos:
         files: ^infra/requirements/.*\.in$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.9
+    rev: v0.15.10
     hooks:
       - id: ruff
         args:
@@ -72,10 +72,10 @@ repos:
           - sentry-sdk==2.57.0
           - pydantic-settings==2.13.1
           - redis==7.4.0
-          - pytest==9.0.2
+          - pytest==9.0.3
           - alembic==1.18.4
           - fastapi-mail==1.6.2
           - types-passlib==1.7.7.20260211
-          - types-PyYAML==6.0.12.20250915
-          - types-requests==2.33.0.20260402
+          - types-PyYAML==6.0.12.20260408
+          - types-requests==2.33.0.20260408
           - types-ujson==5.10.0.20250822
