@@ -160,7 +160,7 @@ python-dotenv==1.2.2
     # via
     #   -r base.in
     #   pydantic-settings
-python-multipart==0.0.24
+python-multipart==0.0.26
     # via -r base.in
 redis==7.4.0
     # via -r base.in
