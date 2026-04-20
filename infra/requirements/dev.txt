@@ -101,7 +101,7 @@ email-validator==2.3.0
     # via
     #   -r base.in
     #   fastapi-mail
-fastapi==0.135.3
+fastapi==0.136.0
     # via -r base.in
 fastapi-mail==1.6.2
     # via -r base.in
@@ -197,13 +197,13 @@ propcache==0.4.1
     #   yarl
 pycparser==3.0
     # via cffi
-pydantic==2.12.5
+pydantic==2.13.2
     # via
     #   -r base.in
     #   fastapi
     #   fastapi-mail
     #   pydantic-settings
-pydantic-core==2.41.5
+pydantic-core==2.46.2
     # via pydantic
 pydantic-settings==2.13.1
     # via
@@ -247,7 +247,7 @@ regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.57.0
+sentry-sdk==2.58.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
