@@ -14,12 +14,12 @@ REDIS_CONTAINER = redis
 
 # Requirements management
 REQ_DIR = infra/requirements
-REQ_BASE_IN = $(REQ_DIR)/base.in
-REQ_DEV_IN = $(REQ_DIR)/dev.in
-REQ_PROD_IN = $(REQ_DIR)/prod.in
-REQ_BASE_TXT = $(REQ_DIR)/base.txt
+REQ_NAMES = base dev prod
 REQ_DEV_TXT = $(REQ_DIR)/dev.txt
 REQ_PROD_TXT = $(REQ_DIR)/prod.txt
+REQ_COMPILE_IMAGE ?= python:3.13-slim-bookworm
+REQ_COMPILE_PLATFORM ?= linux/amd64
+REQ_COMPILE_USER = $(shell id -u):$(shell id -g)
 
 # Build Docker containers
 .PHONY: build
@@ -138,11 +138,13 @@ lint:
 
 .PHONY: req-compile
 req-compile:
-	python -m pip install --upgrade pip pip-tools
-	python scripts/sort_requirements_in.py infra/requirements/base.in infra/requirements/dev.in infra/requirements/prod.in
-	cd infra/requirements && python -m piptools compile base.in -o base.txt
-	cd infra/requirements && python -m piptools compile dev.in -o dev.txt
-	cd infra/requirements && python -m piptools compile prod.in -o prod.txt
+	docker run --rm --platform=$(REQ_COMPILE_PLATFORM) \
+		-e HOME=/tmp \
+		-u $(REQ_COMPILE_USER) \
+		-v $(CURDIR):/app \
+		-w /app \
+		$(REQ_COMPILE_IMAGE) \
+		sh -lc 'python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile "$${name}.in" -o "$${name}.txt"; done'
 
 .PHONY: req-sync-dev
 req-sync-dev:
@@ -228,7 +230,7 @@ info:
 	@echo "   • make check-lint         # Check linting during push"
 	@echo ""
 	@echo "📦 Dependencies:"
-	@echo "   • make req-compile        # Compile requirements (*.in -> *.txt)"
+	@echo "   • make req-compile        # Compile requirements in Docker Linux env"
 	@echo "   • make req-sync-dev       # Sync dev environment with requirements"
 	@echo "   • make req-sync-prod      # Sync prod environment with requirements"
 	@echo ""
