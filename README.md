@@ -94,7 +94,8 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Update lockfiles: `make req-compile`
 - Sync environment: `make req-sync-dev` / `make req-sync-prod`
 - When needed, add pins or ranges in `.in` (e.g. `fastapi>=0.110,<1`) and recompile.
-- Compile lockfiles on the same OS and Python version as production to honor environment markers.
+- `make req-compile` runs `pip-compile` inside `python:3.13-slim-bookworm` with `linux/amd64` by default to keep lockfiles close to production.
+- Override the target platform when needed, for example `make req-compile REQ_COMPILE_PLATFORM=linux/arm64`.
 
 ## Documentation
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)

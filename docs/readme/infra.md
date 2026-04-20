@@ -58,7 +58,8 @@ make clean            # remove stack + volumes/images/orphans
 - Update lockfiles: `make req-compile`
 - Sync environment: `make req-sync-dev` / `make req-sync-prod`
 - Add pins/ranges in `.in` only when needed (e.g. `fastapi>=0.110,<1`), then recompile.
-- Compile lockfiles on the same OS and Python version as production to honor environment markers.
+- `make req-compile` runs inside `python:3.13-slim-bookworm` with `linux/amd64` by default to match the production resolver context more closely.
+- Override the platform when production differs, for example `make req-compile REQ_COMPILE_PLATFORM=linux/arm64`.
 
 ## Troubleshooting
 - Ensure Docker/Compose are installed.
