@@ -144,7 +144,7 @@ req-compile:
 		-v $(CURDIR):/app \
 		-w /app \
 		$(REQ_COMPILE_IMAGE) \
-		sh -lc 'python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile "$${name}.in" -o "$${name}.txt"; done'
+		sh -lc 'set -e; python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile "$${name}.in" -o "$${name}.txt"; done'
 
 .PHONY: req-sync-dev
 req-sync-dev:
