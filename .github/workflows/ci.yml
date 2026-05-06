@@ -185,12 +185,13 @@ jobs:
         with:
           python-version: '3.13'
           cache: 'pip'
+          cache-dependency-path: infra/requirements/security.txt
 
       - name: Install Bandit
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install bandit==1.9.4
+          python -m pip install -r infra/requirements/security.txt
 
       - name: Run Bandit
         shell: bash
@@ -214,12 +215,13 @@ jobs:
             infra/requirements/base.txt
             infra/requirements/dev.txt
             infra/requirements/prod.txt
+            infra/requirements/security.txt
 
       - name: Install pip-audit
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pip-audit==2.10.0
+          python -m pip install -r infra/requirements/security.txt
 
       - name: Audit pinned dependencies
         shell: bash

@@ -14,7 +14,7 @@ REDIS_CONTAINER = redis
 
 # Requirements management
 REQ_DIR = infra/requirements
-REQ_NAMES = base dev prod
+REQ_NAMES = base dev prod security
 REQ_DEV_TXT = $(REQ_DIR)/dev.txt
 REQ_PROD_TXT = $(REQ_DIR)/prod.txt
 REQ_COMPILE_IMAGE ?= python:3.13-slim-bookworm
