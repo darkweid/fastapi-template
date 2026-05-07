@@ -9,12 +9,13 @@ email-validator
 fastapi
 fastapi_mail
 gunicorn
+mako>=1.3.12
 passlib
 pydantic
 pydantic-settings
 pyjwt
 python-dotenv
-python-multipart
+python-multipart>=0.0.27
 redis
 sentry-sdk
 sqlalchemy
