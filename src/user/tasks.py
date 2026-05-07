@@ -3,13 +3,10 @@ from datetime import timedelta
 import sentry_sdk
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from celery_tasks.main import (
-    celery_app,  # noqa: F401
-    local_async_session,
-)
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
 from src.core.database.filters import FilterCondition
+from src.core.database.session import celery_async_session
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.utils.coroutine_runner import execute_coroutine_sync
 from src.core.utils.datetime_utils import get_utc_now
@@ -26,7 +23,7 @@ def cleanup_unverified_users() -> str:
 async def _soft_delete_unverified_users() -> int:
     cutoff = get_utc_now() - timedelta(days=3)
 
-    async with local_async_session() as session:
+    async with celery_async_session() as session:
         uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
         try:
             async with uow:

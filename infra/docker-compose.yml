@@ -73,7 +73,7 @@ services:
     container_name: template-celery-worker
     image: template-app-image:latest
     env_file: ../.env
-    command: python -m celery -A celery_tasks.main worker --pool=solo --loglevel=info -E
+    command: python -m celery -A celery_tasks.workers.default worker --pool=solo --loglevel=info -E
     restart: unless-stopped
     depends_on:
       rabbitmq:
@@ -94,7 +94,7 @@ services:
     container_name: template-celery-beat
     image: template-app-image:latest
     env_file: ../.env
-    command: python -m celery -A celery_tasks.main beat --loglevel=info --schedule /data/celerybeat-schedule
+    command: python -m celery -A celery_tasks.workers.beat beat --loglevel=info --schedule /data/celerybeat-schedule
     restart: unless-stopped
     volumes:
       - celery-beat-state:/data
