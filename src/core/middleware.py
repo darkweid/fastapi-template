@@ -7,8 +7,14 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import sentry_sdk
-from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy.exc import (
+    DBAPIError,
+    IntegrityError,
+    OperationalError,
+    ProgrammingError,
+)
 from starlette.responses import Response
+from starlette.types import Message, Receive, Scope, Send
 
 from loggers import get_logger
 
@@ -35,6 +41,7 @@ BASE_SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
 DOCS_PATHS = frozenset({"/openapi.json", "/redoc"})
+CACHED_STATEMENT_PLAN_INVALID_MESSAGE = "cached statement plan is invalid"
 
 
 def _is_docs_route(path: str) -> bool:
@@ -47,11 +54,92 @@ def _get_content_security_policy(path: str) -> str:
     return STRICT_CONTENT_SECURITY_POLICY
 
 
+def has_cached_statement_plan_invalidated_message(error: Exception) -> bool:
+    message = str(error).lower()
+    if CACHED_STATEMENT_PLAN_INVALID_MESSAGE in message:
+        return True
+
+    orig_error = getattr(error, "orig", None)
+    if orig_error is None:
+        return False
+    return CACHED_STATEMENT_PLAN_INVALID_MESSAGE in str(orig_error).lower()
+
+
+def is_retryable_transient_database_error(error: Exception) -> bool:
+    if isinstance(error, DBAPIError) and error.connection_invalidated:
+        return True
+    return has_cached_statement_plan_invalidated_message(error)
+
+
 @dataclass(slots=True)
 class PostgresqlErrorHandlingResult:
     response: JSONResponse
     send_to_sentry: bool
     is_server_error: bool
+
+
+class RequestBodyReceiver:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self.is_sent = False
+
+    async def __call__(self) -> Message:
+        if self.is_sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        self.is_sent = True
+        return {"type": "http.request", "body": self.body, "more_body": False}
+
+
+class SendTracker:
+    def __init__(self, send: Send) -> None:
+        self.send = send
+        self.has_sent = False
+
+    async def __call__(self, message: Message) -> None:
+        self.has_sent = True
+        await self.send(message)
+
+
+class TransientDatabaseRetryMiddleware:
+    def __init__(self, app: Callable[[Scope, Receive, Send], Awaitable[None]]) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        body = await read_http_request_body(receive)
+        first_attempt_send = SendTracker(send)
+
+        try:
+            await self.app(scope, RequestBodyReceiver(body), first_attempt_send)
+            return
+        except Exception as exc:
+            if (
+                first_attempt_send.has_sent
+                or not is_retryable_transient_database_error(exc)
+            ):
+                raise
+
+            logger.warning(
+                "Transient database error at %s %s; retrying request once: %s",
+                scope["method"],
+                scope["path"],
+                exc.__class__.__name__,
+            )
+            await self.app(scope, RequestBodyReceiver(body), send)
+
+
+async def read_http_request_body(receive: Receive) -> bytes:
+    body_chunks: list[bytes] = []
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return b""
+        body_chunks.append(message.get("body", b""))
+        if not message.get("more_body", False):
+            return b"".join(body_chunks)
 
 
 def register_middlewares(app: FastAPI) -> None:
@@ -96,6 +184,8 @@ def register_middlewares(app: FastAPI) -> None:
         level(f"{category} {method} {path} |{duration}|{status_code}")
 
         return response
+
+    app.add_middleware(TransientDatabaseRetryMiddleware)
 
     @app.middleware("http")
     async def database_error_middleware(
