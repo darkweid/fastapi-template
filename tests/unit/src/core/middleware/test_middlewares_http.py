@@ -110,34 +110,21 @@ def _make_app(exception_factory) -> FastAPI:
     return app
 
 
-def _make_retry_app() -> FastAPI:
+def _make_database_error_app() -> FastAPI:
     app = FastAPI()
-    app.state.transient_db_attempts = 0
-    app.state.transient_db_post_attempts = 0
-    app.state.transient_db_fails_attempts = 0
+    app.state.cached_statement_attempts = 0
+    app.state.invalidated_connection_attempts = 0
     app.state.integrity_attempts = 0
     middleware.register_middlewares(app)
 
-    @app.get("/transient-db")
-    async def transient_db() -> dict[str, int]:
-        app.state.transient_db_attempts += 1
-        if app.state.transient_db_attempts == 1:
-            raise make_cached_statement_error()
-        return {"attempts": app.state.transient_db_attempts}
+    @app.get("/cached-statement-plan")
+    async def cached_statement_plan() -> dict[str, int]:
+        app.state.cached_statement_attempts += 1
+        raise make_cached_statement_error()
 
-    @app.post("/transient-db-post")
-    async def transient_db_post(payload: dict[str, str]) -> dict[str, object]:
-        app.state.transient_db_post_attempts += 1
-        if app.state.transient_db_post_attempts == 1:
-            raise make_cached_statement_error()
-        return {
-            "attempts": app.state.transient_db_post_attempts,
-            "payload": payload,
-        }
-
-    @app.get("/transient-db-fails")
-    async def transient_db_fails() -> dict[str, int]:
-        app.state.transient_db_fails_attempts += 1
+    @app.get("/invalidated-connection")
+    async def invalidated_connection() -> dict[str, int]:
+        app.state.invalidated_connection_attempts += 1
         raise make_invalidated_connection_error()
 
     @app.get("/integrity-error")
@@ -283,46 +270,32 @@ def test_unexpected_error_middleware() -> None:
     assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
 
 
-def test_transient_database_retry_middleware_retries_once_and_returns_success() -> None:
-    app = _make_retry_app()
-    client = TestClient(app)
-
-    resp = client.get("/transient-db")
-
-    assert resp.status_code == 200
-    assert resp.json() == {"attempts": 2}
-    assert app.state.transient_db_attempts == 2
-
-
-def test_transient_database_retry_middleware_replays_post_body() -> None:
-    app = _make_retry_app()
-    client = TestClient(app)
-
-    resp = client.post("/transient-db-post", json={"value": "x"})
-
-    assert resp.status_code == 200
-    assert resp.json() == {
-        "attempts": 2,
-        "payload": {"value": "x"},
-    }
-    assert app.state.transient_db_post_attempts == 2
-
-
-def test_transient_database_retry_middleware_retries_only_once() -> None:
-    app = _make_retry_app()
+def test_cached_statement_plan_error_is_not_retried() -> None:
+    app = _make_database_error_app()
     client = TestClient(app, raise_server_exceptions=False)
 
-    resp = client.get("/transient-db-fails")
+    resp = client.get("/cached-statement-plan")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert app.state.cached_statement_attempts == 1
+
+
+def test_invalidated_connection_error_is_not_retried() -> None:
+    app = _make_database_error_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get("/invalidated-connection")
 
     assert resp.status_code == 500
     assert resp.json() == {
         "detail": "Database connection error. Please try again later."
     }
-    assert app.state.transient_db_fails_attempts == 2
+    assert app.state.invalidated_connection_attempts == 1
 
 
-def test_transient_database_retry_middleware_does_not_retry_integrity_error() -> None:
-    app = _make_retry_app()
+def test_database_error_middleware_does_not_retry_integrity_error() -> None:
+    app = _make_database_error_app()
     client = TestClient(app, raise_server_exceptions=False)
 
     resp = client.get("/integrity-error")
