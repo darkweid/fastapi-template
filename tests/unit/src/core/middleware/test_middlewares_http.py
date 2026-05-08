@@ -2,7 +2,12 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy.exc import (
+    IntegrityError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 
 import src.core.middleware as middleware
 
@@ -62,6 +67,30 @@ class DummyProgramming:
         return str(self.orig)
 
 
+class DummyTransientDatabaseError(RuntimeError):
+    pass
+
+
+def make_cached_statement_error() -> NotSupportedError:
+    return NotSupportedError(
+        "SELECT 1",
+        {},
+        DummyTransientDatabaseError(
+            "cached statement plan is invalid due to a database schema or "
+            "configuration change"
+        ),
+    )
+
+
+def make_invalidated_connection_error() -> OperationalError:
+    return OperationalError(
+        "SELECT 1",
+        {},
+        DummyTransientDatabaseError("server closed the connection unexpectedly"),
+        connection_invalidated=True,
+    )
+
+
 def _make_app(exception_factory) -> FastAPI:
     app = FastAPI()
     middleware.register_middlewares(app)
@@ -77,6 +106,35 @@ def _make_app(exception_factory) -> FastAPI:
     @app.get("/docs")
     async def docs() -> PlainTextResponse:
         return PlainTextResponse("docs")
+
+    return app
+
+
+def _make_database_error_app() -> FastAPI:
+    app = FastAPI()
+    app.state.cached_statement_attempts = 0
+    app.state.invalidated_connection_attempts = 0
+    app.state.integrity_attempts = 0
+    middleware.register_middlewares(app)
+
+    @app.get("/cached-statement-plan")
+    async def cached_statement_plan() -> dict[str, int]:
+        app.state.cached_statement_attempts += 1
+        raise make_cached_statement_error()
+
+    @app.get("/invalidated-connection")
+    async def invalidated_connection() -> dict[str, int]:
+        app.state.invalidated_connection_attempts += 1
+        raise make_invalidated_connection_error()
+
+    @app.get("/integrity-error")
+    async def integrity_error() -> dict[str, int]:
+        app.state.integrity_attempts += 1
+        raise IntegrityError(
+            "INSERT INTO test",
+            {},
+            DummyTransientDatabaseError("integrity failed"),
+        )
 
     return app
 
@@ -210,3 +268,38 @@ def test_unexpected_error_middleware() -> None:
 
     assert resp.status_code == 500
     assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+
+
+def test_cached_statement_plan_error_is_not_retried() -> None:
+    app = _make_database_error_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get("/cached-statement-plan")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert app.state.cached_statement_attempts == 1
+
+
+def test_invalidated_connection_error_is_not_retried() -> None:
+    app = _make_database_error_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get("/invalidated-connection")
+
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "detail": "Database connection error. Please try again later."
+    }
+    assert app.state.invalidated_connection_attempts == 1
+
+
+def test_database_error_middleware_does_not_retry_integrity_error() -> None:
+    app = _make_database_error_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get("/integrity-error")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert app.state.integrity_attempts == 1

@@ -3,10 +3,11 @@ from collections.abc import AsyncGenerator
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.core.database.engine import engine
+from src.core.database.engine import celery_engine, engine
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol, get_uow
 
 async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
+celery_async_session = async_sessionmaker(bind=celery_engine, expire_on_commit=False)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession]:

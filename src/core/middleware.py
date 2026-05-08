@@ -7,7 +7,11 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import sentry_sdk
-from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy.exc import (
+    IntegrityError,
+    OperationalError,
+    ProgrammingError,
+)
 from starlette.responses import Response
 
 from loggers import get_logger

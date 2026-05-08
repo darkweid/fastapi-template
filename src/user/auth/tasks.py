@@ -1,6 +1,5 @@
 from contextlib import suppress
 
-from celery_tasks.main import celery_app  # noqa: F401
 from celery_tasks.types import typed_shared_task
 from loggers import get_logger
 from src.core.email_service.schemas import (

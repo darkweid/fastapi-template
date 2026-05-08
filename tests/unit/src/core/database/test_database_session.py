@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from src.core.database import engine as db_engine, session as db_session
 from src.core.database.session import get_session, get_unit_of_work
 
 
@@ -36,6 +37,18 @@ FAKE_UOW = object()
 
 async def fake_get_uow(_: object) -> object:
     return FAKE_UOW
+
+
+def test_web_engine_pre_pings_connections() -> None:
+    assert db_engine.engine.pool._pre_ping is True
+
+
+def test_celery_engine_pre_pings_connections() -> None:
+    assert db_engine.celery_engine.pool._pre_ping is True
+
+
+def test_celery_async_session_uses_celery_engine() -> None:
+    assert db_session.celery_async_session.kw["bind"] is db_engine.celery_engine
 
 
 @pytest.mark.asyncio

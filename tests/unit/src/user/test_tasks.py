@@ -52,7 +52,7 @@ async def test_soft_delete_unverified_users_success(
     uow = build_uow(fake_session, users_repo)
 
     with patch(
-        "src.user.tasks.local_async_session",
+        "src.user.tasks.celery_async_session",
         return_value=SessionContext(fake_session),
     ), patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
         result = await _soft_delete_unverified_users()
@@ -71,7 +71,7 @@ async def test_soft_delete_unverified_users_failure(
     uow = build_uow(fake_session, users_repo)
 
     with patch(
-        "src.user.tasks.local_async_session",
+        "src.user.tasks.celery_async_session",
         return_value=SessionContext(fake_session),
     ), patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
         result = await _soft_delete_unverified_users()

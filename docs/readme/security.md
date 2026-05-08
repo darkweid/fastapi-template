@@ -211,7 +211,7 @@ Tag-based invalidation (`CacheTags` enum) allows selective cache purging by reso
 
 ## Celery Task Security
 
-`src/user/auth/tasks.py`, `celery_tasks/main.py`
+`src/user/auth/tasks.py`, `celery_tasks/workers/common.py`
 
 - Tasks receive only email addresses, not full user objects or tokens — tokens are created inside the task.
 - Redis connections are created and destroyed per task execution.

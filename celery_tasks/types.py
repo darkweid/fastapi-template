@@ -1,9 +1,7 @@
 from collections.abc import Callable
 from typing import Any, Protocol, TypeVar, cast, overload
 
-from celery import shared_task
-
-from celery_tasks.main import celery_app  # noqa: F401
+from celery_tasks.workers.common import celery_app
 
 
 class CeleryTask(Protocol):
@@ -41,7 +39,7 @@ def typed_shared_task(func: F | None = None, **kwargs: Any) -> F | Callable[[F],
     """
 
     def decorator(func: F) -> F:
-        return cast(F, shared_task(**kwargs)(func))
+        return cast(F, celery_app.task(**kwargs)(func))
 
     if func is None:
         return decorator

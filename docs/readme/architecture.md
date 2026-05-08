@@ -140,7 +140,7 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   ├── storage/                         # Storage adapter tests
 │   └── system/                          # System routes tests
 │
-├── celery_tasks/                        # Celery task management
+├── celery_tasks/                        # Celery worker config and task management
 ├── loggers/                             # Logging configurations
 ├── models/                              # Shared data models and models package initialization
 ├── Makefile                             # Makefile with predefined commands
