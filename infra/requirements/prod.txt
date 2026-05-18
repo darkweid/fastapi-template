@@ -174,7 +174,7 @@ python-dotenv==1.2.2
     # via
     #   -r base.in
     #   pydantic-settings
-python-multipart==0.0.28
+python-multipart==0.0.29
     # via -r base.in
 redis==7.4.0
     # via -r base.in
@@ -182,7 +182,7 @@ regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.59.0
+sentry-sdk==2.60.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -219,7 +219,7 @@ urllib3==2.7.0
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.46.0
+uvicorn==0.47.0
     # via -r base.in
 vine==5.1.0
     # via

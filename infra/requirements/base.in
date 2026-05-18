@@ -15,7 +15,7 @@ pydantic
 pydantic-settings
 pyjwt
 python-dotenv
-python-multipart>=0.0.28
+python-multipart>=0.0.29
 redis
 sentry-sdk
 sqlalchemy

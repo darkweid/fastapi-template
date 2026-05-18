@@ -50,7 +50,7 @@ attrs==25.4.0
     # via aiohttp
 billiard==4.2.4
     # via celery
-black==26.3.1
+black==26.5.0
     # via -r dev.in
 blinker==1.9.0
     # via fastapi-mail
@@ -241,7 +241,7 @@ python-dotenv==1.2.2
     # via
     #   -r base.in
     #   pydantic-settings
-python-multipart==0.0.28
+python-multipart==0.0.29
     # via -r base.in
 pytokens==0.4.1
     # via black
@@ -253,7 +253,7 @@ regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.59.0
+sentry-sdk==2.60.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -268,9 +268,9 @@ starlette==1.0.0
     #   fastapi-mail
 types-passlib==1.7.7.20260211
     # via -r dev.in
-types-pyyaml==6.0.12.20260510
+types-pyyaml==6.0.12.20260518
     # via -r dev.in
-types-requests==2.33.0.20260508
+types-requests==2.33.0.20260518
     # via -r dev.in
 types-ujson==5.10.0.20250822
     # via -r dev.in
@@ -300,7 +300,7 @@ urllib3==2.7.0
     #   types-requests
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.46.0
+uvicorn==0.47.0
     # via -r base.in
 vine==5.1.0
     # via
