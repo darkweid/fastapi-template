@@ -22,7 +22,7 @@ defusedxml==0.7.1
     # via py-serializable
 filelock==3.29.0
     # via cachecontrol
-idna==3.13
+idna==3.15
     # via requests
 license-expression==30.4.4
     # via cyclonedx-python-lib
