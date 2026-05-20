@@ -129,7 +129,7 @@ httpx==0.28.1
     #   fastapi-mail
 identify==2.6.16
     # via pre-commit
-idna==3.11
+idna==3.15
     # via
     #   anyio
     #   email-validator
