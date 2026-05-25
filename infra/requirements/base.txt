@@ -89,7 +89,7 @@ email-validator==2.3.0
     # via
     #   -r base.in
     #   fastapi-mail
-fastapi==0.136.1
+fastapi==0.136.3
     # via -r base.in
 fastapi-mail==1.6.4
     # via -r base.in
@@ -163,7 +163,7 @@ pydantic-settings==2.14.1
     # via
     #   -r base.in
     #   fastapi-mail
-pyjwt==2.12.1
+pyjwt==2.13.0
     # via -r base.in
 python-dateutil==2.9.0.post0
     # via
@@ -186,7 +186,7 @@ sentry-sdk==2.60.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
-sqlalchemy==2.0.49
+sqlalchemy==2.0.50
     # via
     #   -r base.in
     #   alembic
@@ -219,7 +219,7 @@ urllib3==2.7.0
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.47.0
+uvicorn==0.48.0
     # via -r base.in
 vine==5.1.0
     # via
