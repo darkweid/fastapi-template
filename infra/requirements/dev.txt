@@ -241,7 +241,7 @@ python-dotenv==1.2.2
     # via
     #   -r base.in
     #   pydantic-settings
-python-multipart==0.0.29
+python-multipart==0.0.31
     # via -r base.in
 pytokens==0.4.1
     # via black
