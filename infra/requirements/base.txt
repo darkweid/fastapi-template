@@ -163,7 +163,7 @@ pydantic-settings==2.14.1
     # via
     #   -r base.in
     #   fastapi-mail
-pyjwt==2.12.1
+pyjwt==2.13.0
     # via -r base.in
 python-dateutil==2.9.0.post0
     # via

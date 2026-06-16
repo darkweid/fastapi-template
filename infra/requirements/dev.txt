@@ -217,7 +217,7 @@ pydantic-settings==2.14.1
     #   fastapi-mail
 pygments==2.20.0
     # via pytest
-pyjwt==2.12.1
+pyjwt==2.13.0
     # via -r base.in
 pyproject-hooks==1.2.0
     # via
