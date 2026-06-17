@@ -262,7 +262,7 @@ sqlalchemy==2.0.49
     #   -r base.in
     #   alembic
     #   alembic-postgresql-enum
-starlette==1.0.0
+starlette==1.3.1
     # via
     #   fastapi
     #   fastapi-mail
