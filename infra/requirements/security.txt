@@ -40,7 +40,7 @@ packaging==26.2
     #   pip-requirements-parser
 pip-api==0.0.34
     # via pip-audit
-pip-audit==2.10.0
+pip-audit==2.10.1
     # via -r security.in
 pip-requirements-parser==32.0.1
     # via pip-audit
