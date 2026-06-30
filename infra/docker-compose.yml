@@ -30,8 +30,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/18/main
-    ports:
-      - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./postgres/postgresql.conf:/custom-config/postgresql.conf:ro
@@ -54,8 +52,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "${APP_BACKEND_PORT}:${APP_BACKEND_PORT}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,8 +140,6 @@ services:
       timeout: 3s
       retries: 5
     command: redis-server /etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
-    ports:
-      - "${REDIS_PORT}:6379"
     volumes:
       - ./redis.conf:/etc/redis/redis.conf:ro
       - redis-data:/data
@@ -170,9 +164,6 @@ services:
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
-    ports:
-      - "${RABBITMQ_PORT}:5672"
-      - "15672:15672"
     networks:
       - app-network
     deploy:

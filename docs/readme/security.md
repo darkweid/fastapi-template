@@ -185,6 +185,52 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 
 **Why it matters:** Running as root inside a container means a container escape yields root on the host. Non-root execution, minimal images, and multi-stage builds reduce both the probability and impact of container compromise.
 
+## Host Port Exposure (Docker & UFW)
+
+`infra/docker-compose.yml`, `infra/docker-compose.override.yml`
+
+**Why UFW does not protect Docker-published ports:** the short port syntax
+`ports: "host:container"` binds `0.0.0.0` (all interfaces), and Docker inserts
+its own rules into the `DOCKER` iptables chain — which is evaluated *before* the
+`INPUT` chain that UFW manages. As a result, a `ufw deny <port>` rule has **no
+effect** on a container-published port: it is reachable from the internet even
+when UFW reports the port as blocked.
+
+**What the template does:**
+- The base (production) compose file publishes **only Nginx (`8000`)** to the
+  host. Postgres, Redis, RabbitMQ, and the app are no longer host-published —
+  they communicate over the internal `app-network` bridge by service name
+  (`postgres:5432`, `redis:6379`, `rabbitmq:5672`, `app:8001`), so they are
+  unreachable from outside the host regardless of firewall state.
+- The dev overlay (`docker-compose.override.yml`, local-only) re-exposes those
+  backing services bound to `127.0.0.1` for debugging and host-side integration
+  tests. Loopback binds are not reachable from the network, so the iptables
+  bypass does not apply.
+
+**The remaining public port (Nginx, `8000`):** this is the intended front door
+and is published on `0.0.0.0` by design. Because of the bypass above, UFW alone
+will not govern it. To make the firewall authoritative for this port, add a rule
+to the `DOCKER-USER` chain (Docker always evaluates `DOCKER-USER` first and
+preserves it across daemon restarts), e.g. allow only a trusted source:
+
+```bash
+iptables -I DOCKER-USER -p tcp --dport 8000 ! -s <trusted-cidr> -j DROP
+```
+
+Or use [`ufw-docker`](https://github.com/chaifeng/ufw-docker), which wires
+Docker traffic through UFW's `route` rules:
+
+```bash
+ufw-docker install
+ufw route allow proto tcp from any to any port 8000
+```
+
+**Why it matters:** publishing Postgres/Redis/RabbitMQ on `0.0.0.0` exposes
+unauthenticated-by-default data stores and the RabbitMQ management UI to the
+internet, silently bypassing the host firewall. Keeping backing services off the
+host and constraining the one public port via `DOCKER-USER`/`ufw-docker` closes
+that gap.
+
 ## Nginx Hardening
 
 `infra/nginx/app.conf`, `infra/nginx/main.conf`

@@ -63,15 +63,19 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 
 ## Ports
-- Nginx: 8000 → app:8001
-- App direct: 8001
-- Postgres: 5432
-- Redis: 6379
-- RabbitMQ: 5672 (AMQP), 15672 (UI)
+Only Nginx is published to the host; the rest stay internal to `app-network`.
+Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
+`docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
+
+- Nginx: 8000 → app:8001 — **public** (`0.0.0.0`)
+- App direct: 8001 — internal (dev: `127.0.0.1`)
+- Postgres: 5432 — internal (dev: `127.0.0.1`)
+- Redis: 6379 — internal (dev: `127.0.0.1`)
+- RabbitMQ: 5672 (AMQP), 15672 (UI) — internal (dev: `127.0.0.1`)
 
 ## Common Services
-- API docs: http://localhost:8000/docs (or http://localhost:8001/docs directly)
-- Health: http://localhost:8001/health/
+- API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only)
+- Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
 
 ## Useful Make Targets
 - `make run-dev` — build+up with override (reload)
