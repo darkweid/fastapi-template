@@ -1,11 +1,24 @@
 # Infrastructure and Operations
 
 ## Services and Ports
-- Nginx: 8000 (proxies to app)
-- App: 8001 (FastAPI)
-- Postgres: 5432
-- Redis: 6379
-- RabbitMQ: 5672 (AMQP), 15672 (UI)
+
+Only **Nginx** is published to the host. All other services are internal-only —
+they talk to each other over the `app-network` bridge by service name and are
+never bound to a host interface in production.
+
+| Service | Port | Host exposure |
+|---|---|---|
+| Nginx | 8000 | **Public** (`0.0.0.0`) — proxies to `app:8001` |
+| App | 8001 | Internal only (dev: `127.0.0.1:8001` for direct access) |
+| Postgres | 5432 | Internal only (dev: `127.0.0.1:5432`) |
+| Redis | 6379 | Internal only (dev: `127.0.0.1:6379`) |
+| RabbitMQ | 5672 / 15672 | Internal only (dev: `127.0.0.1:5672` / `127.0.0.1:15672`) |
+
+Backing-service host ports live **only** in `docker-compose.override.yml` (dev)
+and are bound to `127.0.0.1`. `make run` / `make up` (base file) publish nothing
+but Nginx. This avoids exposing data stores to the internet via the Docker
+iptables/UFW bypass — see `docs/readme/security.md` → *Host Port Exposure
+(Docker & UFW)*.
 
 Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requirements).
 
@@ -35,7 +48,8 @@ make run              # prod-like build
 Open:
 - App via Nginx: http://localhost:8000
 - Docs: http://localhost:8000/docs
-- Direct app (bypass Nginx): http://localhost:8001/docs
+- Direct app (bypass Nginx): http://localhost:8001/docs — **dev only** (`make
+  run-dev`); the base/prod stack does not publish the app port.
 
 ## Common Commands
 ```bash
@@ -64,11 +78,13 @@ make clean            # remove stack + volumes/images/orphans
 ## Troubleshooting
 - Ensure Docker/Compose are installed.
 - `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test` / `make test-cov`.
+- Host-side integration tests that connect to `localhost` (per `.env.test`) need the backing-service ports, which are published on `127.0.0.1` only in dev — start the stack with `make run-dev` first. `make run` / `make up` no longer publish them.
 - Use `make logs` or service-specific logs to inspect errors.
 - If migrations fail, check Postgres health first.
 
 ## Deployment Notes
 - `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `celery_worker`, or `celery_beat`.
+- It also publishes **only** the Nginx port to the host; Postgres/Redis/RabbitMQ/app stay internal to `app-network`. If you genuinely need a backing port on the host in production, bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
 - Source bind mounts remain only in `infra/docker-compose.override.yml` for local development.
 - `infra/nginx/app.conf` sets baseline security headers at the reverse-proxy layer, while the FastAPI app keeps the same headers as a fallback for direct app access and tests.
 - `Strict-Transport-Security` is included in the template config, but it is only appropriate when clients actually use HTTPS end-to-end or via a trusted TLS-terminating proxy/load balancer.

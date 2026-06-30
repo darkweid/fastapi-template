@@ -44,6 +44,13 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
+- Create and activate a local virtualenv:
+  ```bash
+  python3.13 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install --upgrade pip pip-tools
+  make req-sync-dev
+  ```
 - Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
@@ -56,15 +63,19 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 
 ## Ports
-- Nginx: 8000 → app:8001
-- App direct: 8001
-- Postgres: 5432
-- Redis: 6379
-- RabbitMQ: 5672 (AMQP), 15672 (UI)
+Only Nginx is published to the host; the rest stay internal to `app-network`.
+Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
+`docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
+
+- Nginx: 8000 → app:8001 — **public** (`0.0.0.0`)
+- App direct: 8001 — internal (dev: `127.0.0.1`)
+- Postgres: 5432 — internal (dev: `127.0.0.1`)
+- Redis: 6379 — internal (dev: `127.0.0.1`)
+- RabbitMQ: 5672 (AMQP), 15672 (UI) — internal (dev: `127.0.0.1`)
 
 ## Common Services
-- API docs: http://localhost:8000/docs (or http://localhost:8001/docs directly)
-- Health: http://localhost:8001/health/
+- API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only)
+- Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
 
 ## Useful Make Targets
 - `make run-dev` — build+up with override (reload)
@@ -76,7 +87,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - `make test-cov` — tests with coverage report
 
 ## Pre-commit Hooks
-- Install dev deps: `pip install -r infra/requirements/dev.txt`
+- Install dev deps: `make req-sync-dev`
 - Update hooks: `pre-commit autoupdate` (and commit `.pre-commit-config.yaml` changes)
 - Clean hook envs if needed: `pre-commit clean`
 - Run all hooks locally: `pre-commit run --all-files` or `make lint`
