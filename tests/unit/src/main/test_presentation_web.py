@@ -15,7 +15,7 @@ def test_include_routers_registers_expected_paths() -> None:
     app = FastAPI()
     include_routers(app)
 
-    paths = {route.path for route in app.router.routes}
+    paths = set(app.openapi()["paths"])
 
     assert "/v1/users/auth/login" in paths
     assert "/v1/users/auth/register" in paths

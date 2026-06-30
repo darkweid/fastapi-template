@@ -1,47 +1,37 @@
-from enum import Enum
+from typing import Any
 
 from fastapi import FastAPI
-from fastapi.routing import APIRoute
 
 from loggers import get_logger
 
 logger = get_logger(__name__)
 
 
-def _is_docs_route(route: APIRoute) -> bool:
-    docs_paths = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
-    if getattr(route, "path", None) in docs_paths:
-        return True
-    name = getattr(route, "name", "") or ""
-    if name.startswith("openapi") or name in {
-        "swagger_ui_html",
-        "swagger_ui_redirect",
-        "redoc_html",
-    }:
-        return True
-    return False
-
-
 def log_routes_summary(application: FastAPI, include_debug_list: bool = False) -> None:
-    routes = [route for route in application.routes if isinstance(route, APIRoute)]
-    custom_routes = [route for route in routes if not _is_docs_route(route)]
+    """Log a human-readable summary of the application's API endpoints.
 
-    total = len(custom_routes)
+    The summary is derived from the generated OpenAPI schema, which is the
+    public source of truth for registered operations. This keeps the logic
+    independent of Starlette's internal routing structures (e.g. the nested
+    ``_IncludedRouter`` wrappers produced by ``include_router``).
+    """
+    schema: dict[str, Any] = application.openapi()
+    paths: dict[str, dict[str, Any]] = schema.get("paths", {})
+
+    total = 0
     by_method: dict[str, int] = {}
     by_tag: dict[str, int] = {}
+    operations: list[tuple[str, str, str]] = []
 
-    for route in custom_routes:
-        route_methods: set[str] = route.methods or set()
-        for method in route_methods:
-            by_method[method] = by_method.get(method, 0) + 1
-        tags: list[str] = [
-            tag.value if isinstance(tag, Enum) else tag for tag in route.tags or []
-        ]
-        if not tags:
-            by_tag["<untagged>"] = by_tag.get("<untagged>", 0) + 1
-        else:
+    for path, path_item in paths.items():
+        for method, operation in path_item.items():
+            http_method = method.upper()
+            total += 1
+            by_method[http_method] = by_method.get(http_method, 0) + 1
+            tags: list[str] = operation.get("tags") or ["<untagged>"]
             for tag in tags:
                 by_tag[tag] = by_tag.get(tag, 0) + 1
+            operations.append((http_method, path, operation.get("operationId", "")))
 
     logger.info(
         "API endpoints summary: total=%s methods=%s tags=%s",
@@ -51,13 +41,5 @@ def log_routes_summary(application: FastAPI, include_debug_list: bool = False) -
     )
 
     if include_debug_list:
-        for route in sorted(
-            custom_routes,
-            key=lambda item: (min(item.methods) if item.methods else "", item.path),
-        ):
-            route_methods_repr = (
-                ",".join(sorted(route.methods)) if route.methods else ""
-            )
-            logger.debug(
-                "Route: %s %s -> %s", route_methods_repr, route.path, route.name
-            )
+        for http_method, path, operation_id in sorted(operations):
+            logger.debug("Route: %s %s -> %s", http_method, path, operation_id)
