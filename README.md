@@ -110,4 +110,5 @@ Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
 ## Documentation
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
+- Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)
 - Contributing & CI/CD: [docs/readme/contributing.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/contributing.md)

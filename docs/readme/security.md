@@ -65,7 +65,7 @@ All authentication flows log emails in masked form: `ab***@cd***`. Used consiste
 
 Redis-backed **token bucket** via Lua script:
 - Configurable per-endpoint limits (requests, time window).
-- Key structure: `{prefix}:{client_ip}:{endpoint}`.
+- Key structure: `{prefix}:{client_ip}:{request_path}:{endpoint}`.
 - Lua script ensures atomic increment-or-reject.
 
 **In-memory fallback** activates on Redis failure:
@@ -94,7 +94,7 @@ Sessions are Redis-backed with a key structure: `{token_type}:{user_id}:{session
 `src/user/auth/permissions/`
 
 Three-tier model:
-- `Permission` enum — 42 granular permissions (view, create, edit, delete per resource).
+- `Permission` enum — 28 granular permissions (view, create, edit, delete per resource).
 - `UserRole` enum — `ADMIN`, `EDITOR`, `VIEWER`.
 - `ROLE_PERMISSIONS` matrix — maps each role to its allowed permissions.
 - `require_permission()` — FastAPI dependency that checks active + verified + permitted.
@@ -114,7 +114,7 @@ Three-tier model:
 
 ## SQL Injection Prevention
 
-`src/core/database/repositories.py`
+`src/core/database/repositories.py`, `src/core/database/filters.py`
 
 - All database access goes through SQLAlchemy ORM — no raw SQL with user input.
 - `FilterCondition` validates that filter columns exist on the model before building queries.
@@ -126,7 +126,7 @@ Three-tier model:
 
 `src/core/middleware.py`, `infra/nginx/app.conf`
 
-Applied at both application and Nginx levels (defense in depth):
+The five base headers are applied at both the application and Nginx levels (defense in depth); `Content-Security-Policy` is applied at the application layer only (it is path-aware — relaxed for Swagger/Redoc):
 
 | Header | Value | Purpose |
 |---|---|---|
