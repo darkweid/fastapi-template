@@ -55,11 +55,8 @@ class RedisCacheBackend(CacheBackend):
         """Get all keys associated with a specific tag."""
         if self.redis is not None:
             tag_key = f"tag:{tag}"
-            result = self.redis.smembers(tag_key)
-            if hasattr(result, "__await__"):
-                keys = await result
-                return {self._normalize_tag_member(k) for k in keys}
-            return {self._normalize_tag_member(k) for k in result}
+            keys = await self.redis.smembers(tag_key)
+            return {self._normalize_tag_member(k) for k in keys}
         return set()
 
     async def invalidate_keys(self, keys: list[str]) -> None:

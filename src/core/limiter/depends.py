@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from threading import Lock
 import time
-from typing import Annotated, Any, ClassVar, cast
+from typing import Annotated, ClassVar
 
 from fastapi import Request, Response
 from pydantic import Field
@@ -93,11 +93,10 @@ class RateLimiter:
                 str(self.times),
                 str(self.milliseconds),
             )
-            result = await cast(Awaitable[Any], eval_result)
+            result = await eval_result
             return int(result)
         except redisExc.NoScriptError:
-            script_load_result = redis.script_load(FastAPILimiter.lua_script)
-            script_result = await cast(Awaitable[str], script_load_result)
+            script_result = await redis.script_load(FastAPILimiter.lua_script)
             FastAPILimiter.lua_sha = script_result
 
             reloaded_lua_sha = FastAPILimiter.lua_sha
@@ -111,7 +110,7 @@ class RateLimiter:
                 str(self.times),
                 str(self.milliseconds),
             )
-            result = await cast(Awaitable[Any], eval_result)
+            result = await eval_result
             return int(result)
 
     @classmethod
