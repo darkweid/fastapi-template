@@ -3,16 +3,16 @@
 ## Core Architectural Patterns
 
 ### Unit of Work (UoW) Pattern
-`src/core/database/uow.py` keeps DB work transactional and coordinates repositories.
+The `src/core/database/uow/` package keeps DB work transactional and coordinates repositories.
 
 - Transaction management: groups multiple DB operations to succeed or fail together.
 - Repository coordination: single transaction boundary for multiple repositories.
 - Clean API design: consistent interface (`commit`, `rollback`) for callers.
 
 Implementations:
-- `AbstractUnitOfWork`: contract.
-- `SQLAlchemyUnitOfWork`: AsyncSession-based implementation.
-- `ApplicationUnitOfWork`: app-specific factory wiring repositories.
+- `UnitOfWork`: abstract contract (`uow/abstract.py`).
+- `SQLAlchemyUnitOfWork`: AsyncSession-based implementation (`uow/sqlalchemy.py`).
+- `ApplicationUnitOfWork`: app-specific factory wiring repositories (`uow/application.py`).
 
 ### Main Module Architecture
 `src/main/` wires the app and isolates bootstrapping concerns.
@@ -76,11 +76,12 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   │   ├── Dockerfile                   # Dockerfile for PostgreSQL
 │   │   └── postgresql.conf              # PostgreSQL configuration
 │   ├── redis.conf                       # Redis configuration
-│   ├── requirements/                    # Python dependencies for different environments
+│   ├── requirements/                    # Python deps (pip-tools: *.in sources → *.txt lockfiles)
 │   │   ├── base.txt                     # Base dependencies used in all environments
 │   │   ├── dev.txt                      # Development environment dependencies
-│   │   └── prod.txt                     # Production environment dependencies
-│   └── requirements.txt                 # Main requirements file
+│   │   ├── prod.txt                     # Production environment dependencies
+│   │   └── security.txt                 # CI security tooling (bandit, pip-audit)
+│   └── requirements.txt                 # Convenience wrapper (installs dev deps by default)
 │
 ├── migrations/                          # Alembic migrations for database schema management
 │   ├── versions/                        # Migration version files
@@ -91,6 +92,7 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 ├── scripts/                             # Utility scripts for the application
 │   ├── __init__.py                      # Package initialization
 │   ├── check_env.py                     # Environment validation script
+│   ├── sort_requirements_in.py          # Sort entries in requirements *.in files
 │   └── sync_precommit_mypy_deps.py      # Sync mypy pre-commit deps with pinned requirements
 │
 ├── src/                                 # Application source code
@@ -116,7 +118,10 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   │   └── web.py                       # FastAPI application setup
 │   │
 │   ├── system/                          # System-level functionality
-│   │   └── routers.py                   # System API endpoints (health, time)
+│   │   ├── dependencies.py              # System DI providers
+│   │   ├── routers.py                   # System API endpoints (health, time)
+│   │   ├── schemas.py                   # System Pydantic schemas
+│   │   └── services.py                  # Health check service
 │   │
 │   └── user/                            # User functionality
 │       ├── auth/                        # Authentication logic for regular users
@@ -130,15 +135,19 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │       └── usecases/                    # User-related use cases
 │
 ├── tests/                               # Test suite
-│   ├── auth/                            # Auth tests
-│   ├── core/                            # Core tests
-│   ├── email/                           # Email tests
+│   ├── conftest.py                      # Global fixtures (fakes, clients, settings)
+│   ├── TEST_GUIDE.md                    # Testing standard for the template
 │   ├── factories/                       # Test data factories
 │   ├── fakes/                           # In-memory fakes for external systems
 │   ├── helpers/                         # Test helpers and dependency overrides
-│   ├── main/                            # Main module tests
-│   ├── storage/                         # Storage adapter tests
-│   └── system/                          # System routes tests
+│   └── unit/                            # Unit tests
+│       ├── test_nginx_security_config.py # Nginx security config check
+│       ├── celery_tasks/                # Celery task tests
+│       └── src/                         # Mirrors src/ layout
+│           ├── core/                    # Core component tests
+│           ├── main/                    # Main module tests
+│           ├── system/                  # System routes tests
+│           └── user/                    # User & auth tests
 │
 ├── celery_tasks/                        # Celery worker config and task management
 ├── loggers/                             # Logging configurations

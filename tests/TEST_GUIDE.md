@@ -146,7 +146,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_get_resource_returns_200(async_client_with_fakes):
     # When
-    response = await async_client_with_fakes.get("/api/v1/resource")
+    response = await async_client_with_fakes.get("/v1/resource")
 
     # Then
     assert response.status_code == 200
