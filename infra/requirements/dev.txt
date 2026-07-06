@@ -105,7 +105,7 @@ email-validator==2.3.0
     # via
     #   -r base.in
     #   fastapi-mail
-fastapi==0.138.1
+fastapi==0.139.0
     # via -r base.in
 fastapi-mail==1.6.5
     # via -r base.in
@@ -255,7 +255,7 @@ regex==2025.11.3
     # via fastapi-mail
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.63.0
+sentry-sdk==2.64.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -303,7 +303,7 @@ urllib3==2.7.0
     #   types-requests
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.49.0
+uvicorn==0.50.0
     # via -r base.in
 vine==5.1.0
     # via
