@@ -20,7 +20,7 @@ aioitertools==0.13.0
     # via aiobotocore
 aiosignal==1.4.0
     # via aiohttp
-aiosmtplib==5.1.0
+aiosmtplib==5.1.1
     # via fastapi-mail
 alembic==1.18.5
     # via
