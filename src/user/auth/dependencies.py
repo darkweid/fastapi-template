@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
@@ -224,7 +224,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
 
     if mode not in {"access_token", "refresh_token"}:
         raise UnauthorizedException("Invalid token structure")
-    session_mode = cast(Literal["access_token", "refresh_token"], mode)
+    session_mode = mode
 
     # Check for reuse
     if mode == "refresh_token":
