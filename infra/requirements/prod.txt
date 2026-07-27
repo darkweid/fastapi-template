@@ -20,8 +20,10 @@ aioitertools==0.13.0
     # via aiobotocore
 aiosignal==1.4.0
     # via aiohttp
-aiosmtplib==5.1.0
-    # via fastapi-mail
+aiosmtplib==5.1.2
+    # via
+    #   -r base.in
+    #   fastapi-mail
 alembic==1.18.5
     # via
     #   -r base.in
@@ -70,8 +72,9 @@ cffi==2.0.0
     # via
     #   argon2-cffi-bindings
     #   cryptography
-click==8.3.1
+click==8.4.2
     # via
+    #   -r base.in
     #   celery
     #   click-didyoumean
     #   click-plugins
