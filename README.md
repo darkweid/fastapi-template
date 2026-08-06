@@ -37,7 +37,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 ## Security Checks
 - CI runs dedicated security jobs in `.github/workflows/ci.yml`.
 - `bandit` scans application, migration, and script code for insecure patterns.
-- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages.
+- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages. Advisories that cannot be fixed yet are ignored explicitly via `--ignore-vuln`, with the reason documented next to the flag in the workflow.
 - `gitleaks` scans the repository for committed secrets.
 - `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
@@ -95,7 +95,7 @@ Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
 ## Optional Local Security Runs
 - Install tools: `pip install bandit pip-audit`
 - Static scan: `bandit -r src scripts migrations -q`
-- Dependency audit: `pip-audit -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt`
+- Dependency audit: `pip-audit --ignore-vuln PYSEC-2026-3552 -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt` (see `.github/workflows/ci.yml` for why that advisory is ignored)
 - Secret scan: `gitleaks detect --source .`
 
 ## Dependencies (pip-tools)

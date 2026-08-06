@@ -227,7 +227,14 @@ jobs:
       - name: Audit pinned dependencies
         shell: bash
         run: |
+          # PYSEC-2026-3552 (CVE-2026-69247, cryptography < 50.0.0): Bleichenbacher
+          # oracle in PKCS#7 EnvelopedData decryption. `cryptography` is a transitive
+          # dependency of `fastapi-mail`, which pins `cryptography<50.0.0,>=49.0.0`
+          # (latest release 1.6.5), so the fixed 50.0.0 cannot be resolved yet.
+          # Not reachable here: the project never decrypts PKCS#7 EnvelopedData.
+          # Drop this flag once fastapi-mail relaxes the pin.
           pip-audit \
+            --ignore-vuln PYSEC-2026-3552 \
             -r infra/requirements/base.txt \
             -r infra/requirements/dev.txt \
             -r infra/requirements/prod.txt
