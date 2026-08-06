@@ -108,7 +108,7 @@ email-validator==2.3.0
     # via
     #   -r base.in
     #   fastapi-mail
-fastapi==0.140.0
+fastapi==0.141.1
     # via -r base.in
 fastapi-mail==1.6.5
     # via -r base.in
@@ -252,7 +252,7 @@ pytokens==0.4.1
     # via black
 pyyaml==6.0.3
     # via pre-commit
-redis==8.0.1
+redis==8.1.0
     # via -r base.in
 regex==2025.11.3
     # via fastapi-mail
@@ -306,7 +306,7 @@ urllib3==2.7.0
     #   types-requests
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.51.0
+uvicorn==0.52.0
     # via -r base.in
 vine==5.1.0
     # via
@@ -317,7 +317,7 @@ virtualenv==20.36.1
     # via pre-commit
 wcwidth==0.5.3
     # via prompt-toolkit
-websockets==16.1.1
+websockets==17.0
     # via -r dev.in
 wheel==0.46.3
     # via pip-tools
