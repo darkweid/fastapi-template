@@ -24,7 +24,7 @@ aiosmtplib==5.1.2
     # via
     #   -r base.in
     #   fastapi-mail
-alembic==1.18.5
+alembic==1.19.0
     # via
     #   -r base.in
     #   alembic-postgresql-enum
@@ -129,7 +129,7 @@ jmespath==1.1.0
     #   botocore
 kombu==5.6.2
     # via celery
-mako==1.3.12
+mako==1.4.1
     # via
     #   -r base.in
     #   alembic
@@ -196,7 +196,7 @@ sqlalchemy==2.0.51
     #   -r base.in
     #   alembic
     #   alembic-postgresql-enum
-starlette==1.3.1
+starlette==1.4.1
     # via
     #   -r base.in
     #   fastapi
@@ -225,7 +225,7 @@ urllib3==2.7.0
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.52.0
+uvicorn==0.52.1
     # via -r base.in
 vine==5.1.0
     # via
