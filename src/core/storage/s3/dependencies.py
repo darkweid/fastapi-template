@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Annotated
 
 from fastapi import Depends
 
@@ -8,7 +9,7 @@ from src.main.config import Config, get_settings
 
 
 async def get_s3_adapter(
-    settings: Config = Depends(get_settings),
+    settings: Annotated[Config, Depends(get_settings)],
 ) -> AsyncGenerator[S3ClientProtocol]:
     s3 = settings.s3
     async with S3Adapter(

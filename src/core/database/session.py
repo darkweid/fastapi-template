@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -16,7 +17,7 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
 
 
 async def get_unit_of_work(
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AsyncGenerator[ApplicationUnitOfWork[RepositoryProtocol]]:
     """
     Dependency injection function that provides a Unit of Work instance.

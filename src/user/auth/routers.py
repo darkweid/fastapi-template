@@ -193,6 +193,9 @@ async def send_reset_password_request(
         ResetPasswordRequestUseCase, Depends(get_reset_password_request_use_case)
     ],
 ) -> SuccessResponse:
+    """
+    Sends a password reset link to the user's email.
+    """
     return await use_case.execute(data=data, request_base_url=request.base_url)
 
 
@@ -214,4 +217,7 @@ async def confirm_reset_password_request(
         ResetPasswordConfirmUseCase, Depends(get_reset_password_confirm_use_case)
     ],
 ) -> SuccessResponse:
+    """
+    Sets a new password using a valid password reset token.
+    """
     return await use_case.execute(data=data)

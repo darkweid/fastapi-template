@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends
 from redis.asyncio import Redis
 
@@ -53,7 +55,7 @@ class LogoutUseCase:
 
 
 def get_logout_use_case(
-    redis_client: Redis = Depends(get_redis_client),
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> LogoutUseCase:
     """Dependency provider for LogoutUseCase."""
     return LogoutUseCase(redis_client=redis_client)

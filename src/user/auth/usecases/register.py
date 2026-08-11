@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends
 from starlette.datastructures import URL
 
@@ -62,24 +64,28 @@ class RegisterUseCase:
                 data=user_data,
             )
             await uow.commit()
-            try:
-                await self.notifier.send_verification(
-                    user=user,
-                    base_url=request_base_url,
-                )
-            except Exception:
-                logger.exception(
-                    "[Register User] Failed to queue verification email for '%s'.",
-                    data.username,
-                )
-            logger.info(
-                "[Register User] User '%s' registered successfully.", data.username
+
+        # Queued outside the UoW: the account already exists and is committed, so a
+        # broker outage must not fail registration or roll the user back. The user
+        # can request a new verification email from the resend endpoint.
+        try:
+            await self.notifier.send_verification(
+                user=user,
+                base_url=request_base_url,
             )
-            return UserProfileViewModel.model_validate(user)
+        except Exception:
+            logger.exception(
+                "[Register User] Failed to queue verification email for '%s'.",
+                data.username,
+            )
+        logger.info("[Register User] User '%s' registered successfully.", data.username)
+        return UserProfileViewModel.model_validate(user)
 
 
 def get_register_use_case(
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    notifier: VerificationNotifier = Depends(get_verification_notifier),
+    uow: Annotated[
+        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
+    ],
+    notifier: Annotated[VerificationNotifier, Depends(get_verification_notifier)],
 ) -> RegisterUseCase:
     return RegisterUseCase(uow=uow, notifier=notifier)

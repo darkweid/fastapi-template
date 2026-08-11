@@ -1,20 +1,22 @@
 from collections.abc import Awaitable
-import logging
 
 from redis.asyncio import Redis
 import sentry_sdk
-from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loggers import get_logger
 from src.core.errors.exceptions import InfrastructureException
+from src.system.repositories import SystemRepository
 from src.system.schemas import HealthCheckResponse
+
+logger = get_logger(__name__)
 
 
 class HealthService:
-    def __init__(self, redis_client: Redis) -> None:
+    def __init__(self, redis_client: Redis, repository: SystemRepository) -> None:
         self.redis_client = redis_client
-        self.logger = logging.getLogger(__name__)
+        self.repository = repository
 
     async def get_status(self, session: AsyncSession) -> HealthCheckResponse:
         redis_is_ok = await self._check_redis()
@@ -33,15 +35,15 @@ class HealthService:
                 return bool(await ping_result)
             return bool(ping_result)
         except Exception as exc:
-            self.logger.error("Redis health check failed", exc_info=exc)
+            logger.error("Redis health check failed", exc_info=exc)
             sentry_sdk.capture_exception(exc)
             return False
 
     async def _check_postgres(self, session: AsyncSession) -> bool:
         try:
-            await session.execute(text("SELECT 1"))
+            await self.repository.ping(session)
             return True
         except SQLAlchemyError as exc:
-            self.logger.error("Postgres health check failed", exc_info=exc)
+            logger.error("Postgres health check failed", exc_info=exc)
             sentry_sdk.capture_exception(exc)
             return False

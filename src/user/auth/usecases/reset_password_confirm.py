@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends
 import jwt
 from redis.asyncio import Redis
@@ -137,8 +139,10 @@ class ResetPasswordConfirmUseCase:
 
 
 def get_reset_password_confirm_use_case(
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    redis_client: Redis = Depends(get_redis_client),
+    uow: Annotated[
+        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
+    ],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> ResetPasswordConfirmUseCase:
     return ResetPasswordConfirmUseCase(
         uow=uow,

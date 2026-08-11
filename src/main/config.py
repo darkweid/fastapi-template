@@ -181,15 +181,6 @@ class PostgresConfig(BaseModel):
         )
 
 
-class AdministrationConfig(BaseModel):
-    SUPER_ADMIN_USERNAME: str
-    SUPER_ADMIN_PASSWORD: str
-    SUPER_ADMIN_EMAIL: str
-    SUPER_ADMIN_PHONE: str
-
-    model_config = ConfigDict(extra="ignore")
-
-
 class AppConfig(BaseModel):
     VERSION: str
     DEBUG: bool = False
@@ -260,7 +251,6 @@ class Config(BaseModel):
     postgres: PostgresConfig
     rabbitmq: RabbitMQConfig
     broadcasting: BroadcastingConfig
-    administration: AdministrationConfig
 
     model_config = ConfigDict(extra="ignore")
 
@@ -293,7 +283,6 @@ def get_settings() -> Config:
         postgres=PostgresConfig(**merged_env),
         rabbitmq=RabbitMQConfig(**merged_env),
         broadcasting=BroadcastingConfig(**merged_env),
-        administration=AdministrationConfig(**merged_env),
     )
 
 

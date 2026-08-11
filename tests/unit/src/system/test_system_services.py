@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.core.errors.exceptions import InfrastructureException
+from src.system.repositories import SystemRepository
 from src.system.services import HealthService
 from tests.fakes.db import FakeAsyncSession
 
@@ -25,7 +26,7 @@ async def test_health_service_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     sentry_mock = Mock()
     monkeypatch.setattr("src.system.services.sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
-    service = HealthService(redis_client=RedisOk())
+    service = HealthService(redis_client=RedisOk(), repository=SystemRepository())
 
     result = await service.get_status(session=session)
 
@@ -38,7 +39,7 @@ async def test_health_service_redis_failure(monkeypatch: pytest.MonkeyPatch) -> 
     sentry_mock = Mock()
     monkeypatch.setattr("src.system.services.sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
-    service = HealthService(redis_client=RedisFail())
+    service = HealthService(redis_client=RedisFail(), repository=SystemRepository())
 
     with pytest.raises(InfrastructureException):
         await service.get_status(session=session)
@@ -52,7 +53,7 @@ async def test_health_service_postgres_failure(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("src.system.services.sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
     session.execute = AsyncMock(side_effect=SQLAlchemyError("fail"))
-    service = HealthService(redis_client=RedisOk())
+    service = HealthService(redis_client=RedisOk(), repository=SystemRepository())
 
     with pytest.raises(InfrastructureException):
         await service.get_status(session=session)

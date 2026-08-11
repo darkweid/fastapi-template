@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends
 from starlette.datastructures import URL
 
@@ -87,7 +89,9 @@ class SendVerificationUseCase:
 
 
 def get_send_verification_use_case(
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    notifier: VerificationNotifier = Depends(get_verification_notifier),
+    uow: Annotated[
+        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
+    ],
+    notifier: Annotated[VerificationNotifier, Depends(get_verification_notifier)],
 ) -> SendVerificationUseCase:
     return SendVerificationUseCase(uow=uow, notifier=notifier)

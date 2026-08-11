@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
@@ -29,10 +29,10 @@ class AuthenticatedUser:
 
 
 async def get_current_user(
-    token: str = Security(access_token_header),
-    session: AsyncSession = Depends(get_session),
-    redis_client: Redis = Depends(get_redis_client),
-    user_repository: UserRepository = Depends(get_user_repository),
+    token: Annotated[str, Security(access_token_header)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> User:
     """
     Resolve the authenticated user from a valid access token.
@@ -60,10 +60,10 @@ async def get_current_user(
 
 
 async def get_current_user_with_session(
-    token: str = Security(access_token_header),
-    session: AsyncSession = Depends(get_session),
-    redis_client: Redis = Depends(get_redis_client),
-    user_repository: UserRepository = Depends(get_user_repository),
+    token: Annotated[str, Security(access_token_header)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> AuthenticatedUser:
     """
     Resolve the authenticated user and current access-token session identifier.
@@ -104,10 +104,10 @@ async def get_current_user_with_session(
 
 
 async def get_access_by_refresh_token(
-    refresh_token: str = Security(refresh_token_header),
-    session: AsyncSession = Depends(get_session),
-    redis_client: Redis = Depends(get_redis_client),
-    user_repository: UserRepository = Depends(get_user_repository),
+    refresh_token: Annotated[str, Security(refresh_token_header)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> tuple[User, JWTPayload]:
     """
     Resolve the authenticated user and payload from a valid refresh token.

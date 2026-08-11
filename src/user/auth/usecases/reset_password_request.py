@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends
 from starlette.datastructures import URL
 
@@ -76,7 +78,9 @@ class ResetPasswordRequestUseCase:
 
 
 def get_reset_password_request_use_case(
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    notifier: ResetPasswordNotifier = Depends(get_reset_password_notifier),
+    uow: Annotated[
+        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
+    ],
+    notifier: Annotated[ResetPasswordNotifier, Depends(get_reset_password_notifier)],
 ) -> ResetPasswordRequestUseCase:
     return ResetPasswordRequestUseCase(uow=uow, notifier=notifier)

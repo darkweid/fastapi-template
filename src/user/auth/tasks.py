@@ -10,6 +10,7 @@ from src.core.email_service.service import EmailService
 from src.core.email_service.tasks import get_mailer
 from src.core.redis.core import create_redis_client
 from src.core.utils.coroutine_runner import execute_coroutine_sync
+from src.core.utils.security import mask_email
 from src.main.config import config
 from src.user.auth.security import (
     create_reset_password_token,
@@ -78,7 +79,9 @@ async def _send_verification_email(
                 email=email,
                 redis_client=redis_client,
             )
-        logger.exception("Failed to process verification email task for %s", email)
+        logger.exception(
+            "Failed to process verification email task for %s", mask_email(email)
+        )
         raise
     finally:
         await redis_client.aclose()
@@ -142,7 +145,9 @@ async def _send_reset_password_email(
                 email=email,
                 redis_client=redis_client,
             )
-        logger.exception("Failed to process password reset email task for %s", email)
+        logger.exception(
+            "Failed to process password reset email task for %s", mask_email(email)
+        )
         raise
     finally:
         await redis_client.aclose()

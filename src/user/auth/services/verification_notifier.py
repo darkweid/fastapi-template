@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Annotated, cast
 
 from fastapi import Depends
 from redis.asyncio import Redis
@@ -8,6 +8,7 @@ from celery_tasks.types import CeleryTask
 from loggers import get_logger
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.redis.dependencies import get_redis_client
+from src.core.utils.security import mask_email
 from src.user.auth.tasks import send_verification_email_task
 from src.user.models import User
 
@@ -37,7 +38,7 @@ class VerificationNotifier:
         existing = await self.redis_client.get(key)
         if existing:
             raise InstanceProcessingException(
-                "We've already send you a verification email."
+                "We've already sent you a verification email."
             )
         await self.redis_client.setex(key, self.throttle_ttl_sec, "1")
 
@@ -59,12 +60,12 @@ class VerificationNotifier:
                 await self.redis_client.delete(throttle_key)
             logger.exception(
                 "Failed to queue verification email for %s",
-                user.email,
+                mask_email(user.email),
             )
             raise
 
 
 def get_verification_notifier(
-    redis_client: Redis = Depends(get_redis_client),
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> VerificationNotifier:
     return VerificationNotifier(redis_client=redis_client)
