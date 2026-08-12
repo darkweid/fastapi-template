@@ -7,7 +7,7 @@ DOCKER_COMPOSE_EXEC = $(DOCKER_COMPOSE) exec
 
 # Container names
 APP_CONTAINER = app
-CELERY_CONTAINER = celery_worker
+WORKER_CONTAINER = worker
 
 # Requirements management
 REQ_DIR = infra/requirements
@@ -88,15 +88,15 @@ migration: ## Create an Alembic revision: make migration m="add users table"
 	if [ -z "$$MSG" ]; then echo "Migration message cannot be empty"; exit 1; fi; \
 	$(DOCKER_COMPOSE_EXEC) $(APP_CONTAINER) alembic revision --autogenerate --message "$$MSG"
 
-##@ Celery
+##@ Worker
 
-.PHONY: celery-worker
-celery-worker: ## Start the Celery worker
-	$(DOCKER_COMPOSE) up -d $(CELERY_CONTAINER)
+.PHONY: worker
+worker: ## Start the task worker
+	$(DOCKER_COMPOSE) up -d $(WORKER_CONTAINER)
 
-.PHONY: stop-celery
-stop-celery: ## Stop the Celery worker
-	$(DOCKER_COMPOSE) stop $(CELERY_CONTAINER)
+.PHONY: stop-worker
+stop-worker: ## Stop the task worker
+	$(DOCKER_COMPOSE) stop $(WORKER_CONTAINER)
 
 ##@ Logs
 

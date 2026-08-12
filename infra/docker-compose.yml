@@ -1,5 +1,5 @@
 # This docker-compose file defines services for the FastAPI application stack
-# It includes web application, database, cache, message queues, and monitoring services
+# It includes web application, database, cache, task queue, and monitoring services
 
 name: fastapi-template
 services:
@@ -65,15 +65,13 @@ services:
           cpus: '2'
           memory: 2G
 
-  celery_worker:
-    container_name: template-celery-worker
+  worker:
+    container_name: template-worker
     image: template-app-image:latest
     env_file: ../.env
-    command: python -m celery -A celery_tasks.workers.default worker --pool=solo --loglevel=info -E
+    command: taskiq worker taskiq_worker.app:broker
     restart: unless-stopped
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       redis:
         condition: service_healthy
       app-builder:
@@ -86,17 +84,15 @@ services:
           cpus: '1'
           memory: 1G
 
-  celery_beat:
-    container_name: template-celery-beat
+  # Exactly one scheduler instance: taskiq has no duplicate-fire protection,
+  # N schedulers fire every cron N times.
+  scheduler:
+    container_name: template-scheduler
     image: template-app-image:latest
     env_file: ../.env
-    command: python -m celery -A celery_tasks.workers.beat beat --loglevel=info --schedule /data/celerybeat-schedule
+    command: taskiq scheduler taskiq_worker.scheduler:scheduler
     restart: unless-stopped
-    volumes:
-      - celery-beat-state:/data
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       redis:
         condition: service_healthy
       app-builder:
@@ -158,34 +154,11 @@ services:
           cpus: '1'
           memory: 1G
 
-  rabbitmq:
-    container_name: template-rabbitmq
-    image: rabbitmq:3.12-management
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    env_file: ../.env
-    environment:
-      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
-      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
-    networks:
-      - app-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-
 volumes:
   postgres-data:
     name: template-postgres-data
   redis-data:
     name: template-redis-data
-  celery-beat-state:
-    name: template-celery-beat-state
 
 networks:
   app-network:

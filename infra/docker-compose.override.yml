@@ -20,13 +20,14 @@ services:
       - ..:/app
       - /app/.venv
 
-  celery_worker:
+  worker:
     image: template-app-dev-image:latest
+    command: taskiq worker taskiq_worker.app:broker --reload
     volumes:
       - ..:/app
       - /app/.venv
 
-  celery_beat:
+  scheduler:
     image: template-app-dev-image:latest
     volumes:
       - ..:/app
@@ -53,8 +54,3 @@ services:
   redis:
     ports:
       - "127.0.0.1:${REDIS_PORT}:6379"
-
-  rabbitmq:
-    ports:
-      - "127.0.0.1:${RABBITMQ_PORT}:5672"
-      - "127.0.0.1:15672:15672"
