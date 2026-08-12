@@ -78,7 +78,7 @@ make clean            # remove stack + volumes/images/orphans
 ## Troubleshooting
 - Ensure Docker/Compose are installed.
 - `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test` / `make test-cov`.
-- Host-side integration tests that connect to `localhost` (per `.env.test`) need the backing-service ports, which are published on `127.0.0.1` only in dev — start the stack with `make run-dev` first. `make run` / `make up` no longer publish them.
+- Host-side integration tests that connect to `localhost` (per `.env.test`) need the backing-service ports, which are published on `127.0.0.1` only in dev — start the stack with `make run-dev` first. `make run` / `make up` do not publish them.
 - Use `make logs` or service-specific logs to inspect errors.
 - If migrations fail, check Postgres health first.
 

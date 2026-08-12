@@ -1,8 +1,9 @@
 # Refresh Token Rotation Flow
 
-This document describes how refresh token rotation works step by step. Rotation and
-reuse detection are unchanged by the cookie transport described below; only the
-*shape* of the response (and where the client must present the token) is new.
+This document describes how refresh token rotation works step by step. The cookie
+transport described below only affects the *shape* of the response and where the
+client must present the token; rotation and reuse detection work the same regardless
+of transport.
 
 ## Transport: cookie vs body
 
@@ -85,8 +86,7 @@ headers to cross-site requests, so there is nothing for a forged request to repl
 
 **Status codes on refresh:** no refresh credentials found at all (no cookie, no
 `Authorization` header) → 401 (`UnauthorizedException`); credentials present but the
-CSRF check fails → 403 (`AccessForbiddenException`). The 401 case is a behavior
-change from the previous `APIKeyHeader(auto_error=True)`-driven 403.
+CSRF check fails → 403 (`AccessForbiddenException`).
 
 ## 1) Token issuance (login)
 - `LoginUserUseCase` creates a new `session_id` for the user session.

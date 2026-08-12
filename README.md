@@ -31,8 +31,8 @@ refresh token in the response body instead send `X-Token-Transport: body`. See
 for the full contract. Four settings in `.env` govern this (`src/main/config.py`, `CookieConfig`):
 
 - `CSRF_SECRET_KEY` — **required, no default.** The app will not start without it, so
-  put a long random value in `.env` before the first run. Rotating it invalidates
-  every outstanding CSRF token, which costs each client one failed refresh.
+  put a long random value in `.env`. Rotating it invalidates every outstanding CSRF
+  token immediately.
 - `COOKIE_SECURE` (default `true`) — set to `false` only for local plain-http
   development (`.env.test` does this, since the ASGI test client talks http and an
   httpx cookie jar refuses to store a `Secure` cookie received over http). Never
