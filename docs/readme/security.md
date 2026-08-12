@@ -271,5 +271,7 @@ Tag-based invalidation (`CacheTags` enum) allows selective cache purging by reso
 - Failed tasks clean up throttle keys and invalidate tokens before re-raising.
 - `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) up to a bounded number of times, with no delay between attempts - the Redis Streams broker has no delayed delivery, so retries fire back-to-back; idempotence-free tasks stay out.
 - Redis Streams delivery is at-least-once: a worker XACKs a message only after the task finishes, so a worker crash between sending the email and acking can redeliver the task and duplicate the send — an accepted trade-off, not a defect.
+- `infra/redis.conf` enables AOF (`appendfsync everysec`) alongside the RDB snapshots, since this Redis now also holds the task stream: an RDB-only setup can lose queued jobs written since the last snapshot on a crash.
+- `taskiq_worker/broker.py`'s `STREAM_MAXLEN` bounds stream growth (acked entries are never otherwise removed), sized well above any realistic backlog for this workload — `XADD MAXLEN` trims oldest-first regardless of ack state, so a cap sized too close to real traffic could discard unacknowledged work.
 
 **Why it matters:** taskiq serializes task arguments onto the Redis stream. Passing tokens or sensitive objects through it expands the attack surface. Creating tokens inside the task keeps sensitive material within the application boundary.

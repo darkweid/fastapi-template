@@ -7,9 +7,14 @@ from src.main.config import config
 from taskiq_worker.middlewares import SentryMiddleware
 
 RESULT_TTL_SECONDS = 3600
-# XACK does not remove entries from a Redis stream, so without maxlen the queue
-# stream grows forever. Approximate trimming on XADD keeps it bounded.
-STREAM_MAXLEN = 10_000
+# taskiq_redis never removes acked entries (XACK only clears the consumer
+# group's pending-entries list), so an uncapped stream grows forever. XADD
+# MAXLEN is the only bound, but it trims by ID order alone and does not check
+# ack state, so it can discard unacknowledged work once the backlog reaches
+# this size. Task payloads here are small, so this is set high enough that no
+# realistic worker outage or traffic burst should approach it - it guards
+# against runaway growth, not against a live backlog.
+STREAM_MAXLEN = 100_000
 
 
 def create_production_broker() -> AsyncBroker:
