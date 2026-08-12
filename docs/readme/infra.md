@@ -53,12 +53,13 @@ Open:
 
 ## Common Commands
 ```bash
+make                  # list every target with its description
 make run-dev          # build+up with override (reload)
 make run              # build+up prod-like
 make logs             # tail all services
-make logs-app         # app logs
+make logs s=app       # tail one service
 make migrate          # alembic upgrade head
-make migration        # create alembic revision
+make migration m="add users table"  # create alembic revision
 make test             # pytest
 make test-cov         # pytest + coverage
 make lint             # pre-commit hooks

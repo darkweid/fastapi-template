@@ -93,6 +93,7 @@ body instead. Both sources carry the same token; either one is echoed back in th
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
+- Run `make` with no target to see every command the Makefile offers.
 
 ## Testing Layout
 - Application tests mirror `src/` under `tests/unit/src/`.
@@ -116,10 +117,11 @@ Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
 - Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
 
 ## Useful Make Targets
+- `make` (or `make help`) — list every target with its description
 - `make run-dev` — build+up with override (reload)
 - `make run` — build+up prod-like
-- `make migrate` / `make migration` — apply/create Alembic revisions
-- `make logs` / `make logs-app` — view logs
+- `make migrate` / `make migration m="add users table"` — apply/create Alembic revisions
+- `make logs` — tail all services; `make logs s=app` — a single one
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report
