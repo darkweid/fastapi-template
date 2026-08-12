@@ -269,7 +269,7 @@ Tag-based invalidation (`CacheTags` enum) allows selective cache purging by reso
 - Tasks receive only email addresses, not full user objects or tokens — tokens are created inside the task.
 - Redis connections (`get_tasks_redis_client`) are created and destroyed per task run.
 - Failed tasks clean up throttle keys and invalidate tokens before re-raising.
-- `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) with a bounded, jittered backoff; idempotence-free tasks stay out.
+- `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) up to a bounded number of times, with no delay between attempts - the Redis Streams broker has no delayed delivery, so retries fire back-to-back; idempotence-free tasks stay out.
 - Redis Streams delivery is at-least-once: a worker XACKs a message only after the task finishes, so a worker crash between sending the email and acking can redeliver the task and duplicate the send — an accepted trade-off, not a defect.
 
 **Why it matters:** taskiq serializes task arguments onto the Redis stream. Passing tokens or sensitive objects through it expands the attack surface. Creating tokens inside the task keeps sensitive material within the application boundary.

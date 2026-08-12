@@ -24,12 +24,12 @@ def create_production_broker() -> AsyncBroker:
             result_ex_time=RESULT_TTL_SECONDS,
         )
     )
+    # No delayed retries: RedisStreamBroker.kick only reads `queue_name` off
+    # kicker labels and XADDs immediately, so a schedule source is required
+    # before `default_delay`/`use_jitter` would have any effect. Out of scope
+    # for this stage - all retries fire back-to-back.
     stream_broker.add_middlewares(
-        SmartRetryMiddleware(
-            default_retry_count=3,
-            default_delay=60,
-            use_jitter=True,
-        ),
+        SmartRetryMiddleware(default_retry_count=3),
         SentryMiddleware(),
     )
     return stream_broker

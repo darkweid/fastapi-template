@@ -23,9 +23,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     await on_redis_cache_startup()
 
-    # Kicker-side broker init: .kiq() requires a started broker. The guard
-    # keeps the worker process (which starts the broker itself) from a double
-    # startup when it imports the app.
+    # Kicker-side broker init: .kiq() requires a started broker. The worker
+    # CLI targets taskiq_worker.app:broker directly and starts/stops the
+    # broker itself, so this guard keeps that startup/shutdown pair scoped to
+    # the FastAPI process only.
     if not broker.is_worker_process:
         await broker.startup()
 

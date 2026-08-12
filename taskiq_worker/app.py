@@ -1,7 +1,7 @@
 """Worker entrypoint: `taskiq worker taskiq_worker.app:broker`.
 
-Every task module must be imported here - this is the registration point,
-the successor of CELERY_INCLUDE_MODULES.
+Every task module must be imported here - a task module not imported here is
+invisible to the worker.
 """
 
 import src.core.email_service.tasks  # noqa: F401

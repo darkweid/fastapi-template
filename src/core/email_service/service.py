@@ -40,7 +40,11 @@ class EmailService:
                 template_body,
                 subtype.value,
             )
-            logger.debug("Email '%s' sent to %s", template_name, normalized)
+            logger.debug(
+                "Email '%s' sent to %s",
+                template_name,
+                [mask_email(str(e)) for e in normalized],
+            )
         except Exception as e:
             logger.error("Failed to send template email: %s", e)
             raise
@@ -114,7 +118,10 @@ class EmailService:
                 file_paths,
                 subtype.value,
             )
-            logger.debug("Email with attachments sent to %s", validated_recipients)
+            logger.debug(
+                "Email with attachments sent to %s",
+                [mask_email(str(e)) for e in validated_recipients],
+            )
 
         except Exception as e:
             logger.error("Failed to send email with attachments: %s", e)

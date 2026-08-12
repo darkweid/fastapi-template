@@ -72,6 +72,8 @@ services:
     command: taskiq worker taskiq_worker.app:broker
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       app-builder:
