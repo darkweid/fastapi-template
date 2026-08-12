@@ -22,6 +22,40 @@ def test_cookie_config_rejects_unknown_samesite() -> None:
         CookieConfig(CSRF_SECRET_KEY="unit-test-secret", COOKIE_SAMESITE="sometimes")
 
 
+def test_cookie_config_rejects_samesite_none_without_secure() -> None:
+    # Browsers drop a SameSite=None cookie that is not Secure, and they do it
+    # silently. Failing at startup is the only way the operator ever finds out.
+    with pytest.raises(ValidationError, match="COOKIE_SAMESITE=none requires"):
+        CookieConfig(
+            CSRF_SECRET_KEY="unit-test-secret",
+            COOKIE_SAMESITE="none",
+            COOKIE_SECURE=False,
+        )
+
+
+def test_cookie_config_allows_samesite_none_with_secure() -> None:
+    cookie_config = CookieConfig(
+        CSRF_SECRET_KEY="unit-test-secret",
+        COOKIE_SAMESITE="none",
+        COOKIE_SECURE=True,
+    )
+
+    assert cookie_config.COOKIE_SAMESITE == "none"
+    assert cookie_config.COOKIE_SECURE is True
+
+
+def test_cookie_config_allows_insecure_cookies_for_local_http() -> None:
+    # .env.test relies on this: the ASGI client talks plain http, so COOKIE_SECURE
+    # is false there. Only the samesite=none combination is forbidden.
+    cookie_config = CookieConfig(
+        CSRF_SECRET_KEY="unit-test-secret",
+        COOKIE_SAMESITE="lax",
+        COOKIE_SECURE=False,
+    )
+
+    assert cookie_config.COOKIE_SECURE is False
+
+
 def test_cookie_config_normalizes_empty_domain_to_none() -> None:
     cookie_config = CookieConfig(CSRF_SECRET_KEY="unit-test-secret", COOKIE_DOMAIN="")
 

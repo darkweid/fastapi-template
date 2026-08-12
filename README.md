@@ -38,9 +38,22 @@ for the full contract. Four settings in `.env` govern this (`src/main/config.py`
   httpx cookie jar refuses to store a `Secure` cookie received over http). Never
   ship `false` to a real environment.
 - `COOKIE_SAMESITE` (default `lax`) — set to `none` for a cross-origin SPA; the CSRF
-  check is what makes `none` safe to use.
+  check is what makes `none` survivable against CSRF (cookie injection from a
+  sibling subdomain is explicitly out of scope for this design). Two prerequisites,
+  both mandatory:
+  - `COOKIE_SECURE=true`. Browsers discard a `SameSite=None` cookie that is not
+    `Secure`, and they do so silently, so the app would look healthy while every
+    client lost its session. `CookieConfig` refuses to start on that combination.
+  - An explicit CORS origin allowlist. The shipped defaults are
+    `CORS_ALLOWED_ORIGINS=["*"]` with `CORS_ALLOWED_CREDENTIALS=true`, and Starlette's
+    `CORSMiddleware` then echoes back whatever origin asks. That is acceptable for a
+    header-only API, but not once auth state lives in a cookie the browser attaches
+    automatically: replace `["*"]` with the real front-end origins before enabling
+    `none`. If `CORS_ALLOWED_HEADERS` was ever narrowed from `["*"]`, it must list
+    `X-CSRF-Token` and `X-Token-Transport`.
 - `COOKIE_DOMAIN` (default unset/blank) — leave blank unless the auth cookies must
   be shared across subdomains.
+
 
 ## Rate Limiting Notes
 - Primary rate limiting uses Redis-backed `RateLimiter` dependencies from `src/core/limiter`.

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,22 @@ class CookieConfig(BaseModel):
         if isinstance(value, str) and value.strip() == "":
             return None
         return str(value)
+
+    @model_validator(mode="after")
+    def reject_samesite_none_without_secure(self) -> "CookieConfig":
+        """
+        Fail startup on a combination browsers silently discard.
+
+        A `SameSite=None` cookie without `Secure` is rejected by every modern
+        browser, so the app would boot cleanly and then drop every auth cookie at
+        the client with no server-side signal at all.
+        """
+        if self.COOKIE_SAMESITE == "none" and not self.COOKIE_SECURE:
+            raise ValueError(
+                "COOKIE_SAMESITE=none requires COOKIE_SECURE=true: browsers reject "
+                "a SameSite=None cookie that is not Secure."
+            )
+        return self
 
 
 class JWTConfig(BaseModel):
