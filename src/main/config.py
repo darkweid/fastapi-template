@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -134,6 +134,26 @@ class SentryConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class CookieConfig(BaseModel):
+    """Policy for auth cookies. Applied by TokenCookieResponder."""
+
+    COOKIE_SECURE: bool = True
+    COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+    COOKIE_DOMAIN: str | None = None
+    CSRF_SECRET_KEY: str
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("COOKIE_DOMAIN", mode="before")
+    @classmethod
+    def normalize_optional_domain(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return str(value)
+
+
 class JWTConfig(BaseModel):
     JWT_USER_SECRET_KEY: str
     JWT_VERIFY_SECRET_KEY: str
@@ -248,6 +268,7 @@ class Config(BaseModel):
     jwt: JWTConfig
     redis: RedisConfig
     sentry: SentryConfig
+    cookie: CookieConfig
     postgres: PostgresConfig
     rabbitmq: RabbitMQConfig
     broadcasting: BroadcastingConfig
@@ -280,6 +301,7 @@ def get_settings() -> Config:
         jwt=JWTConfig(**merged_env),
         redis=RedisConfig(**merged_env),
         sentry=SentryConfig(**merged_env),
+        cookie=CookieConfig(**merged_env),
         postgres=PostgresConfig(**merged_env),
         rabbitmq=RabbitMQConfig(**merged_env),
         broadcasting=BroadcastingConfig(**merged_env),
