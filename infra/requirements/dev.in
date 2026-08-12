@@ -7,7 +7,7 @@ pip-tools
 pre-commit
 
 # Testing dependencies
-httpx
+httpx2
 pytest
 pytest-asyncio
 pytest-cov

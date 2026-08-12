@@ -17,6 +17,7 @@ REQ_PROD_TXT = $(REQ_DIR)/prod.txt
 REQ_COMPILE_IMAGE ?= python:3.13-slim-bookworm
 REQ_COMPILE_PLATFORM ?= linux/amd64
 REQ_COMPILE_USER = $(shell id -u):$(shell id -g)
+REQ_COMPILE_FLAGS ?=
 
 .DEFAULT_GOAL := help
 
@@ -136,7 +137,11 @@ req-compile: ## Recompile the lockfiles inside a Linux container
 		-v $(CURDIR):/app \
 		-w /app \
 		$(REQ_COMPILE_IMAGE) \
-		sh -lc 'set -e; python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile "$${name}.in" -o "$${name}.txt"; done'
+		sh -lc 'set -e; python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile $(REQ_COMPILE_FLAGS) "$${name}.in" -o "$${name}.txt"; done'
+
+.PHONY: req-upgrade
+req-upgrade: ## Recompile the lockfiles, bumping every pin to its newest allowed release
+	$(MAKE) req-compile REQ_COMPILE_FLAGS=--upgrade
 
 .PHONY: req-sync-dev
 req-sync-dev: ## Install the dev lockfile into the active environment

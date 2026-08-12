@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator, Generator
 import os
 
 from fastapi import FastAPI
-import httpx
+import httpx2
 import pytest
 import pytest_asyncio
 
@@ -91,9 +91,9 @@ def app_with_fakes(
 
 
 @pytest_asyncio.fixture
-async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
+async def async_client(app: FastAPI) -> AsyncGenerator[httpx2.AsyncClient]:
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
         yield client
@@ -102,9 +102,9 @@ async def async_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient]:
 @pytest_asyncio.fixture
 async def async_client_with_fakes(
     app_with_fakes: FastAPI,
-) -> AsyncGenerator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app_with_fakes)
-    async with httpx.AsyncClient(
+) -> AsyncGenerator[httpx2.AsyncClient]:
+    transport = httpx2.ASGITransport(app=app_with_fakes)
+    async with httpx2.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
         yield client

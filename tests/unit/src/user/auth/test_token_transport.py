@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 from fastapi import Depends, FastAPI, routing
 from fastapi.routing import APIRoute
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 import pytest
 
 from src.core.database.session import get_session
@@ -265,7 +265,7 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
 
     # Read the CSRF token from the response body, the way a real cross-origin SPA
     # must. Reading it from `async_client.cookies` would prove nothing about client
-    # reachability: an httpx jar has no notion of a current document, so it hands
+    # reachability: an httpx2 jar has no notion of a current document, so it hands
     # back cookies a browser would refuse to expose to JS.
     csrf_token = login_body["csrf_token"]
     assert csrf_token
