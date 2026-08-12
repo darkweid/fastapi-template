@@ -1,3 +1,4 @@
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends
@@ -132,8 +133,10 @@ class LoginUserUseCase:
 
 
 def get_login_user_use_case(
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    redis_client: Redis = Depends(get_redis_client),
+    uow: Annotated[
+        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
+    ],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> LoginUserUseCase:
     return LoginUserUseCase(
         uow=uow,

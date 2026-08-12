@@ -97,6 +97,9 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# TLS material for the nginx TLS server (infra/nginx/tls.conf.example)
+infra/nginx/certs/
+
 # Environments
 .env
 .venv
@@ -145,3 +148,13 @@ cython_debug/
 # AI Agents Settings
 .codex
 .claude
+
+# AI agent working artifacts - never committed, they are local scratch space.
+# Specs, plans and reviews produced during agent-driven work live here and stay
+# outside the repository history; only human-facing docs under docs/readme/ are tracked.
+docs/superpowers/
+.superpowers/
+CLAUDE.md
+AGENTS.md
+review.md
+refactor_todo.md

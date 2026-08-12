@@ -57,8 +57,11 @@ async def get_user_info_by_id(
     # Implement such logic as a separate dependency (custom checker) and compose it here.
     current_user: Annotated[User, Depends(require_permission(Permission.VIEW_USERS))],
     user_service: Annotated[UserService, Depends(get_user_service)],
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserSummaryViewModel:
+    """
+    Returns public information about a user by their identifier.
+    """
     user = await user_service.get_single_or_404(session, id=user_id)
     return UserSummaryViewModel.model_validate(user)
 

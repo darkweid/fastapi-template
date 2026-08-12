@@ -1,3 +1,4 @@
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends
@@ -74,8 +75,10 @@ class UpdateUserPasswordUseCase:
 
 
 def get_update_user_password_use_case(
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = Depends(get_unit_of_work),
-    redis_client: Redis = Depends(get_redis_client),
+    uow: Annotated[
+        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
+    ],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> UpdateUserPasswordUseCase:
     return UpdateUserPasswordUseCase(
         uow=uow,

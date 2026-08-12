@@ -7,10 +7,11 @@ import pytest
 
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
+from src.user.auth.cookies import CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME
 from src.user.auth.dependencies import (
-    AuthenticatedUser,
+    SessionIdentity,
     get_access_by_refresh_token,
-    get_current_user_with_session,
+    get_logout_identity,
 )
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.routers import router
@@ -29,7 +30,11 @@ from src.user.auth.usecases.reset_password_request import (
 )
 from src.user.auth.usecases.verify_email import get_verify_email_use_case
 from src.user.schemas import UserProfileViewModel
-from tests.factories.token_factory import build_refresh_payload
+from tests.factories.token_factory import (
+    build_access_payload,
+    build_refresh_payload,
+    encode_access_payload,
+)
 from tests.factories.user_factory import build_user
 from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
@@ -106,7 +111,10 @@ async def test_login_endpoint(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"access_token": "a", "refresh_token": "r"}
+    body = response.json()
+    assert body["access_token"] == "a"
+    assert body["refresh_token"] is None
+    assert body["csrf_token"]
 
 
 @pytest.mark.asyncio
@@ -122,10 +130,19 @@ async def test_refresh_endpoint(
         get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(tokens))
     )
 
-    response = await async_client.post("/v1/users/auth/login/refresh")
+    # The route-level CSRF gate resolves the refresh credentials itself, so a request
+    # must actually carry a token even when get_access_by_refresh_token is stubbed.
+    # The header path is the one that needs no CSRF token.
+    response = await async_client.post(
+        "/v1/users/auth/login/refresh",
+        headers={"Authorization": "header-refresh-token"},
+    )
 
     assert response.status_code == 200
-    assert response.json() == {"access_token": "a", "refresh_token": "r"}
+    body = response.json()
+    assert body["access_token"] == "a"
+    assert body["refresh_token"] is None
+    assert body["csrf_token"]
 
 
 @pytest.mark.asyncio
@@ -134,13 +151,9 @@ async def test_logout_endpoint(
     dependency_overrides: DependencyOverrides,
 ) -> None:
     user = build_user()
-    authenticated = AuthenticatedUser(
-        user=user,
-        session_id="session-1",
-    )
     dependency_overrides.set(
-        get_current_user_with_session,
-        ProvideValue(authenticated),
+        get_logout_identity,
+        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
     )
     logout_use_case = FakeUseCase(SuccessResponse(success=True))
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
@@ -157,18 +170,64 @@ async def test_logout_endpoint(
 
 
 @pytest.mark.asyncio
+async def test_logout_endpoint_expires_both_auth_cookies(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    # A logout that leaves the auth cookies in place is a silent security regression:
+    # the browser would keep replaying a refresh token the server has already retired.
+    user = build_user()
+    dependency_overrides.set(
+        get_logout_identity,
+        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
+    )
+    dependency_overrides.set(
+        get_logout_use_case, ProvideValue(FakeUseCase(SuccessResponse(success=True)))
+    )
+
+    response = await async_client.post("/v1/users/auth/logout")
+
+    assert response.status_code == 200
+    set_cookie = response.headers.get_list("set-cookie")
+    refresh_header = next(
+        h for h in set_cookie if h.startswith(f"{REFRESH_COOKIE_NAME}=")
+    )
+    csrf_header = next(h for h in set_cookie if h.startswith(f"{CSRF_COOKIE_NAME}="))
+    assert "Max-Age=0" in refresh_header
+    assert "Max-Age=0" in csrf_header
+
+
+@pytest.mark.asyncio
+async def test_logout_with_body_transport_writes_no_cookies(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    dependency_overrides.set(
+        get_logout_identity,
+        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
+    )
+    dependency_overrides.set(
+        get_logout_use_case, ProvideValue(FakeUseCase(SuccessResponse(success=True)))
+    )
+
+    response = await async_client.post(
+        "/v1/users/auth/logout", headers={"X-Token-Transport": "body"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get_list("set-cookie") == []
+
+
+@pytest.mark.asyncio
 async def test_logout_endpoint_can_terminate_all_sessions(
     async_client,
     dependency_overrides: DependencyOverrides,
 ) -> None:
     user = build_user()
-    authenticated = AuthenticatedUser(
-        user=user,
-        session_id="session-1",
-    )
     dependency_overrides.set(
-        get_current_user_with_session,
-        ProvideValue(authenticated),
+        get_logout_identity,
+        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
     )
     logout_use_case = FakeUseCase(SuccessResponse(success=True))
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
@@ -278,3 +337,53 @@ def test_reset_password_confirm_route_has_rate_limit() -> None:
     assert len(rate_limiters) == 1
     assert rate_limiters[0].times == 5
     assert rate_limiters[0].milliseconds == 15 * 60_000
+
+
+@pytest.mark.asyncio
+async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    # The identity dependency is deliberately not overridden here: the expired token
+    # has to survive the real dependency, or a cookie-transport client that lets its
+    # access token lapse can never log out and cannot drop the httponly cookie itself.
+    logout_use_case = FakeUseCase(SuccessResponse(success=True))
+    dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
+    token = encode_access_payload(
+        build_access_payload("user-1", session_id="session-1", expires_in_minutes=-10)
+    )
+
+    response = await async_client.post(
+        "/v1/users/auth/logout", headers={"Authorization": token}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True}
+    logout_use_case.execute.assert_awaited_once_with(
+        user_id="user-1",
+        session_id="session-1",
+        terminate_all_sessions=False,
+    )
+    set_cookie = response.headers.get_list("set-cookie")
+    refresh_header = next(
+        h for h in set_cookie if h.startswith(f"{REFRESH_COOKIE_NAME}=")
+    )
+    csrf_header = next(h for h in set_cookie if h.startswith(f"{CSRF_COOKIE_NAME}="))
+    assert "Max-Age=0" in refresh_header
+    assert "Max-Age=0" in csrf_header
+
+
+@pytest.mark.asyncio
+async def test_logout_without_credentials_clears_cookies_and_revokes_nothing(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    logout_use_case = FakeUseCase(SuccessResponse(success=True))
+    dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
+
+    response = await async_client.post("/v1/users/auth/logout")
+
+    assert response.status_code == 200
+    logout_use_case.execute.assert_not_awaited()
+    set_cookie = response.headers.get_list("set-cookie")
+    assert any(h.startswith(f"{REFRESH_COOKIE_NAME}=") for h in set_cookie)

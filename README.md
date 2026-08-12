@@ -23,6 +23,44 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
+## Auth Cookie & CSRF Configuration
+The refresh token is delivered as an httponly cookie by default, with a stateless
+signed double-submit CSRF check on the refresh route; native clients that want the
+refresh token in the response body instead send `X-Token-Transport: body`. See
+[docs/src/user/auth/REFRESH_TOKEN_IMPLEMENTATION.md](docs/src/user/auth/REFRESH_TOKEN_IMPLEMENTATION.md)
+for the full contract. Four settings in `.env` govern this (`src/main/config.py`, `CookieConfig`):
+
+- `CSRF_SECRET_KEY` — **required, no default.** The app will not start without it, so
+  put a long random value in `.env`. Rotating it invalidates every outstanding CSRF
+  token immediately.
+- `COOKIE_SECURE` (default `true`) — set to `false` only for local plain-http
+  development (`.env.test` does this, since the ASGI test client talks http and an
+  httpx cookie jar refuses to store a `Secure` cookie received over http). Never
+  ship `false` to a real environment.
+- `COOKIE_SAMESITE` (default `lax`) — set to `none` for a cross-origin SPA; the CSRF
+  check is what makes `none` survivable against CSRF (cookie injection from a
+  sibling subdomain is explicitly out of scope for this design). Two prerequisites,
+  both mandatory:
+  - `COOKIE_SECURE=true`. Browsers discard a `SameSite=None` cookie that is not
+    `Secure`, and they do so silently, so the app would look healthy while every
+    client lost its session. `CookieConfig` refuses to start on that combination.
+  - An explicit CORS origin allowlist. The shipped defaults are
+    `CORS_ALLOWED_ORIGINS=["*"]` with `CORS_ALLOWED_CREDENTIALS=true`, and Starlette's
+    `CORSMiddleware` then echoes back whatever origin asks. That is acceptable for a
+    header-only API, but not once auth state lives in a cookie the browser attaches
+    automatically: replace `["*"]` with the real front-end origins before enabling
+    `none`. If `CORS_ALLOWED_HEADERS` was ever narrowed from `["*"]`, it must list
+    `X-CSRF-Token` and `X-Token-Transport`.
+- `COOKIE_DOMAIN` (default unset/blank) — leave blank unless the auth cookies must
+  be shared across subdomains.
+
+The refresh cookie is scoped to the refresh route (`/v1/users/auth/login/refresh`);
+the readable `csrf_token` cookie is set at `path=/` so that a same-origin SPA can
+read it from `document.cookie`. A cross-origin SPA cannot read an API-origin cookie
+at all — it takes the value from the `csrf_token` field of the login/refresh response
+body instead. Both sources carry the same token; either one is echoed back in the
+`X-CSRF-Token` header on the next refresh.
+
 ## Rate Limiting Notes
 - Primary rate limiting uses Redis-backed `RateLimiter` dependencies from `src/core/limiter`.
 - If Redis is temporarily unavailable, the limiter falls back to an in-memory per-process window so protection still works in degraded mode.
@@ -55,6 +93,7 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
+- Run `make` with no target to see every command the Makefile offers.
 
 ## Testing Layout
 - Application tests mirror `src/` under `tests/unit/src/`.
@@ -67,21 +106,33 @@ Only Nginx is published to the host; the rest stay internal to `app-network`.
 Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
 `docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
 
-- Nginx: 8000 → app:8001 — **public** (`0.0.0.0`)
+- Nginx: 80 / 443 → app:8001 — **public** (`0.0.0.0`); dev publishes 8000 instead
 - App direct: 8001 — internal (dev: `127.0.0.1`)
 - Postgres: 5432 — internal (dev: `127.0.0.1`)
 - Redis: 6379 — internal (dev: `127.0.0.1`)
 - RabbitMQ: 5672 (AMQP), 15672 (UI) — internal (dev: `127.0.0.1`)
+
+On a server, close everything else with `infra/firewall/` (UFW plus a
+`DOCKER-USER` chain, since Docker-published ports bypass UFW):
+
+```bash
+scp -r infra/firewall <host>:/tmp/firewall
+ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'
+```
+
+TLS terminates at Nginx — `infra/nginx/tls.conf.example` is a drop-in replacement
+for `app.conf` once the certificate is in place.
 
 ## Common Services
 - API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only)
 - Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
 
 ## Useful Make Targets
+- `make` (or `make help`) — list every target with its description
 - `make run-dev` — build+up with override (reload)
 - `make run` — build+up prod-like
-- `make migrate` / `make migration` — apply/create Alembic revisions
-- `make logs` / `make logs-app` — view logs
+- `make migrate` / `make migration m="add users table"` — apply/create Alembic revisions
+- `make logs` — tail all services; `make logs s=app` — a single one
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report

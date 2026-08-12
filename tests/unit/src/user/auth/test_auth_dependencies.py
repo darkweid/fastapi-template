@@ -1,25 +1,39 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import jwt
 import pytest
+from starlette.requests import Request as StarletteRequest
 
-from src.core.errors.exceptions import UnauthorizedException
-from src.main.config import config
+from src.core.errors.exceptions import AccessForbiddenException, UnauthorizedException
+from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
+from src.user.auth.cookies import (
+    CSRF_HEADER_NAME,
+    REFRESH_COOKIE_NAME,
+    TokenCookieResponder,
+)
+from src.user.auth.csrf import build_csrf_token
 from src.user.auth.dependencies import (
     AuthenticatedUser,
+    RefreshCredentials,
     get_access_by_refresh_token,
     get_current_user,
     get_current_user_with_session,
     get_user_id_from_token,
+    read_refresh_credentials,
+    verify_csrf,
     verify_jti,
 )
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
-from tests.factories.token_factory import build_access_payload, build_refresh_payload
+from tests.factories.token_factory import (
+    build_access_payload,
+    build_refresh_payload,
+    encode_access_payload,
+)
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
 from tests.fakes.redis import InMemoryRedis
@@ -213,7 +227,8 @@ async def test_get_access_by_refresh_token_success(
     user_repository = FakeUserRepository(user)
 
     result_user, result_payload = await get_access_by_refresh_token(
-        refresh_token=token,
+        credentials=RefreshCredentials(token=token, from_cookie=False),
+        _csrf=None,
         session=fake_session,
         redis_client=fake_redis,
         user_repository=user_repository,
@@ -255,3 +270,188 @@ async def test_get_user_id_from_token_success(
     result = await get_user_id_from_token(request)
 
     assert result == "user-1"
+
+
+def _request(
+    *, cookie: str | None = None, authorization: str | None = None
+) -> StarletteRequest:
+    raw_headers = []
+    if cookie is not None:
+        raw_headers.append((b"cookie", f"{REFRESH_COOKIE_NAME}={cookie}".encode()))
+    if authorization is not None:
+        raw_headers.append((b"authorization", authorization.encode()))
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/users/auth/login/refresh",
+        "headers": raw_headers,
+    }
+    return StarletteRequest(scope)
+
+
+def test_cookie_is_preferred_over_the_header() -> None:
+    credentials = read_refresh_credentials(
+        _request(cookie="from-cookie", authorization="from-header")
+    )
+
+    assert credentials is not None
+    assert credentials.token == "from-cookie"
+    assert credentials.from_cookie is True
+
+
+def test_header_is_used_when_there_is_no_cookie() -> None:
+    credentials = read_refresh_credentials(_request(authorization="from-header"))
+
+    assert credentials is not None
+    assert credentials.token == "from-header"
+    assert credentials.from_cookie is False
+
+
+def test_no_credentials_returns_none() -> None:
+    assert read_refresh_credentials(_request()) is None
+
+
+CSRF_SECRET = "unit-test-csrf-secret"
+
+
+def _refresh_responder() -> TokenCookieResponder:
+    return TokenCookieResponder(
+        cookie_config=CookieConfig(CSRF_SECRET_KEY=CSRF_SECRET),
+        refresh_token_expire_minutes=60,
+    )
+
+
+def _csrf_request(
+    *,
+    cookie: str | None = None,
+    csrf_header: str | None = None,
+    declared_transport: str | None = None,
+) -> StarletteRequest:
+    raw_headers = []
+    if cookie is not None:
+        raw_headers.append((b"cookie", f"{REFRESH_COOKIE_NAME}={cookie}".encode()))
+    if csrf_header is not None:
+        raw_headers.append((CSRF_HEADER_NAME.lower().encode(), csrf_header.encode()))
+    if declared_transport is not None:
+        raw_headers.append((b"x-token-transport", declared_transport.encode()))
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/users/auth/login/refresh",
+        "headers": raw_headers,
+    }
+    return StarletteRequest(scope)
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_rejects_cookie_credentials_with_missing_csrf_token() -> None:
+    request = _csrf_request(cookie="refresh-token-value")
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    with pytest.raises(AccessForbiddenException):
+        await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_rejects_cookie_credentials_with_wrong_csrf_token() -> None:
+    request = _csrf_request(
+        cookie="refresh-token-value", csrf_header="not-the-right-signature"
+    )
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    with pytest.raises(AccessForbiddenException):
+        await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_accepts_cookie_credentials_with_valid_csrf_token() -> None:
+    valid_signature = build_csrf_token("refresh-token-value", CSRF_SECRET)
+    request = _csrf_request(cookie="refresh-token-value", csrf_header=valid_signature)
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_skips_the_check_for_header_borne_credentials() -> None:
+    request = _csrf_request()
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=False)
+    responder = Mock(spec=TokenCookieResponder)
+
+    await verify_csrf(request, credentials, responder)
+
+    responder.verify_csrf.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_token() -> (
+    None
+):
+    """
+    The adversarial case this task exists for: a client holding the refresh cookie
+    declares X-Token-Transport: body to try to shed the CSRF check while still relying
+    on the cookie the browser attaches automatically. The declared transport must not
+    influence whether CSRF is enforced - only the actual token source does.
+    """
+    request = _csrf_request(cookie="refresh-token-value", declared_transport="body")
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    with pytest.raises(AccessForbiddenException):
+        await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
+    """
+    The reason this dependency exists: with cookie transport the refresh cookie is
+    scoped to the refresh route and never reaches logout, and the browser cannot drop
+    an httponly cookie itself. Rejecting an expired access token here would leave a
+    user who logs out after access expiry holding a session they can neither use nor
+    clear.
+    """
+    payload = build_access_payload(
+        "user-1", session_id="session-1", expires_in_minutes=-10
+    )
+    token = encode_access_payload(payload)
+
+    identity = await dependencies.get_logout_identity(token=token)
+
+    assert identity == dependencies.SessionIdentity(
+        user_id="user-1", session_id="session-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_reads_a_bearer_prefixed_token() -> None:
+    payload = build_access_payload("user-1", session_id="session-1")
+    token = encode_access_payload(payload)
+
+    identity = await dependencies.get_logout_identity(token=f"Bearer {token}")
+
+    assert identity == dependencies.SessionIdentity(
+        user_id="user-1", session_id="session-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_returns_none_without_a_token() -> None:
+    assert await dependencies.get_logout_identity(token=None) is None
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_rejects_a_token_signed_with_another_key() -> None:
+    """Relaxing `exp` must not relax the signature: a forged token names no session."""
+    payload = build_access_payload("user-1", session_id="session-1")
+    forged = jwt.encode(payload, "x" * 32, config.jwt.ALGORITHM)
+
+    assert await dependencies.get_logout_identity(token=forged) is None
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_rejects_a_refresh_token() -> None:
+    payload = build_refresh_payload("user-1", session_id="session-1")
+    token = jwt.encode(payload, config.jwt.JWT_USER_SECRET_KEY, config.jwt.ALGORITHM)
+
+    assert await dependencies.get_logout_identity(token=token) is None

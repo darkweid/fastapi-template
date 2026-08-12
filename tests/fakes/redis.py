@@ -32,6 +32,10 @@ class InMemoryRedis:
         self._expires: dict[str, float] = {}
         self._scripts: dict[str, str] = {}
         self._evalsha_overrides: dict[str, int] = {}
+        # Keys every evalsha ran against, in order. The rate limiter is the only
+        # evalsha user, so this doubles as a record of which limiter windows a
+        # request actually consumed.
+        self.evalsha_keys: list[str] = []
         self.closed = False
 
     def set_evalsha_result(self, key: str, result: int) -> None:
@@ -142,6 +146,7 @@ class InMemoryRedis:
 
         keys = [_normalize_key(key) for key in keys_and_args[:numkeys]]
         key = keys[0] if keys else ""
+        self.evalsha_keys.append(key)
         if key in self._evalsha_overrides:
             return self._evalsha_overrides[key]
         return 0

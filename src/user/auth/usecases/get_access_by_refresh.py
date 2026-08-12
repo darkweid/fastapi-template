@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends
 import jwt
 from redis.asyncio import Redis
@@ -96,6 +98,6 @@ class GetTokensByRefreshUserUseCase:
 
 
 def get_tokens_by_refresh_user_use_case(
-    redis_client: Redis = Depends(get_redis_client),
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> GetTokensByRefreshUserUseCase:
     return GetTokensByRefreshUserUseCase(redis_client=redis_client)

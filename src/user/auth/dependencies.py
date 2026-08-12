@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
@@ -11,6 +11,12 @@ from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.main.config import config
+from src.user.auth.cookies import (
+    CSRF_HEADER_NAME,
+    REFRESH_COOKIE_NAME,
+    TokenCookieResponder,
+    get_token_cookie_responder,
+)
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.token_helpers import invalidate_all_user_sessions
@@ -19,7 +25,16 @@ from src.user.models import User
 from src.user.repositories import UserRepository
 
 access_token_header = APIKeyHeader(name="Authorization", scheme_name="access-token")
-refresh_token_header = APIKeyHeader(name="Authorization", scheme_name="refresh-token")
+# auto_error=False: a browser client authenticates with the refresh cookie and sends
+# no Authorization header at all. The dependency below decides what is missing.
+refresh_token_header = APIKeyHeader(
+    name="Authorization", scheme_name="refresh-token", auto_error=False
+)
+# auto_error=False: logout accepts a request with no credentials at all, so that it
+# can still clear the auth cookies. See get_logout_identity.
+logout_token_header = APIKeyHeader(
+    name="Authorization", scheme_name="logout-token", auto_error=False
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,11 +43,81 @@ class AuthenticatedUser:
     session_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class SessionIdentity:
+    """The user and session a token names, without loading the user entity."""
+
+    user_id: str
+    session_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshCredentials:
+    """A refresh token together with where it actually came from."""
+
+    token: str
+    from_cookie: bool
+
+
+def read_refresh_credentials(request: Request) -> RefreshCredentials | None:
+    """
+    Locate the refresh token on a request: cookie first, Authorization header second.
+
+    The source is a fact about the request, never a client claim. A caller must not
+    be able to skip the CSRF check by declaring a body transport while still relying
+    on the cookie the browser attached automatically.
+    """
+    cookie_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if cookie_token:
+        return RefreshCredentials(token=cookie_token, from_cookie=True)
+
+    header_token = request.headers.get("Authorization")
+    if header_token:
+        return RefreshCredentials(token=header_token, from_cookie=False)
+
+    return None
+
+
+async def get_refresh_credentials(
+    request: Request,
+    header_token: Annotated[str | None, Security(refresh_token_header)] = None,
+) -> RefreshCredentials:
+    """
+    Resolve the refresh token for the current request.
+
+    header_token is declared only so that the security scheme still shows up in the
+    OpenAPI document and Swagger keeps its authorize button; the actual lookup goes
+    through read_refresh_credentials so that cookie and header follow one rule.
+    """
+    credentials = read_refresh_credentials(request)
+    if credentials is None:
+        raise UnauthorizedException("Could not validate credentials")
+
+    return credentials
+
+
+async def verify_csrf(
+    request: Request,
+    credentials: Annotated[RefreshCredentials, Depends(get_refresh_credentials)],
+    responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
+) -> None:
+    """
+    Enforce the CSRF double submit for cookie-borne refresh tokens.
+
+    Skipped when the token arrived in the Authorization header: browsers do not
+    attach that header to cross-site requests, so there is nothing to forge.
+    """
+    if not credentials.from_cookie:
+        return
+
+    responder.verify_csrf(credentials.token, request.headers.get(CSRF_HEADER_NAME))
+
+
 async def get_current_user(
-    token: str = Security(access_token_header),
-    session: AsyncSession = Depends(get_session),
-    redis_client: Redis = Depends(get_redis_client),
-    user_repository: UserRepository = Depends(get_user_repository),
+    token: Annotated[str, Security(access_token_header)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> User:
     """
     Resolve the authenticated user from a valid access token.
@@ -60,10 +145,10 @@ async def get_current_user(
 
 
 async def get_current_user_with_session(
-    token: str = Security(access_token_header),
-    session: AsyncSession = Depends(get_session),
-    redis_client: Redis = Depends(get_redis_client),
-    user_repository: UserRepository = Depends(get_user_repository),
+    token: Annotated[str, Security(access_token_header)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> AuthenticatedUser:
     """
     Resolve the authenticated user and current access-token session identifier.
@@ -103,17 +188,70 @@ async def get_current_user_with_session(
     return AuthenticatedUser(user=user, session_id=session_id)
 
 
+async def get_logout_identity(
+    token: Annotated[str | None, Security(logout_token_header)] = None,
+) -> SessionIdentity | None:
+    """
+    Identify the session a logout request asks to terminate.
+
+    Unlike every other authenticated dependency this one tolerates an expired access
+    token, and answers None instead of raising when it cannot identify a session.
+    Logout has to stay usable once the access token expires: the refresh cookie is
+    scoped to the refresh route and never reaches this endpoint, and a browser cannot
+    drop an httponly cookie itself, so a rejected logout would leave the client
+    holding a session it can neither use nor clear. The signature is still verified -
+    only the `exp` claim is relaxed - so a forged token identifies nothing.
+
+    Returns:
+        SessionIdentity: The user and session named by a signature-valid access token.
+        None: If no token was sent, or it is forged, malformed or not an access token.
+    """
+    if not token:
+        return None
+
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+
+    try:
+        payload = cast(
+            JWTPayload,
+            jwt.decode(
+                token,
+                config.jwt.JWT_USER_SECRET_KEY,
+                algorithms=[config.jwt.ALGORITHM],
+                options={"verify_exp": False},
+            ),
+        )
+    except jwt.PyJWTError:
+        return None
+
+    try:
+        user_id = payload["sub"]
+        session_id = payload["session_id"]
+        mode = payload["mode"]
+    except KeyError:
+        return None
+
+    if mode != "access_token":
+        return None
+
+    return SessionIdentity(user_id=user_id, session_id=session_id)
+
+
 async def get_access_by_refresh_token(
-    refresh_token: str = Security(refresh_token_header),
-    session: AsyncSession = Depends(get_session),
-    redis_client: Redis = Depends(get_redis_client),
-    user_repository: UserRepository = Depends(get_user_repository),
+    credentials: Annotated[RefreshCredentials, Depends(get_refresh_credentials)],
+    _csrf: Annotated[None, Depends(verify_csrf)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> tuple[User, JWTPayload]:
     """
     Resolve the authenticated user and payload from a valid refresh token.
 
     Args:
-        refresh_token: The JWT refresh token from the Authorization header.
+        credentials: The resolved refresh token and its source (cookie or header).
+        _csrf: The CSRF gate that runs before the body; raises before this point
+            if the token arrived by cookie without a valid CSRF header.
         session: Database session.
         redis_client: Redis client used to validate token state.
         user_repository: Repository used to load the user entity.
@@ -130,7 +268,7 @@ async def get_access_by_refresh_token(
     )
 
     # verify_jti also validates the token and throws appropriate exceptions
-    payload = await verify_jti(refresh_token, redis_client)
+    payload = await verify_jti(credentials.token, redis_client)
 
     try:
         user_id = payload["sub"]
@@ -153,27 +291,29 @@ async def get_user_id_from_token(
     request: Request,
 ) -> str:
     """
-    Extract the user identifier from the Authorization header token.
+    Extract the user identifier from the refresh token, used as the rate limiter key.
+
+    Looks at the refresh cookie first and the Authorization header second, following
+    the same rule as read_refresh_credentials. On routes without a refresh cookie,
+    only the header path applies.
 
     Args:
-        request: The incoming request with the Authorization header.
+        request: The incoming request carrying the refresh cookie and/or header.
 
     Returns:
         str: The authenticated user identifier from the verified token.
 
     Raises:
-        UnauthorizedException: If the header is missing or the token is invalid.
+        UnauthorizedException: If no credentials are found or the token is invalid.
     """
-
-    token = request.headers.get("Authorization")
-
-    if not token:
+    credentials = read_refresh_credentials(request)
+    if credentials is None:
         raise UnauthorizedException(
             "Authentication token not found",
         )
 
     redis_client = await get_redis_client(request)
-    payload = await verify_jti(token, redis_client)
+    payload = await verify_jti(credentials.token, redis_client)
     try:
         identifier = payload["sub"]
 

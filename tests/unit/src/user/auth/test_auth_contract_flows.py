@@ -173,26 +173,35 @@ async def test_login_refresh_access_flow(
     dependency_overrides.set(get_access_by_refresh_token, refresh_dependency)
     dependency_overrides.set(get_current_user, access_dependency)
 
+    # X-Token-Transport: body keeps the refresh token in the JSON body so this flow
+    # can forward it via the Authorization header, exactly as a native client would.
     login_response = await async_client.post(
         "/v1/users/auth/login",
         json={"email": "user@example.com", "password": "StrongPass1!"},
+        headers={"X-Token-Transport": "body"},
     )
 
     assert login_response.status_code == 200
     assert login_response.json() == {
         "access_token": "access-1",
         "refresh_token": "refresh-1",
+        # Body transport writes no cookies, so there is no CSRF token to hand out.
+        "csrf_token": None,
     }
 
     refresh_response = await async_client.post(
         "/v1/users/auth/login/refresh",
-        headers={"Authorization": f"Bearer {state.refresh_token}"},
+        headers={
+            "Authorization": f"Bearer {state.refresh_token}",
+            "X-Token-Transport": "body",
+        },
     )
 
     assert refresh_response.status_code == 200
     assert refresh_response.json() == {
         "access_token": "access-2",
         "refresh_token": "refresh-2",
+        "csrf_token": None,
     }
 
     me_response = await async_client.get(

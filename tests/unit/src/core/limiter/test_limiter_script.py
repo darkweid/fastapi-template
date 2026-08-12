@@ -20,9 +20,14 @@ class FakeRedis:
 def reset_limiter_state() -> None:
     prev_redis = FastAPILimiter.redis
     prev_sha = FastAPILimiter.lua_sha
+    # FastAPILimiter.init() also rewrites the class-level key prefix. Leaving it
+    # changed silently renames every rate-limit key for the rest of the session,
+    # which breaks any later test that inspects those keys.
+    prev_prefix = FastAPILimiter.prefix
     yield
     FastAPILimiter.redis = prev_redis
     FastAPILimiter.lua_sha = prev_sha
+    FastAPILimiter.prefix = prev_prefix
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,12 @@
+[Unit]
+Description=Restrict internet access to published Docker ports
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/docker-user-rules.sh
+
+[Install]
+WantedBy=multi-user.target

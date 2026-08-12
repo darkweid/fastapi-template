@@ -1,0 +1,56 @@
+# Drop-in replacement for app.conf once the host has a certificate.
+#
+# 1. Put the certificate and key under infra/nginx/certs/ (git-ignored).
+# 2. In infra/docker-compose.yml, mount this file instead of app.conf and add
+#    the certs directory:
+#      - ./nginx/tls.conf.example:/etc/nginx/conf.d/app.conf:ro
+#      - ./nginx/certs:/etc/nginx/certs:ro
+# 3. Replace api.example.com below with the real hostname.
+#
+# The proxy body lives in proxy.inc, the same file app.conf includes, so the two
+# servers cannot drift apart.
+
+upstream app_service_upstream {
+    server app:8001;
+    keepalive 256;
+}
+
+server {
+    listen 80;
+    server_name api.example.com;
+    server_tokens off;
+
+    # ACME http-01 challenges must stay reachable over plain http.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name api.example.com;
+    server_tokens off;
+    client_max_body_size 10m;
+
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # No Strict-Transport-Security here: the application's security middleware
+    # already sends one, and a second header with a different max-age or preload
+    # flag is a contradiction the browser resolves by taking whichever came first.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    include /etc/nginx/conf.d/proxy.inc;
+}

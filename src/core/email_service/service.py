@@ -13,6 +13,7 @@ from src.core.email_service.tasks import (
     send_email_task,
     send_email_with_file_task,
 )
+from src.core.utils.security import mask_email
 
 logger = get_logger(__name__)
 
@@ -91,7 +92,10 @@ class EmailService:
             subtype.value,
         )
 
-        logger.debug("Attachment email task queued for %s", validated_recipients)
+        logger.debug(
+            "Attachment email task queued for %s",
+            [mask_email(str(e)) for e in validated_recipients],
+        )
 
     async def send_email_with_attachments(
         self,
@@ -165,7 +169,9 @@ class EmailService:
             try:
                 validated.append(self._email_adapter.validate_python(email))
             except ValidationError:
-                logger.warning("Invalid email address skipped: %s", email)
+                logger.warning(
+                    "Invalid email address skipped: %s", mask_email(str(email))
+                )
 
         if not validated:
             raise ValueError("No valid recipient emails provided.")

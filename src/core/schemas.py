@@ -20,7 +20,14 @@ class SuccessResponse(Base):
 
 class TokenModel(Base):
     access_token: str
-    refresh_token: str
+    # None when the refresh token was delivered as an httponly cookie instead.
+    # Use cases always populate it; TokenCookieResponder strips it at the HTTP edge.
+    refresh_token: str | None = None
+    # Populated by TokenCookieResponder only under the cookie transport, so that a
+    # cross-origin SPA - which cannot read the API-origin csrf_token cookie from JS -
+    # still has a way to obtain the value it must echo in X-CSRF-Token. None under
+    # the body transport, where no cookies are written and no CSRF check applies.
+    csrf_token: str | None = None
 
 
 class EmailNormalizationMixin(BaseModel):

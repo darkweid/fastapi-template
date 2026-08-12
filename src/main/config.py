@@ -3,10 +3,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,42 @@ class SentryConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class CookieConfig(BaseModel):
+    """Policy for auth cookies. Applied by TokenCookieResponder."""
+
+    COOKIE_SECURE: bool = True
+    COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+    COOKIE_DOMAIN: str | None = None
+    CSRF_SECRET_KEY: str
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("COOKIE_DOMAIN", mode="before")
+    @classmethod
+    def normalize_optional_domain(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return str(value)
+
+    @model_validator(mode="after")
+    def reject_samesite_none_without_secure(self) -> "CookieConfig":
+        """
+        Fail startup on a combination browsers silently discard.
+
+        A `SameSite=None` cookie without `Secure` is rejected by every modern
+        browser, so the app would boot cleanly and then drop every auth cookie at
+        the client with no server-side signal at all.
+        """
+        if self.COOKIE_SAMESITE == "none" and not self.COOKIE_SECURE:
+            raise ValueError(
+                "COOKIE_SAMESITE=none requires COOKIE_SECURE=true: browsers reject "
+                "a SameSite=None cookie that is not Secure."
+            )
+        return self
+
+
 class JWTConfig(BaseModel):
     JWT_USER_SECRET_KEY: str
     JWT_VERIFY_SECRET_KEY: str
@@ -179,15 +215,6 @@ class PostgresConfig(BaseModel):
             f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/"
             f"{self.POSTGRES_DB}"
         )
-
-
-class AdministrationConfig(BaseModel):
-    SUPER_ADMIN_USERNAME: str
-    SUPER_ADMIN_PASSWORD: str
-    SUPER_ADMIN_EMAIL: str
-    SUPER_ADMIN_PHONE: str
-
-    model_config = ConfigDict(extra="ignore")
 
 
 class AppConfig(BaseModel):
@@ -257,10 +284,10 @@ class Config(BaseModel):
     jwt: JWTConfig
     redis: RedisConfig
     sentry: SentryConfig
+    cookie: CookieConfig
     postgres: PostgresConfig
     rabbitmq: RabbitMQConfig
     broadcasting: BroadcastingConfig
-    administration: AdministrationConfig
 
     model_config = ConfigDict(extra="ignore")
 
@@ -290,10 +317,10 @@ def get_settings() -> Config:
         jwt=JWTConfig(**merged_env),
         redis=RedisConfig(**merged_env),
         sentry=SentryConfig(**merged_env),
+        cookie=CookieConfig(**merged_env),
         postgres=PostgresConfig(**merged_env),
         rabbitmq=RabbitMQConfig(**merged_env),
         broadcasting=BroadcastingConfig(**merged_env),
-        administration=AdministrationConfig(**merged_env),
     )
 
 
