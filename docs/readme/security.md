@@ -197,9 +197,9 @@ effect** on a container-published port: it is reachable from the internet even
 when UFW reports the port as blocked.
 
 **What the template does:**
-- The base (production) compose file publishes **only Nginx (`8000`)** to the
-  host. Postgres, Redis, RabbitMQ, and the app are no longer host-published —
-  they communicate over the internal `app-network` bridge by service name
+- The base (production) compose file publishes **only Nginx (`80` and `443`)** to
+  the host. Postgres, Redis, RabbitMQ, and the app stay off the host — they
+  communicate over the internal `app-network` bridge by service name
   (`postgres:5432`, `redis:6379`, `rabbitmq:5672`, `app:8001`), so they are
   unreachable from outside the host regardless of firewall state.
 - The dev overlay (`docker-compose.override.yml`, local-only) re-exposes those
@@ -207,23 +207,25 @@ when UFW reports the port as blocked.
   tests. Loopback binds are not reachable from the network, so the iptables
   bypass does not apply.
 
-**The remaining public port (Nginx, `8000`):** this is the intended front door
-and is published on `0.0.0.0` by design. Because of the bypass above, UFW alone
-will not govern it. To make the firewall authoritative for this port, add a rule
-to the `DOCKER-USER` chain (Docker always evaluates `DOCKER-USER` first and
-preserves it across daemon restarts), e.g. allow only a trusted source:
+**The remaining public ports (Nginx, `80`/`443`):** these are the intended front
+door and are published on `0.0.0.0` by design. Because of the bypass above, UFW
+alone will not govern them. `infra/firewall/` ships the policy that does: it
+combines UFW for host listeners with a `DOCKER-USER` chain for container traffic
+(Docker evaluates `DOCKER-USER` before every rule of its own), installed as a
+systemd unit so it survives reboots and daemon restarts.
 
 ```bash
-iptables -I DOCKER-USER -p tcp --dport 8000 ! -s <trusted-cidr> -j DROP
+scp -r infra/firewall <host>:/tmp/firewall
+ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'
 ```
 
-Or use [`ufw-docker`](https://github.com/chaifeng/ufw-docker), which wires
-Docker traffic through UFW's `route` rules:
+The result: `22`, `80` and `443` reachable from the internet, everything else
+through an SSH tunnel only. `PUBLIC_TCP_PORTS` narrows or widens the container
+side, `SSH_PORT` covers a non-default SSH port. See `infra/firewall/README.md`.
 
-```bash
-ufw-docker install
-ufw route allow proto tcp from any to any port 8000
-```
+[`ufw-docker`](https://github.com/chaifeng/ufw-docker) solves the same problem by
+wiring Docker traffic through UFW's `route` rules, if you would rather manage the
+policy from UFW alone.
 
 **Why it matters:** publishing Postgres/Redis/RabbitMQ on `0.0.0.0` exposes
 unauthenticated-by-default data stores and the RabbitMQ management UI to the
@@ -233,13 +235,19 @@ that gap.
 
 ## Nginx Hardening
 
-`infra/nginx/app.conf`, `infra/nginx/main.conf`
+`infra/nginx/app.conf`, `infra/nginx/main.conf`, `infra/nginx/proxy.inc`
 
 - `server_tokens off` — no version disclosure.
 - `client_max_body_size 10m` — prevents oversized request abuse.
 - Proper proxy headers (`X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`).
 - WebSocket upgrade support with secure defaults.
 - Security headers duplicated from application layer.
+- `proxy.inc` holds the proxy body shared by the plain-http server and the TLS
+  server in `tls.conf.example`, so the two cannot drift apart.
+- `Strict-Transport-Security` is sent by the application only, never by Nginx. Two
+  HSTS headers with different `max-age` or `preload` values contradict each other,
+  and a browser resolves that by taking whichever arrived first — leaving how long
+  clients are pinned to HTTPS up to header ordering.
 
 **Why it matters:** Nginx is the outermost layer. Version disclosure aids targeted exploits. Size limits prevent memory exhaustion. Correct proxy headers ensure the application sees real client information for rate limiting and logging.
 

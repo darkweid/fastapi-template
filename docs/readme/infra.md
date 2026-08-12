@@ -8,7 +8,7 @@ never bound to a host interface in production.
 
 | Service | Port | Host exposure |
 |---|---|---|
-| Nginx | 8000 | **Public** (`0.0.0.0`) — proxies to `app:8001` |
+| Nginx | 80 / 443 | **Public** (`0.0.0.0`) — proxies to `app:8001`; dev publishes `8000` instead |
 | App | 8001 | Internal only (dev: `127.0.0.1:8001` for direct access) |
 | Postgres | 5432 | Internal only (dev: `127.0.0.1:5432`) |
 | Redis | 6379 | Internal only (dev: `127.0.0.1:6379`) |
@@ -87,6 +87,8 @@ make clean            # remove stack + volumes/images/orphans
 - `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `celery_worker`, or `celery_beat`.
 - It also publishes **only** the Nginx port to the host; Postgres/Redis/RabbitMQ/app stay internal to `app-network`. If you genuinely need a backing port on the host in production, bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
 - Source bind mounts remain only in `infra/docker-compose.override.yml` for local development.
-- `infra/nginx/app.conf` sets baseline security headers at the reverse-proxy layer, while the FastAPI app keeps the same headers as a fallback for direct app access and tests.
-- `Strict-Transport-Security` is included in the template config, but it is only appropriate when clients actually use HTTPS end-to-end or via a trusted TLS-terminating proxy/load balancer.
+- `infra/nginx/app.conf` sets baseline security headers at the reverse-proxy layer, while the FastAPI app keeps the same headers as a fallback for direct app access and tests. The proxy body itself lives in `infra/nginx/proxy.inc`, shared with the TLS server so the two cannot drift apart. Dev serves the same `app.conf`, only on a different published port.
+- TLS terminates at Nginx: copy `infra/nginx/tls.conf.example` over the `app.conf` mount, put the certificate under `infra/nginx/certs/` (git-ignored) and set the real hostname. It redirects plain http to https and leaves the ACME challenge path reachable.
+- `Strict-Transport-Security` comes from the application, not from Nginx — one header, one source. It is only appropriate once clients actually reach the site over HTTPS end to end.
+- `infra/firewall/` closes the host: UFW for host listeners plus a `DOCKER-USER` chain for container traffic, installed as a systemd unit. Run `sudo bash harden-host.sh` on the server; see `infra/firewall/README.md`.
 - `client_max_body_size 10m` is the current default. Increase it deliberately if the project introduces larger upload scenarios.

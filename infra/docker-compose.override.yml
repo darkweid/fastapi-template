@@ -32,9 +32,15 @@ services:
       - ..:/app
       - /app/.venv
 
+  # Dev serves the production nginx config, so the proxy-dependent paths - the
+  # forwarded headers TrustedProxy reads, the body limit, the WebSocket upgrade -
+  # behave locally the way they will on a server. Only the published port differs.
   nginx:
-    volumes:
-      - ./nginx/dev-nginx.conf:/etc/nginx/conf.d/default.conf
+    # !override replaces the published ports instead of appending to them: dev keeps
+    # the stack off the privileged ports, where a locally running web server usually
+    # already sits.
+    ports: !override
+      - "8000:80"
 
   # Backing services are not published in the base (prod) compose file. Re-expose
   # them here on 127.0.0.1 only, for local debugging and host-side integration

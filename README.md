@@ -106,11 +106,22 @@ Only Nginx is published to the host; the rest stay internal to `app-network`.
 Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
 `docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
 
-- Nginx: 8000 → app:8001 — **public** (`0.0.0.0`)
+- Nginx: 80 / 443 → app:8001 — **public** (`0.0.0.0`); dev publishes 8000 instead
 - App direct: 8001 — internal (dev: `127.0.0.1`)
 - Postgres: 5432 — internal (dev: `127.0.0.1`)
 - Redis: 6379 — internal (dev: `127.0.0.1`)
 - RabbitMQ: 5672 (AMQP), 15672 (UI) — internal (dev: `127.0.0.1`)
+
+On a server, close everything else with `infra/firewall/` (UFW plus a
+`DOCKER-USER` chain, since Docker-published ports bypass UFW):
+
+```bash
+scp -r infra/firewall <host>:/tmp/firewall
+ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'
+```
+
+TLS terminates at Nginx — `infra/nginx/tls.conf.example` is a drop-in replacement
+for `app.conf` once the certificate is in place.
 
 ## Common Services
 - API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only)

@@ -97,6 +97,9 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# TLS material for the nginx TLS server (infra/nginx/tls.conf.example)
+infra/nginx/certs/
+
 # Environments
 .env
 .venv
