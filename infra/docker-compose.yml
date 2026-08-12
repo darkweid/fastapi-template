@@ -174,11 +174,11 @@ services:
 
 volumes:
   postgres-data:
-    name: app-postgres-data
+    name: template-postgres-data
   redis-data:
-    name: app-redis-data
+    name: template-redis-data
   celery-beat-state:
-    name: app-celery-beat-state
+    name: template-celery-beat-state
 
 networks:
   app-network:
