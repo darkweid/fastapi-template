@@ -1,15 +1,4 @@
-from pathlib import Path
-
-from jinja2 import Environment, FileSystemLoader, select_autoescape
-
-TEMPLATE_DIR = Path("src/core/email_service/templates")
-
-
-def build_template_environment() -> Environment:
-    return Environment(
-        loader=FileSystemLoader(TEMPLATE_DIR),
-        autoescape=select_autoescape(["html"]),
-    )
+from src.core.email_service.smtp_mailer import build_template_environment
 
 
 def test_email_template_does_not_render_template_reference() -> None:

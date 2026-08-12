@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.core.email_service.enums import MessageType
+
 
 class AbstractMailer(ABC):
     @abstractmethod
@@ -13,7 +15,7 @@ class AbstractMailer(ABC):
         recipients: list[str],
         template_name: str,
         template_data: BaseModel | dict[str, Any],
-        subtype: str = "html",
+        subtype: MessageType = MessageType.HTML,
     ) -> None:
         """Send an email based on a template with dynamic content."""
 
@@ -24,6 +26,6 @@ class AbstractMailer(ABC):
         recipients: list[str],
         body_text: str,
         file_paths: list[Path],
-        subtype: str = "plain",
+        subtype: MessageType = MessageType.PLAIN,
     ) -> None:
         """Send an email with multiple file attachments."""
