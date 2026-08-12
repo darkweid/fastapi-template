@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import jwt
 import pytest
 from starlette.requests import Request as StarletteRequest
 
-from src.core.errors.exceptions import UnauthorizedException
-from src.main.config import config
+from src.core.errors.exceptions import AccessForbiddenException, UnauthorizedException
+from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
-from src.user.auth.cookies import REFRESH_COOKIE_NAME
+from src.user.auth.cookies import (
+    CSRF_HEADER_NAME,
+    REFRESH_COOKIE_NAME,
+    TokenCookieResponder,
+)
+from src.user.auth.csrf import build_csrf_token
 from src.user.auth.dependencies import (
     AuthenticatedUser,
     RefreshCredentials,
@@ -19,6 +24,7 @@ from src.user.auth.dependencies import (
     get_current_user_with_session,
     get_user_id_from_token,
     read_refresh_credentials,
+    verify_csrf,
     verify_jti,
 )
 from src.user.auth.redis_keys import auth_redis_keys
@@ -300,3 +306,93 @@ def test_header_is_used_when_there_is_no_cookie() -> None:
 
 def test_no_credentials_returns_none() -> None:
     assert read_refresh_credentials(_request()) is None
+
+
+CSRF_SECRET = "unit-test-csrf-secret"
+
+
+def _refresh_responder() -> TokenCookieResponder:
+    return TokenCookieResponder(
+        cookie_config=CookieConfig(CSRF_SECRET_KEY=CSRF_SECRET),
+        refresh_token_expire_minutes=60,
+    )
+
+
+def _csrf_request(
+    *,
+    cookie: str | None = None,
+    csrf_header: str | None = None,
+    declared_transport: str | None = None,
+) -> StarletteRequest:
+    raw_headers = []
+    if cookie is not None:
+        raw_headers.append((b"cookie", f"{REFRESH_COOKIE_NAME}={cookie}".encode()))
+    if csrf_header is not None:
+        raw_headers.append((CSRF_HEADER_NAME.lower().encode(), csrf_header.encode()))
+    if declared_transport is not None:
+        raw_headers.append((b"x-token-transport", declared_transport.encode()))
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/users/auth/login/refresh",
+        "headers": raw_headers,
+    }
+    return StarletteRequest(scope)
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_rejects_cookie_credentials_with_missing_csrf_token() -> None:
+    request = _csrf_request(cookie="refresh-token-value")
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    with pytest.raises(AccessForbiddenException):
+        await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_rejects_cookie_credentials_with_wrong_csrf_token() -> None:
+    request = _csrf_request(
+        cookie="refresh-token-value", csrf_header="not-the-right-signature"
+    )
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    with pytest.raises(AccessForbiddenException):
+        await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_accepts_cookie_credentials_with_valid_csrf_token() -> None:
+    valid_signature = build_csrf_token("refresh-token-value", CSRF_SECRET)
+    request = _csrf_request(cookie="refresh-token-value", csrf_header=valid_signature)
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_skips_the_check_for_header_borne_credentials() -> None:
+    request = _csrf_request()
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=False)
+    responder = Mock(spec=TokenCookieResponder)
+
+    await verify_csrf(request, credentials, responder)
+
+    responder.verify_csrf.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_token() -> (
+    None
+):
+    """
+    The adversarial case this task exists for: a client holding the refresh cookie
+    declares X-Token-Transport: body to try to shed the CSRF check while still relying
+    on the cookie the browser attaches automatically. The declared transport must not
+    influence whether CSRF is enforced - only the actual token source does.
+    """
+    request = _csrf_request(cookie="refresh-token-value", declared_transport="body")
+    credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
+
+    with pytest.raises(AccessForbiddenException):
+        await verify_csrf(request, credentials, _refresh_responder())
