@@ -23,6 +23,25 @@ Production-ready FastAPI template with modular architecture, async stack, Celery
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
+## Auth Cookie & CSRF Configuration
+The refresh token is delivered as an httponly cookie by default, with a stateless
+signed double-submit CSRF check on the refresh route; native clients that want the
+refresh token in the response body instead send `X-Token-Transport: body`. See
+[docs/src/user/auth/REFRESH_TOKEN_IMPLEMENTATION.md](docs/src/user/auth/REFRESH_TOKEN_IMPLEMENTATION.md)
+for the full contract. Four settings in `.env` govern this (`src/main/config.py`, `CookieConfig`):
+
+- `CSRF_SECRET_KEY` — **required, no default.** The app will not start without it.
+  This is a breaking change for existing deployments: add it to `.env` before
+  upgrading.
+- `COOKIE_SECURE` (default `true`) — set to `false` only for local plain-http
+  development (`.env.test` does this, since the ASGI test client talks http and an
+  httpx cookie jar refuses to store a `Secure` cookie received over http). Never
+  ship `false` to a real environment.
+- `COOKIE_SAMESITE` (default `lax`) — set to `none` for a cross-origin SPA; the CSRF
+  check is what makes `none` safe to use.
+- `COOKIE_DOMAIN` (default unset/blank) — leave blank unless the auth cookies must
+  be shared across subdomains.
+
 ## Rate Limiting Notes
 - Primary rate limiting uses Redis-backed `RateLimiter` dependencies from `src/core/limiter`.
 - If Redis is temporarily unavailable, the limiter falls back to an in-memory per-process window so protection still works in degraded mode.
