@@ -2,8 +2,9 @@
 
 Only `22`, `80` and `443` are reachable from the internet on a deployed host -
 which is exactly what the production compose file publishes (Nginx on `80`/`443`).
-Everything else - Postgres, Redis, RabbitMQ, the app port, anything a neighbouring
-compose project publishes - is reachable through an SSH tunnel only.
+Everything else - Postgres, Redis, the worker and scheduler, the app port,
+anything a neighbouring compose project publishes - is reachable through an SSH
+tunnel only.
 
 ## Apply
 
@@ -36,7 +37,6 @@ publishes nothing but Nginx, and the dev overlay binds the backing services to
 
 ```bash
 ssh -L 5432:127.0.0.1:5432 <host>    # Postgres
-ssh -L 15672:127.0.0.1:15672 <host>  # RabbitMQ management UI
 ```
 
 Those host ports exist only when the dev overlay is in use; the production stack
