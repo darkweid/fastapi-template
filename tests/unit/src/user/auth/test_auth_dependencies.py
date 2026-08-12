@@ -5,16 +5,20 @@ from unittest.mock import AsyncMock
 
 import jwt
 import pytest
+from starlette.requests import Request as StarletteRequest
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 from src.user.auth import dependencies
+from src.user.auth.cookies import REFRESH_COOKIE_NAME
 from src.user.auth.dependencies import (
     AuthenticatedUser,
+    RefreshCredentials,
     get_access_by_refresh_token,
     get_current_user,
     get_current_user_with_session,
     get_user_id_from_token,
+    read_refresh_credentials,
     verify_jti,
 )
 from src.user.auth.redis_keys import auth_redis_keys
@@ -213,7 +217,8 @@ async def test_get_access_by_refresh_token_success(
     user_repository = FakeUserRepository(user)
 
     result_user, result_payload = await get_access_by_refresh_token(
-        refresh_token=token,
+        credentials=RefreshCredentials(token=token, from_cookie=False),
+        _csrf=None,
         session=fake_session,
         redis_client=fake_redis,
         user_repository=user_repository,
@@ -255,3 +260,43 @@ async def test_get_user_id_from_token_success(
     result = await get_user_id_from_token(request)
 
     assert result == "user-1"
+
+
+def _request(
+    *, cookie: str | None = None, authorization: str | None = None
+) -> StarletteRequest:
+    raw_headers = []
+    if cookie is not None:
+        raw_headers.append((b"cookie", f"{REFRESH_COOKIE_NAME}={cookie}".encode()))
+    if authorization is not None:
+        raw_headers.append((b"authorization", authorization.encode()))
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/users/auth/login/refresh",
+        "headers": raw_headers,
+    }
+    return StarletteRequest(scope)
+
+
+def test_cookie_is_preferred_over_the_header() -> None:
+    credentials = read_refresh_credentials(
+        _request(cookie="from-cookie", authorization="from-header")
+    )
+
+    assert credentials is not None
+    assert credentials.token == "from-cookie"
+    assert credentials.from_cookie is True
+
+
+def test_header_is_used_when_there_is_no_cookie() -> None:
+    credentials = read_refresh_credentials(_request(authorization="from-header"))
+
+    assert credentials is not None
+    assert credentials.token == "from-header"
+    assert credentials.from_cookie is False
+
+
+def test_no_credentials_returns_none() -> None:
+    assert read_refresh_credentials(_request()) is None
