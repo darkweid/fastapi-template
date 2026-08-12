@@ -95,6 +95,7 @@ change from the previous `APIKeyHeader(auto_error=True)`-driven 403.
 
 ## 2) Incoming refresh request
 - Endpoint `POST /v1/users/auth/login/refresh` resolves the refresh token via `get_refresh_credentials` (cookie first, `Authorization` header second — see "Transport: cookie vs body" above), runs the CSRF gate (`verify_csrf`) when the token came from the cookie, then uses `get_access_by_refresh_token` to decode the token.
+- Dependency order on the route matters and is pinned by a test. `verify_csrf` is declared as a route-level dependency *between* the IP-based rate limiter and the user-scoped one, because the user-scoped limiter's identifier (`get_user_id_from_token`) reads and verifies the refresh cookie. Were CSRF checked later, a forged cross-site request would consume the victim's refresh budget — and could reach reuse detection — before being rejected with 403.
 - `verify_jti`:
   - Strips `Bearer` prefix if present and decodes JWT with `JWT_USER_SECRET_KEY`.
   - Extracts `jti`, `mode`, `sub` (user_id), `session_id`.

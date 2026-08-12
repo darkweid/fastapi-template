@@ -11,6 +11,7 @@ from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_current_user_with_session,
     get_user_id_from_token,
+    verify_csrf,
 )
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
@@ -132,12 +133,18 @@ async def login_user(
     "/login/refresh",
     response_model=TokenModel,
     dependencies=[
-        Depends(  # IP-based rate limiting
+        Depends(  # IP-based rate limiting: bounds an unauthenticated flood
             RateLimiter(
                 times=20,
                 minutes=15,
             )
         ),
+        # The CSRF gate must precede the user-scoped limiter: its identifier reads the
+        # refresh cookie and verifies it, so a forged cross-site request would
+        # otherwise burn the victim's refresh budget (and reach reuse detection)
+        # before being rejected. FastAPI caches get_refresh_credentials, so the token
+        # is still resolved only once per request.
+        Depends(verify_csrf),
         Depends(  # User-based rate limiting
             RateLimiter(
                 times=5,
