@@ -3,7 +3,7 @@ from typing import Annotated, Final
 from fastapi import Depends, Response
 
 from loggers import get_logger
-from src.core.errors.exceptions import AccessForbiddenException
+from src.core.errors.exceptions import AccessForbiddenException, InfrastructureException
 from src.core.schemas import TokenModel
 from src.main.config import Config, CookieConfig, get_settings
 from src.user.auth.csrf import build_csrf_token, verify_csrf_token
@@ -58,7 +58,9 @@ class TokenCookieResponder:
 
         refresh_token = tokens.refresh_token
         if refresh_token is None:
-            raise ValueError("Cannot apply cookie transport without a refresh token")
+            raise InfrastructureException(
+                "Cannot apply cookie transport without a refresh token"
+            )
 
         self._set_cookie(response, REFRESH_COOKIE_NAME, refresh_token, httponly=True)
         self._set_cookie(

@@ -1,7 +1,7 @@
 from fastapi import Response
 import pytest
 
-from src.core.errors.exceptions import AccessForbiddenException
+from src.core.errors.exceptions import AccessForbiddenException, InfrastructureException
 from src.core.schemas import TokenModel
 from src.main.config import CookieConfig
 from src.user.auth.cookies import (
@@ -39,6 +39,22 @@ def test_cookie_transport_moves_refresh_out_of_the_body(
 
     assert result.access_token == "a"
     assert result.refresh_token is None
+
+
+def test_cookie_transport_without_a_refresh_token_raises_infrastructure_exception(
+    responder: TokenCookieResponder,
+) -> None:
+    response = Response()
+    # TokenModel.refresh_token is typed `str`; bypass validation via model_copy the
+    # same way apply() itself does, to simulate the invariant being violated upstream.
+    tokens = TokenModel(access_token="a", refresh_token="r").model_copy(
+        update={"refresh_token": None}
+    )
+
+    with pytest.raises(InfrastructureException):
+        responder.apply(tokens, response, TokenTransport.COOKIE)
+
+    assert _set_cookie_headers(response) == []
 
 
 def test_cookie_transport_sets_both_cookies(
