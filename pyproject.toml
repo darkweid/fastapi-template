@@ -11,6 +11,6 @@ select = [
 extend-ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["celery_tasks", "loggers", "models", "src"]
+known-first-party = ["loggers", "models", "src", "taskiq_worker"]
 combine-as-imports = true
 force-sort-within-sections = true

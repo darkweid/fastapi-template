@@ -1,7 +1,6 @@
 import logging
 
 import sentry_sdk
-from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 from loggers import get_logger
@@ -34,7 +33,6 @@ def init_sentry() -> None:
         environment=config.sentry.SENTRY_ENV,
         release=config.app.VERSION,
         integrations=[
-            CeleryIntegration(),
             LoggingIntegration(
                 level=logging.INFO,  # breadcrumbs from INFO and up
                 event_level=logging.CRITICAL,  # only CRITICAL+ logs become Sentry events; lower levels require explicit capture

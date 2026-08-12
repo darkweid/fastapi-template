@@ -16,7 +16,8 @@ engine = create_async_engine(
     pool_pre_ping=True,
 )
 
-celery_engine = create_async_engine(
+# Isolated small pool for background-task workers.
+tasks_engine = create_async_engine(
     DATABASE_URL,
     echo=config.postgres.DB_ECHO,
     pool_size=2,

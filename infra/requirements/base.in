@@ -4,9 +4,7 @@ aiosmtplib>=5.1.1  # security: PYSEC-2026-2338
 alembic
 alembic-postgresql-enum
 argon2-cffi
-asgiref
 asyncpg
-celery
 click>=8.3.3  # security: PYSEC-2026-2132
 email-validator
 fastapi
@@ -23,5 +21,7 @@ redis
 sentry-sdk
 sqlalchemy
 starlette>=1.4.1  # security: CVE-2026-48817/48818, PYSEC-2026-161/248/249
+taskiq
+taskiq-redis
 uuid6
 uvicorn

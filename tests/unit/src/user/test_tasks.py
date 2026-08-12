@@ -5,25 +5,9 @@ import pytest
 
 from src.core.database.filters import FilterCondition
 from src.user.repositories import UserRepository
-from src.user.tasks import _soft_delete_unverified_users
+from src.user.tasks import cleanup_unverified_users
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 from tests.helpers.providers import ProvideValue
-
-
-class SessionContext:
-    def __init__(self, session: FakeAsyncSession) -> None:
-        self._session = session
-
-    async def __aenter__(self) -> FakeAsyncSession:
-        return self._session
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object | None,
-    ) -> None:
-        return None
 
 
 class FakeUsersRepository:
@@ -43,7 +27,7 @@ def build_uow(
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_unverified_users_success(
+async def test_cleanup_unverified_users_success(
     fake_session: FakeAsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 10, tzinfo=timezone.utc)
@@ -51,34 +35,33 @@ async def test_soft_delete_unverified_users_success(
     users_repo = FakeUsersRepository(result=5)
     uow = build_uow(fake_session, users_repo)
 
-    with patch(
-        "src.user.tasks.celery_async_session",
-        return_value=SessionContext(fake_session),
-    ), patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
-        result = await _soft_delete_unverified_users()
+    with patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
+        result = await cleanup_unverified_users(session=fake_session)
 
-    assert result == 5
+    assert result == "Deleted 5 unverified users."
     users_repo.batch_soft_delete.assert_awaited_once()
     uow.commit.assert_awaited_once()
     uow.rollback.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_unverified_users_failure(
+async def test_cleanup_unverified_users_swallows_and_reports_failure(
     fake_session: FakeAsyncSession,
 ) -> None:
     users_repo = FakeUsersRepository(error=Exception("DB Error"))
     uow = build_uow(fake_session, users_repo)
 
-    with patch(
-        "src.user.tasks.celery_async_session",
-        return_value=SessionContext(fake_session),
-    ), patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
-        result = await _soft_delete_unverified_users()
+    with patch("src.user.tasks.ApplicationUnitOfWork", return_value=uow):
+        result = await cleanup_unverified_users(session=fake_session)
 
-    assert result == 0
+    assert result == "Deleted 0 unverified users."
     uow.rollback.assert_awaited_once()
     assert uow.completed is True
+
+
+def test_cleanup_task_registration() -> None:
+    assert cleanup_unverified_users.task_name == "cleanup_unverified_users"
+    assert cleanup_unverified_users.labels["schedule"] == [{"cron": "0 */10 * * *"}]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,9 +9,9 @@ from src.core.email_service.service import EmailService
 from tests.fakes.email import MockMailer
 
 
-class FakeCeleryTask:
+class FakeTaskiqTask:
     def __init__(self) -> None:
-        self.delay = MagicMock()
+        self.kiq = AsyncMock()
 
 
 class FailingMailer(AbstractMailer):
@@ -198,7 +198,7 @@ async def test_send_template_email_empty_recipients(email_service: EmailService)
 async def test_send_template_email_with_delay_queues_task(
     email_service: EmailService, monkeypatch: pytest.MonkeyPatch
 ):
-    task = FakeCeleryTask()
+    task = FakeTaskiqTask()
     monkeypatch.setattr("src.core.email_service.service.send_email_task", task)
     body = MailTemplateDataBody(title="Queued", link="https://queue")
 
@@ -209,7 +209,7 @@ async def test_send_template_email_with_delay_queues_task(
         template_body=body,
     )
 
-    task.delay.assert_called_once_with(
+    task.kiq.assert_awaited_once_with(
         "Queued",
         ["user@example.com"],
         "queue.html",
@@ -222,7 +222,7 @@ async def test_send_template_email_with_delay_queues_task(
 async def test_send_file_to_email_with_delay_queues_task(
     email_service: EmailService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    task = FakeCeleryTask()
+    task = FakeTaskiqTask()
     monkeypatch.setattr(
         "src.core.email_service.service.send_email_with_file_task", task
     )
@@ -235,7 +235,7 @@ async def test_send_file_to_email_with_delay_queues_task(
         attachments=[file_path],
     )
 
-    task.delay.assert_called_once_with(
+    task.kiq.assert_awaited_once_with(
         "Files",
         ["user@example.com"],
         [str(file_path)],

@@ -16,7 +16,7 @@ Implementations:
 
 ### Main Module Architecture
 `src/main/` wires the app and isolates bootstrapping concerns.
-- `config.py`: Pydantic settings for DB, Redis, RabbitMQ, JWT, etc. `.env` is used by default; `.env.test` is used when `TESTING=true`. `SENTRY_ENABLED` gates Sentry even if DSN is set; Sentry is skipped in DEBUG/TESTING.
+- `config.py`: Pydantic settings for DB, Redis, JWT, etc. `.env` is used by default; `.env.test` is used when `TESTING=true`. `SENTRY_ENABLED` gates Sentry even if DSN is set; Sentry is skipped in DEBUG/TESTING.
 - `lifespan.py`: startup/shutdown lifecycle (init/cleanup external resources).
 - `presentation.py`: API assembly, versioning, exception handlers.
 - `route_logging.py`: logs routes grouped by method/tag for debugging.
@@ -131,7 +131,7 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │       ├── routers.py                   # User API endpoints
 │       ├── schemas.py                   # User Pydantic schemas
 │       ├── services.py                  # User business logic services
-│       ├── tasks.py                     # Celery tasks for users
+│       ├── tasks.py                     # taskiq tasks for users
 │       └── usecases/                    # User-related use cases
 │
 ├── tests/                               # Test suite
@@ -142,14 +142,14 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   ├── helpers/                         # Test helpers and dependency overrides
 │   └── unit/                            # Unit tests
 │       ├── test_nginx_security_config.py # Nginx security config check
-│       ├── celery_tasks/                # Celery task tests
+│       ├── taskiq_worker/               # taskiq worker tests
 │       └── src/                         # Mirrors src/ layout
 │           ├── core/                    # Core component tests
 │           ├── main/                    # Main module tests
 │           ├── system/                  # System routes tests
 │           └── user/                    # User & auth tests
 │
-├── celery_tasks/                        # Celery worker config and task management
+├── taskiq_worker/                       # taskiq broker, scheduler and worker DI
 ├── loggers/                             # Logging configurations
 ├── models/                              # Shared data models and models package initialization
 ├── Makefile                             # Makefile with predefined commands

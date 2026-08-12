@@ -1,10 +1,9 @@
-from typing import Annotated, cast
+from typing import Annotated
 
 from fastapi import Depends
 from redis.asyncio import Redis
 from starlette.datastructures import URL
 
-from celery_tasks.types import CeleryTask
 from loggers import get_logger
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.redis.dependencies import get_redis_client
@@ -47,8 +46,9 @@ class VerificationNotifier:
     ) -> None:
         await self._throttle_or_touch(throttle_key)
         try:
-            task = cast(CeleryTask, send_verification_email_task)
-            task.delay(
+            # redis_client is TaskiqDepends-injected on the worker side; mypy
+            # still sees it as a required kwarg of the wrapped function's ParamSpec.
+            await send_verification_email_task.kiq(  # type: ignore[call-overload]
                 user.email,
                 user.full_name,
                 str(base_url),

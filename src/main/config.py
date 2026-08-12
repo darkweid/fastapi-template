@@ -82,7 +82,7 @@ class RedisConfig(BaseModel):
     REDIS_PORT: int
     REDIS_PASSWORD: str
     REDIS_DATABASE: str
-    REDIS_CELERY_DATABASE: str = "1"
+    REDIS_TASKS_DATABASE: str = "1"
 
     model_config = ConfigDict(extra="ignore")
 
@@ -97,32 +97,13 @@ class RedisConfig(BaseModel):
         )
 
     @property
-    def celery_dsn(self) -> str:
+    def tasks_dsn(self) -> str:
         return (
             f"redis://:"
             f"{self.REDIS_PASSWORD}@"
             f"{self.REDIS_HOST}:"
             f"{self.REDIS_PORT}/"
-            f"{self.REDIS_CELERY_DATABASE}"
-        )
-
-
-class RabbitMQConfig(BaseModel):
-    RABBITMQ_HOST: str
-    RABBITMQ_PORT: int
-    RABBITMQ_USER: str
-    RABBITMQ_PASSWORD: str
-
-    model_config = ConfigDict(extra="ignore")
-
-    @property
-    def dsn(self) -> str:
-        return (
-            f"amqp://"
-            f"{self.RABBITMQ_USER}:"
-            f"{self.RABBITMQ_PASSWORD}@"
-            f"{self.RABBITMQ_HOST}:"
-            f"{self.RABBITMQ_PORT}//"
+            f"{self.REDIS_TASKS_DATABASE}"
         )
 
 
@@ -286,7 +267,6 @@ class Config(BaseModel):
     sentry: SentryConfig
     cookie: CookieConfig
     postgres: PostgresConfig
-    rabbitmq: RabbitMQConfig
     broadcasting: BroadcastingConfig
 
     model_config = ConfigDict(extra="ignore")
@@ -319,7 +299,6 @@ def get_settings() -> Config:
         sentry=SentryConfig(**merged_env),
         cookie=CookieConfig(**merged_env),
         postgres=PostgresConfig(**merged_env),
-        rabbitmq=RabbitMQConfig(**merged_env),
         broadcasting=BroadcastingConfig(**merged_env),
     )
 

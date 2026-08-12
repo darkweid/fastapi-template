@@ -198,10 +198,10 @@ when UFW reports the port as blocked.
 
 **What the template does:**
 - The base (production) compose file publishes **only Nginx (`80` and `443`)** to
-  the host. Postgres, Redis, RabbitMQ, and the app stay off the host — they
-  communicate over the internal `app-network` bridge by service name
-  (`postgres:5432`, `redis:6379`, `rabbitmq:5672`, `app:8001`), so they are
-  unreachable from outside the host regardless of firewall state.
+  the host. Postgres, Redis, and the app stay off the host — they communicate
+  over the internal `app-network` bridge by service name (`postgres:5432`,
+  `redis:6379`, `app:8001`), so they are unreachable from outside the host
+  regardless of firewall state.
 - The dev overlay (`docker-compose.override.yml`, local-only) re-exposes those
   backing services bound to `127.0.0.1` for debugging and host-side integration
   tests. Loopback binds are not reachable from the network, so the iptables
@@ -227,11 +227,10 @@ side, `SSH_PORT` covers a non-default SSH port. See `infra/firewall/README.md`.
 wiring Docker traffic through UFW's `route` rules, if you would rather manage the
 policy from UFW alone.
 
-**Why it matters:** publishing Postgres/Redis/RabbitMQ on `0.0.0.0` exposes
-unauthenticated-by-default data stores and the RabbitMQ management UI to the
-internet, silently bypassing the host firewall. Keeping backing services off the
-host and constraining the one public port via `DOCKER-USER`/`ufw-docker` closes
-that gap.
+**Why it matters:** publishing Postgres/Redis on `0.0.0.0` exposes
+unauthenticated-by-default data stores to the internet, silently bypassing the
+host firewall. Keeping backing services off the host and constraining the one
+public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 
 ## Nginx Hardening
 
@@ -263,14 +262,16 @@ Tag-based invalidation (`CacheTags` enum) allows selective cache purging by reso
 
 **Why it matters:** Pickle deserialization can execute arbitrary code. The coder choice should match the trust level of the Redis environment. Tag-based invalidation prevents stale data from being served after mutations.
 
-## Celery Task Security
+## Taskiq Task Security
 
-`src/user/auth/tasks.py`, `celery_tasks/workers/common.py`
+`src/user/auth/tasks.py`, `taskiq_worker/app.py`
 
 - Tasks receive only email addresses, not full user objects or tokens — tokens are created inside the task.
-- Redis connections are created and destroyed per task execution.
+- Redis connections (`get_tasks_redis_client`) are created and destroyed per task run.
 - Failed tasks clean up throttle keys and invalidate tokens before re-raising.
-- `task_time_limit=1800` prevents runaway tasks.
-- `task_acks_late=True` ensures tasks are re-delivered if the worker crashes.
+- `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) up to a bounded number of times, with no delay between attempts - the Redis Streams broker has no delayed delivery, so retries fire back-to-back; idempotence-free tasks stay out.
+- Redis Streams delivery is at-least-once: a worker XACKs a message only after the task finishes, so a worker crash between sending the email and acking can redeliver the task and duplicate the send — an accepted trade-off, not a defect.
+- `infra/redis.conf` enables AOF (`appendfsync everysec`) alongside the RDB snapshots, since this Redis now also holds the task stream: an RDB-only setup can lose queued jobs written since the last snapshot on a crash.
+- `taskiq_worker/broker.py`'s `STREAM_MAXLEN` bounds stream growth (acked entries are never otherwise removed), sized well above any realistic backlog for this workload — `XADD MAXLEN` trims oldest-first regardless of ack state, so a cap sized too close to real traffic could discard unacknowledged work.
 
-**Why it matters:** Celery serializes task arguments to the broker (RabbitMQ). Passing tokens or sensitive objects through the broker expands the attack surface. Creating tokens inside the task keeps sensitive material within the application boundary.
+**Why it matters:** taskiq serializes task arguments onto the Redis stream. Passing tokens or sensitive objects through it expands the attack surface. Creating tokens inside the task keeps sensitive material within the application boundary.

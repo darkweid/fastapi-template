@@ -1,12 +1,11 @@
 import contextlib
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from fastapi_mail import MessageType
 from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
-from celery_tasks.types import CeleryTask
 from loggers import get_logger
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.tasks import (
@@ -41,7 +40,11 @@ class EmailService:
                 template_body,
                 subtype.value,
             )
-            logger.debug("Email '%s' sent to %s", template_name, normalized)
+            logger.debug(
+                "Email '%s' sent to %s",
+                template_name,
+                [mask_email(str(e)) for e in normalized],
+            )
         except Exception as e:
             logger.error("Failed to send template email: %s", e)
             raise
@@ -62,15 +65,16 @@ class EmailService:
                 if isinstance(template_body, dict)
                 else template_body.model_dump()
             )
-            task = cast(CeleryTask, send_email_task)
-            task.delay(
+            await send_email_task.kiq(
                 subject,
                 [str(e) for e in normalized],
                 template_name,
                 template_data,
                 subtype.value,
             )
-            logger.debug("Email task queued for %s", normalized)
+            logger.debug(
+                "Email task queued for %s", [mask_email(str(e)) for e in normalized]
+            )
         except Exception as e:
             logger.error("Failed to queue template email task: %s", e)
             raise
@@ -84,8 +88,7 @@ class EmailService:
     ) -> None:
         validated_recipients = self._normalize_and_validate_recipients(recipients)
 
-        task = cast(CeleryTask, send_email_with_file_task)
-        task.delay(
+        await send_email_with_file_task.kiq(
             subject,
             [str(e) for e in validated_recipients],
             [str(path) for path in attachments],
@@ -115,7 +118,10 @@ class EmailService:
                 file_paths,
                 subtype.value,
             )
-            logger.debug("Email with attachments sent to %s", validated_recipients)
+            logger.debug(
+                "Email with attachments sent to %s",
+                [mask_email(str(e)) for e in validated_recipients],
+            )
 
         except Exception as e:
             logger.error("Failed to send email with attachments: %s", e)

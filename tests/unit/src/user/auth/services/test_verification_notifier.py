@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from starlette.datastructures import URL
@@ -6,13 +6,9 @@ from starlette.datastructures import URL
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.utils.security import build_email_throttle_key
 from src.user.auth.services.verification_notifier import VerificationNotifier
+from src.user.auth.tasks import send_verification_email_task
 from tests.factories.user_factory import build_user
 from tests.fakes.redis import InMemoryRedis
-
-
-class FakeCeleryTask:
-    def __init__(self) -> None:
-        self.delay = MagicMock()
 
 
 @pytest.mark.asyncio
@@ -20,17 +16,14 @@ async def test_verification_notifier_queues_task_with_expected_payload(
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    task = FakeCeleryTask()
-    monkeypatch.setattr(
-        "src.user.auth.services.verification_notifier.send_verification_email_task",
-        task,
-    )
+    kiq_mock = AsyncMock()
+    monkeypatch.setattr(send_verification_email_task, "kiq", kiq_mock)
     notifier = VerificationNotifier(redis_client=fake_redis)
     user = build_user(email="user@example.com")
 
     await notifier.send_verification(user=user, base_url=URL("http://testserver/"))
 
-    task.delay.assert_called_once_with(
+    kiq_mock.assert_awaited_once_with(
         user.email,
         user.full_name,
         "http://testserver/",
@@ -61,17 +54,13 @@ async def test_verification_notifier_cleans_throttle_key_when_queueing_fails(
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    task = FakeCeleryTask()
-    task.delay.side_effect = RuntimeError("broker down")
-    monkeypatch.setattr(
-        "src.user.auth.services.verification_notifier.send_verification_email_task",
-        task,
-    )
+    kiq_mock = AsyncMock(side_effect=RuntimeError("kiq failed"))
+    monkeypatch.setattr(send_verification_email_task, "kiq", kiq_mock)
     notifier = VerificationNotifier(redis_client=fake_redis)
     user = build_user(email="user@example.com")
     throttle_key = build_email_throttle_key("resend_verification", user.email)
 
-    with pytest.raises(RuntimeError, match="broker down"):
+    with pytest.raises(RuntimeError, match="kiq failed"):
         await notifier.send_verification(
             user=user,
             base_url=URL("http://testserver/"),

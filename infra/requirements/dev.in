@@ -11,6 +11,7 @@ httpx
 pytest
 pytest-asyncio
 pytest-cov
+taskiq[reload]
 
 # Type stubs
 types-passlib
