@@ -19,13 +19,10 @@ CSRF_HEADER_NAME: Final[str] = "X-CSRF-Token"
 # a test pins this constant to the mounted route, because a mismatch breaks refresh
 # silently - the browser simply does not send the cookie.
 REFRESH_COOKIE_PATH: Final[str] = "/v1/users/auth/login/refresh"
-# The CSRF cookie is deliberately site-wide. Per RFC 6265 path matching,
-# `document.cookie` only exposes cookies whose Path is a prefix of the current
-# document's path, so a same-origin SPA served at "/" could never read a cookie
-# scoped to the refresh route - and an unreadable double-submit token turns every
-# refresh into a 403. The value is a signature that is worthless without the
-# httponly refresh cookie, so a wider path costs nothing. A test asserts the two
-# paths differ, so this cannot silently collapse back.
+# The CSRF cookie is deliberately site-wide: per RFC 6265 path matching, a
+# same-origin SPA served at "/" could never read a cookie scoped to the refresh
+# route, breaking every browser refresh. This costs nothing since the value is a
+# signature that is worthless without the httponly refresh cookie.
 CSRF_COOKIE_PATH: Final[str] = "/"
 
 CSRF_FAILURE_MESSAGE: Final[str] = "CSRF validation failed"

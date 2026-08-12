@@ -32,7 +32,12 @@ for the full contract. Four settings in `.env` govern this (`src/main/config.py`
 
 - `CSRF_SECRET_KEY` — **required, no default.** The app will not start without it.
   This is a breaking change for existing deployments: add it to `.env` before
-  upgrading.
+  upgrading. Clients that already hold a pre-upgrade `csrf_token` cookie scoped to
+  `/v1/users/auth/login/refresh` keep it, because `clear()` now expires that cookie
+  only at `/`. The refresh route therefore receives two `csrf_token` cookies until
+  the old one expires. This is harmless — the server reads the CSRF value from the
+  `X-CSRF-Token` header, never from the cookie — but it surprises anyone reading a
+  request dump.
 - `COOKIE_SECURE` (default `true`) — set to `false` only for local plain-http
   development (`.env.test` does this, since the ASGI test client talks http and an
   httpx cookie jar refuses to store a `Secure` cookie received over http). Never
