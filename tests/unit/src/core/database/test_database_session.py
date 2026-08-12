@@ -43,12 +43,12 @@ def test_web_engine_pre_pings_connections() -> None:
     assert db_engine.engine.pool._pre_ping is True
 
 
-def test_celery_engine_pre_pings_connections() -> None:
-    assert db_engine.celery_engine.pool._pre_ping is True
+def test_tasks_engine_pre_pings_connections() -> None:
+    assert db_engine.tasks_engine.pool._pre_ping is True
 
 
-def test_celery_async_session_uses_celery_engine() -> None:
-    assert db_session.celery_async_session.kw["bind"] is db_engine.celery_engine
+def test_tasks_async_session_uses_tasks_engine() -> None:
+    assert db_session.tasks_async_session.kw["bind"] is db_engine.tasks_engine
 
 
 @pytest.mark.asyncio

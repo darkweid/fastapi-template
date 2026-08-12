@@ -41,7 +41,7 @@ def create_celery_app(module_name: str) -> Celery:
     celery_app = Celery(
         module_name,
         broker=config.rabbitmq.dsn,
-        backend=config.redis.celery_dsn,
+        backend=config.redis.tasks_dsn,
     )
     celery_app.conf.broker_connection_retry_on_startup = True
     celery_app.conf.update(

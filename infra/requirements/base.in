@@ -23,5 +23,7 @@ redis
 sentry-sdk
 sqlalchemy
 starlette>=1.4.1  # security: CVE-2026-48817/48818, PYSEC-2026-161/248/249
+taskiq
+taskiq-redis
 uuid6
 uvicorn
