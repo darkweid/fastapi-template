@@ -107,25 +107,6 @@ class RedisConfig(BaseModel):
         )
 
 
-class RabbitMQConfig(BaseModel):
-    RABBITMQ_HOST: str
-    RABBITMQ_PORT: int
-    RABBITMQ_USER: str
-    RABBITMQ_PASSWORD: str
-
-    model_config = ConfigDict(extra="ignore")
-
-    @property
-    def dsn(self) -> str:
-        return (
-            f"amqp://"
-            f"{self.RABBITMQ_USER}:"
-            f"{self.RABBITMQ_PASSWORD}@"
-            f"{self.RABBITMQ_HOST}:"
-            f"{self.RABBITMQ_PORT}//"
-        )
-
-
 class SentryConfig(BaseModel):
     SENTRY_DSN: str | None = None
     SENTRY_ENV: str = "development"
@@ -286,7 +267,6 @@ class Config(BaseModel):
     sentry: SentryConfig
     cookie: CookieConfig
     postgres: PostgresConfig
-    rabbitmq: RabbitMQConfig
     broadcasting: BroadcastingConfig
 
     model_config = ConfigDict(extra="ignore")
@@ -319,7 +299,6 @@ def get_settings() -> Config:
         sentry=SentryConfig(**merged_env),
         cookie=CookieConfig(**merged_env),
         postgres=PostgresConfig(**merged_env),
-        rabbitmq=RabbitMQConfig(**merged_env),
         broadcasting=BroadcastingConfig(**merged_env),
     )
 
