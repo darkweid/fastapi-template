@@ -185,6 +185,8 @@ async def test_login_refresh_access_flow(
     assert login_response.json() == {
         "access_token": "access-1",
         "refresh_token": "refresh-1",
+        # Body transport writes no cookies, so there is no CSRF token to hand out.
+        "csrf_token": None,
     }
 
     refresh_response = await async_client.post(
@@ -199,6 +201,7 @@ async def test_login_refresh_access_flow(
     assert refresh_response.json() == {
         "access_token": "access-2",
         "refresh_token": "refresh-2",
+        "csrf_token": None,
     }
 
     me_response = await async_client.get(

@@ -109,7 +109,10 @@ async def test_login_defaults_to_cookie_transport(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"access_token": "a", "refresh_token": None}
+    body = response.json()
+    assert body["access_token"] == "a"
+    assert body["refresh_token"] is None
+    assert body["csrf_token"]
 
     set_cookie = response.headers.get_list("set-cookie")
     refresh_header = next(
@@ -134,7 +137,11 @@ async def test_login_with_body_transport_returns_both_tokens(
         headers={"X-Token-Transport": "body"},
     )
 
-    assert response.json() == {"access_token": "a", "refresh_token": "r"}
+    assert response.json() == {
+        "access_token": "a",
+        "refresh_token": "r",
+        "csrf_token": None,
+    }
     assert response.headers.get_list("set-cookie") == []
 
 
@@ -205,7 +212,11 @@ async def test_refresh_with_body_transport_returns_both_tokens_and_sets_no_cooki
     )
 
     assert response.status_code == 200
-    assert response.json() == {"access_token": "a2", "refresh_token": "r2"}
+    assert response.json() == {
+        "access_token": "a2",
+        "refresh_token": "r2",
+        "csrf_token": None,
+    }
     assert response.headers.get_list("set-cookie") == []
 
 
@@ -248,10 +259,16 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     )
 
     assert login_response.status_code == 200
-    assert login_response.json() == {"access_token": "access-1", "refresh_token": None}
+    login_body = login_response.json()
+    assert login_body["access_token"] == "access-1"
+    assert login_body["refresh_token"] is None
 
-    csrf_token = async_client.cookies.get(CSRF_COOKIE_NAME)
-    assert csrf_token is not None
+    # Read the CSRF token from the response body, the way a real cross-origin SPA
+    # must. Reading it from `async_client.cookies` would prove nothing about client
+    # reachability: an httpx jar has no notion of a current document, so it hands
+    # back cookies a browser would refuse to expose to JS.
+    csrf_token = login_body["csrf_token"]
+    assert csrf_token
 
     refresh_response = await async_client.post(
         "/v1/users/auth/login/refresh",
@@ -259,10 +276,10 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     )
 
     assert refresh_response.status_code == 200
-    assert refresh_response.json() == {
-        "access_token": "access-2",
-        "refresh_token": None,
-    }
+    refresh_body = refresh_response.json()
+    assert refresh_body["access_token"] == "access-2"
+    assert refresh_body["refresh_token"] is None
+    assert refresh_body["csrf_token"]
 
     refresh_set_cookie = refresh_response.headers.get_list("set-cookie")
     assert any(h.startswith(f"{REFRESH_COOKIE_NAME}=") for h in refresh_set_cookie)
@@ -279,6 +296,10 @@ def test_refresh_cookie_path_matches_the_mounted_route(app) -> None:
     # `app.routes` nests included routers behind `_IncludedRouter` wrappers, so the
     # mounted path (with prefix applied) is only visible through the effective route
     # contexts FastAPI itself walks to build the OpenAPI schema.
+    # NOTE: `fastapi.routing.iter_route_contexts` is a FastAPI *internal* API with no
+    # stability guarantee. If this test (or the one below) breaks after a FastAPI
+    # upgrade with an ImportError or AttributeError, that is the cause - the assertion
+    # itself is still what we want, only the traversal helper needs replacing.
     refresh_paths = [
         route_context.path
         for route_context in routing.iter_route_contexts(app.routes)

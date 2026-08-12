@@ -10,11 +10,12 @@ reuse detection are unchanged by the cookie transport described below; only the
 (`src/user/auth/token_transport.py`), resolved by `get_token_transport`:
 
 - Absent or `cookie` (the default) — the response's `refresh_token` field is
-  stripped, and the refresh token is instead written to an httponly cookie. This is
-  the browser path.
-- `body` — no `Set-Cookie` header is written at all, and the refresh token stays in
-  the JSON body. Native mobile/desktop clients that manage their own token storage
-  send this.
+  stripped, the refresh token is instead written to an httponly cookie, and the
+  response's `csrf_token` field is populated with the value the client must echo.
+  This is the browser path.
+- `body` — no `Set-Cookie` header is written at all, the refresh token stays in the
+  JSON body, and `csrf_token` stays `null`. Native mobile/desktop clients that
+  manage their own token storage send this.
 
 The header only decides how the *response* is shaped. It has no effect on how an
 *incoming* refresh token is read: `read_refresh_credentials`
@@ -26,17 +27,25 @@ the token is a fact about the request, not a client-declared transport.
 
 `TokenCookieResponder` (`src/user/auth/cookies.py`) owns both cookies:
 
-| Cookie | Name | `httponly` | Purpose |
-|---|---|---|---|
-| Refresh token | `refresh_token` | yes | Carries the refresh token; never readable from JS. |
-| CSRF token | `csrf_token` | no | Carries the CSRF signature (see below); read by client-side JS and echoed back in a header. |
+| Cookie | Name | `httponly` | `path` | Purpose |
+|---|---|---|---|---|
+| Refresh token | `refresh_token` | yes | `/v1/users/auth/login/refresh` | Carries the refresh token; never readable from JS. |
+| CSRF token | `csrf_token` | no | `/` | Carries the CSRF signature (see below); read by client-side JS and echoed back in a header. |
 
-Both cookies are scoped with `path=/v1/users/auth/login/refresh` — the browser only
-attaches them on refresh requests, never on ordinary API calls — and share the
-`max_age`, `domain`, `secure` and `samesite` policy from `CookieConfig`
-(`src/main/config.py`; see the four `COOKIE_*`/`CSRF_SECRET_KEY` settings in
-`README.md`). `logout` calls `TokenCookieResponder.clear`, which expires both
-cookies; this is a no-op for a client that never received them (`body` transport).
+The two paths differ deliberately, and a test asserts that they do. The refresh
+cookie is scoped to the refresh route, so the browser never attaches it to ordinary
+API calls. The CSRF cookie must be site-wide: per RFC 6265 path matching,
+`document.cookie` only exposes cookies whose `Path` is a prefix of the current
+document's path, so an SPA served at `/` cannot see a cookie scoped to
+`/v1/users/auth/login/refresh` — and a double-submit token the client cannot read
+turns every refresh into an unconditional 403. Widening the CSRF cookie's path costs
+nothing: it holds an HMAC that is useless without the httponly refresh cookie.
+
+Both cookies share the `max_age`, `domain`, `secure` and `samesite` policy from
+`CookieConfig` (`src/main/config.py`; see the four `COOKIE_*`/`CSRF_SECRET_KEY`
+settings in `README.md`). `logout` calls `TokenCookieResponder.clear`, which expires
+both cookies at their respective paths; this is a no-op for a client that never
+received them (`body` transport).
 
 ## CSRF: stateless signed double submit
 
@@ -47,10 +56,19 @@ against. The scheme (`src/user/auth/csrf.py`) is stateless — no server-side CS
 storage:
 
 - On login/refresh, the server computes
-  `csrf_token = hmac_sha256(CSRF_SECRET_KEY, refresh_token)` and sets it as the
-  readable `csrf_token` cookie, alongside the httponly `refresh_token` cookie.
-- The client reads `csrf_token` from `document.cookie` and echoes it back in the
-  `X-CSRF-Token` request header on the next refresh call.
+  `csrf_token = hmac_sha256(CSRF_SECRET_KEY, refresh_token)` and returns it twice:
+  as the readable `csrf_token` cookie (alongside the httponly `refresh_token`
+  cookie) and as the `csrf_token` field of the JSON body.
+- The client echoes that value back in the `X-CSRF-Token` request header on the next
+  refresh call. Where it obtains the value depends on the deployment:
+  - **Same-origin SPA** — read `csrf_token` from `document.cookie`, or take it from
+    the login/refresh response body. Both work.
+  - **Cross-origin SPA** (`COOKIE_SAMESITE=none`) — the body field is the only
+    option. A JS client cannot read a cookie belonging to the API origin, at any
+    path; the browser still *sends* it, which is all the server needs.
+  - **Native client** (`X-Token-Transport: body`) — not applicable. No cookies are
+    written, `csrf_token` in the body stays `null`, and no CSRF check runs because
+    the refresh token arrives in the `Authorization` header.
 - `TokenCookieResponder.verify_csrf` recomputes the HMAC from the refresh token
   actually presented and compares it against the header with `hmac.compare_digest`.
   A missing or mismatched header raises `AccessForbiddenException` (403); both
