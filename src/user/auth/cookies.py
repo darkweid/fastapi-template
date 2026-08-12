@@ -85,8 +85,11 @@ class TokenCookieResponder:
             path=CSRF_COOKIE_PATH,
             httponly=False,
         )
+        # bandit reads a literal next to a "refresh_token" key as a hardcoded
+        # credential; here it is the opposite - the field is cleared so the token
+        # leaves only in the cookie.
         return tokens.model_copy(
-            update={"refresh_token": None, "csrf_token": csrf_token}
+            update={"refresh_token": None, "csrf_token": csrf_token}  # nosec B105
         )
 
     def clear(self, response: Response, transport: TokenTransport) -> None:
