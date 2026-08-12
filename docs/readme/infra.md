@@ -12,7 +12,6 @@ never bound to a host interface in production.
 | App | 8001 | Internal only (dev: `127.0.0.1:8001` for direct access) |
 | Postgres | 5432 | Internal only (dev: `127.0.0.1:5432`) |
 | Redis | 6379 | Internal only (dev: `127.0.0.1:6379`) |
-| RabbitMQ | 5672 / 15672 | Internal only (dev: `127.0.0.1:5672` / `127.0.0.1:15672`) |
 
 Backing-service host ports live **only** in `docker-compose.override.yml` (dev)
 and are bound to `127.0.0.1`. `make run` / `make up` (base file) publish nothing
@@ -25,11 +24,10 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 ## Containers
 - **Postgres:** `infra/postgres/Dockerfile`, stores data in volume.
 - **App:** Uvicorn/Gunicorn serving FastAPI under a non-root runtime user.
-- **Celery_worker:** Background tasks.
-- **Celery_beat:** Schedules periodic tasks and stores beat state in a named volume.
+- **Worker:** Runs taskiq tasks consumed from Redis Streams.
+- **Scheduler:** Fires periodic tasks (`schedule=[{"cron": "..."}]` on the task decorator) into the stream; exactly one instance runs.
 - **Nginx:** Reverse proxy to app with template security headers.
-- **Redis:** Cache/result backend with password.
-- **RabbitMQ:** Broker with management UI.
+- **Redis:** Cache/result backend with password; also the taskiq broker (Streams) and result backend.
 
 ## Prerequisites
 - Python 3.13 (for local scripts/hooks)
@@ -78,14 +76,14 @@ make clean            # remove stack + volumes/images/orphans
 
 ## Troubleshooting
 - Ensure Docker/Compose are installed.
-- `.env` must be filled (ports, DB/Redis/RabbitMQ credentials). `.env.test` used for local test runs `make test` / `make test-cov`.
+- `.env` must be filled (ports, DB/Redis credentials). `.env.test` used for local test runs `make test` / `make test-cov`.
 - Host-side integration tests that connect to `localhost` (per `.env.test`) need the backing-service ports, which are published on `127.0.0.1` only in dev — start the stack with `make run-dev` first. `make run` / `make up` do not publish them.
 - Use `make logs` or service-specific logs to inspect errors.
 - If migrations fail, check Postgres health first.
 
 ## Deployment Notes
-- `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `celery_worker`, or `celery_beat`.
-- It also publishes **only** the Nginx port to the host; Postgres/Redis/RabbitMQ/app stay internal to `app-network`. If you genuinely need a backing port on the host in production, bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
+- `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `worker`, or `scheduler`.
+- It also publishes **only** the Nginx port to the host; Postgres/Redis/app stay internal to `app-network`. If you genuinely need a backing port on the host in production, bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
 - Source bind mounts remain only in `infra/docker-compose.override.yml` for local development.
 - `infra/nginx/app.conf` sets baseline security headers at the reverse-proxy layer, while the FastAPI app keeps the same headers as a fallback for direct app access and tests. The proxy body itself lives in `infra/nginx/proxy.inc`, shared with the TLS server so the two cannot drift apart. Dev serves the same `app.conf`, only on a different published port.
 - TLS terminates at Nginx: copy `infra/nginx/tls.conf.example` over the `app.conf` mount, put the certificate under `infra/nginx/certs/` (git-ignored) and set the real hostname. It redirects plain http to https and leaves the ACME challenge path reachable.

@@ -7,16 +7,16 @@
 ![License](https://img.shields.io/github/license/darkweid/fastapi-template)
 
 
-Production-ready FastAPI template with modular architecture, async stack, Celery, and full Docker setup.
+Production-ready FastAPI template with modular architecture, async stack, and full Docker setup.
 
 ## Key Features
 - Async FastAPI with modular domain structure.
 - DB via SQLAlchemy async, repositories + Unit of Work for transactional work.
 - Caching: Redis cache layer (`src/core/redis/*`) with tags, decorators, lifecycle helpers, and deterministic ETag support for route responses.
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
-- Messaging: Celery workers/beat + RabbitMQ broker.
+- Messaging: taskiq worker/scheduler over Redis Streams.
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
-- Email service: templated mailer with Celery tasks for async sending.
+- Email service: templated mailer with async tasks for sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
 - Storage: async S3 adapter (`src/core/storage/s3`) with presign support.
 - Observability/resilience: structured logging (loggers), retry utils, health route.
@@ -110,7 +110,6 @@ Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
 - App direct: 8001 — internal (dev: `127.0.0.1`)
 - Postgres: 5432 — internal (dev: `127.0.0.1`)
 - Redis: 6379 — internal (dev: `127.0.0.1`)
-- RabbitMQ: 5672 (AMQP), 15672 (UI) — internal (dev: `127.0.0.1`)
 
 On a server, close everything else with `infra/firewall/` (UFW plus a
 `DOCKER-USER` chain, since Docker-published ports bypass UFW):
