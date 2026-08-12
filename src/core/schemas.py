@@ -20,7 +20,9 @@ class SuccessResponse(Base):
 
 class TokenModel(Base):
     access_token: str
-    refresh_token: str
+    # None when the refresh token was delivered as an httponly cookie instead.
+    # Use cases always populate it; TokenCookieResponder strips it at the HTTP edge.
+    refresh_token: str | None = None
 
 
 class EmailNormalizationMixin(BaseModel):

@@ -106,7 +106,7 @@ async def test_login_endpoint(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"access_token": "a", "refresh_token": "r"}
+    assert response.json() == {"access_token": "a", "refresh_token": None}
 
 
 @pytest.mark.asyncio
@@ -125,7 +125,7 @@ async def test_refresh_endpoint(
     response = await async_client.post("/v1/users/auth/login/refresh")
 
     assert response.status_code == 200
-    assert response.json() == {"access_token": "a", "refresh_token": "r"}
+    assert response.json() == {"access_token": "a", "refresh_token": None}
 
 
 @pytest.mark.asyncio

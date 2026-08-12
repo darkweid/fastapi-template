@@ -173,9 +173,12 @@ async def test_login_refresh_access_flow(
     dependency_overrides.set(get_access_by_refresh_token, refresh_dependency)
     dependency_overrides.set(get_current_user, access_dependency)
 
+    # X-Token-Transport: body keeps the refresh token in the JSON body so this flow
+    # can forward it via the Authorization header, exactly as a native client would.
     login_response = await async_client.post(
         "/v1/users/auth/login",
         json={"email": "user@example.com", "password": "StrongPass1!"},
+        headers={"X-Token-Transport": "body"},
     )
 
     assert login_response.status_code == 200
@@ -186,7 +189,10 @@ async def test_login_refresh_access_flow(
 
     refresh_response = await async_client.post(
         "/v1/users/auth/login/refresh",
-        headers={"Authorization": f"Bearer {state.refresh_token}"},
+        headers={
+            "Authorization": f"Bearer {state.refresh_token}",
+            "X-Token-Transport": "body",
+        },
     )
 
     assert refresh_response.status_code == 200

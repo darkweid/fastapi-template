@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request, Response
 
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
+from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
 from src.user.auth.dependencies import (
     AuthenticatedUser,
     get_access_by_refresh_token,
@@ -20,6 +21,7 @@ from src.user.auth.schemas import (
     ResetPasswordModel,
     SendResetPasswordRequestModel,
 )
+from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.auth.usecases.get_access_by_refresh import (
     GetTokensByRefreshUserUseCase,
     get_tokens_by_refresh_user_use_case,
@@ -110,12 +112,20 @@ async def verify_email(
 )
 async def login_user(
     login_form_data: LoginUserModel,
+    response: Response,
+    transport: Annotated[TokenTransport, Depends(get_token_transport)],
+    responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[LoginUserUseCase, Depends(get_login_user_use_case)],
 ) -> TokenModel:
     """
     Authenticate user and return tokens.
+
+    By default the refresh token is returned as an httponly cookie. Native clients
+    that store tokens themselves should send `X-Token-Transport: body` to receive it
+    in the response body instead.
     """
-    return await use_case.execute(data=login_form_data)
+    tokens = await use_case.execute(data=login_form_data)
+    return responder.apply(tokens, response, transport)
 
 
 @router.post(
@@ -138,19 +148,25 @@ async def login_user(
     ],
 )
 async def get_access_by_refresh(
+    response: Response,
     user_and_payload: Annotated[
         tuple[User, JWTPayload], Depends(get_access_by_refresh_token)
     ],
+    transport: Annotated[TokenTransport, Depends(get_token_transport)],
+    responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[
         GetTokensByRefreshUserUseCase, Depends(get_tokens_by_refresh_user_use_case)
     ],
 ) -> TokenModel:
     """
     Refresh the access token using a valid refresh token.
+
+    Browser clients send the refresh cookie together with the `X-CSRF-Token` header.
+    Native clients send the refresh token in the Authorization header.
     """
     current_user, old_payload = user_and_payload
-
-    return await use_case.execute(user=current_user, old_token_payload=old_payload)
+    tokens = await use_case.execute(user=current_user, old_token_payload=old_payload)
+    return responder.apply(tokens, response, transport)
 
 
 @router.post(
@@ -158,20 +174,25 @@ async def get_access_by_refresh(
     response_model=SuccessResponse,
 )
 async def logout_user(
+    response: Response,
     authenticated: Annotated[AuthenticatedUser, Depends(get_current_user_with_session)],
+    transport: Annotated[TokenTransport, Depends(get_token_transport)],
+    responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[LogoutUseCase, Depends(get_logout_use_case)],
     data: Annotated[LogoutRequestModel | None, Body()] = None,
 ) -> SuccessResponse:
     """
     Invalidate the current session or all user sessions.
     """
-    return await use_case.execute(
+    result = await use_case.execute(
         user_id=str(authenticated.user.id),
         session_id=authenticated.session_id,
         terminate_all_sessions=(
             data.terminate_all_sessions if data is not None else False
         ),
     )
+    responder.clear(response, transport)
+    return result
 
 
 @router.post(
