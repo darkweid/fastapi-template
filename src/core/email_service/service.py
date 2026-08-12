@@ -68,7 +68,9 @@ class EmailService:
                 template_data,
                 subtype.value,
             )
-            logger.debug("Email task queued for %s", normalized)
+            logger.debug(
+                "Email task queued for %s", [mask_email(str(e)) for e in normalized]
+            )
         except Exception as e:
             logger.error("Failed to queue template email task: %s", e)
             raise
