@@ -1,12 +1,11 @@
 import contextlib
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from fastapi_mail import MessageType
 from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
-from celery_tasks.types import CeleryTask
 from loggers import get_logger
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.tasks import (
@@ -62,8 +61,7 @@ class EmailService:
                 if isinstance(template_body, dict)
                 else template_body.model_dump()
             )
-            task = cast(CeleryTask, send_email_task)
-            task.delay(
+            await send_email_task.kiq(
                 subject,
                 [str(e) for e in normalized],
                 template_name,
@@ -84,8 +82,7 @@ class EmailService:
     ) -> None:
         validated_recipients = self._normalize_and_validate_recipients(recipients)
 
-        task = cast(CeleryTask, send_email_with_file_task)
-        task.delay(
+        await send_email_with_file_task.kiq(
             subject,
             [str(e) for e in validated_recipients],
             [str(path) for path in attachments],

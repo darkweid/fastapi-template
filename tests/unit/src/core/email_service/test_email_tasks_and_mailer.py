@@ -10,12 +10,13 @@ from tests.fakes.email import MockMailer
 from tests.helpers.providers import ProvideValue
 
 
-def test_send_email_task_calls_mailer(
+@pytest.mark.asyncio
+async def test_send_email_task_calls_mailer(
     mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
-    send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
+    await send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
 
     assert len(mock_mailer.sent_template_emails) == 1
     payload = mock_mailer.sent_template_emails[0]
@@ -26,12 +27,13 @@ def test_send_email_task_calls_mailer(
     assert payload["subtype"] == "html"
 
 
-def test_send_email_with_file_task_calls_mailer(
+@pytest.mark.asyncio
+async def test_send_email_with_file_task_calls_mailer(
     mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
-    send_email_with_file_task("S", ["a@b.com"], ["/tmp/a.txt"], "plain")
+    await send_email_with_file_task("S", ["a@b.com"], ["/tmp/a.txt"], "plain")
 
     assert len(mock_mailer.sent_attachments) == 1
 
@@ -60,7 +62,8 @@ async def test_fastapi_mailer_wrappers(
     assert not second_call_args.kwargs  # second call has no template_name kwarg
 
 
-def test_email_tasks_propagate_exceptions(
+@pytest.mark.asyncio
+async def test_email_tasks_propagate_exceptions(
     mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -69,4 +72,10 @@ def test_email_tasks_propagate_exceptions(
     monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
     with pytest.raises(RuntimeError):
-        send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
+        await send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
+
+
+def test_email_task_registration() -> None:
+    assert send_email_task.task_name == "send_email"
+    assert send_email_with_file_task.task_name == "send_email_with_file"
+    assert send_email_task.labels["retry_on_error"] is True
