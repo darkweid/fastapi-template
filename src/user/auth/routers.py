@@ -7,9 +7,9 @@ from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
 from src.user.auth.dependencies import (
-    AuthenticatedUser,
+    SessionIdentity,
     get_access_by_refresh_token,
-    get_current_user_with_session,
+    get_logout_identity,
     get_user_id_from_token,
     verify_csrf,
 )
@@ -182,24 +182,27 @@ async def get_access_by_refresh(
 )
 async def logout_user(
     response: Response,
-    authenticated: Annotated[AuthenticatedUser, Depends(get_current_user_with_session)],
+    identity: Annotated[SessionIdentity | None, Depends(get_logout_identity)],
     transport: Annotated[TokenTransport, Depends(get_token_transport)],
     responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[LogoutUseCase, Depends(get_logout_use_case)],
     data: Annotated[LogoutRequestModel | None, Body()] = None,
 ) -> SuccessResponse:
     """
-    Invalidate the current session or all user sessions.
+    Invalidate the current session or all user sessions and clear the auth cookies.
+
+    Works with an expired access token, so a client can always log out.
     """
-    result = await use_case.execute(
-        user_id=str(authenticated.user.id),
-        session_id=authenticated.session_id,
-        terminate_all_sessions=(
-            data.terminate_all_sessions if data is not None else False
-        ),
-    )
+    if identity is not None:
+        await use_case.execute(
+            user_id=identity.user_id,
+            session_id=identity.session_id,
+            terminate_all_sessions=(
+                data.terminate_all_sessions if data is not None else False
+            ),
+        )
     responder.clear(response, transport)
-    return result
+    return SuccessResponse(success=True)
 
 
 @router.post(

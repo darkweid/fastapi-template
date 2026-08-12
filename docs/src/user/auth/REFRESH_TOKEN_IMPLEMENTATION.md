@@ -48,6 +48,15 @@ settings in `README.md`). `logout` calls `TokenCookieResponder.clear`, which exp
 both cookies at their respective paths; this is a no-op for a client that never
 received them (`body` transport).
 
+Logout authenticates through `get_logout_identity`, which verifies the access token's
+signature but not its `exp`, and answers `None` rather than raising when it cannot
+identify a session. Every other endpoint rejects an expired token, but logout cannot
+afford to: the refresh cookie is scoped to the refresh route and never reaches
+`/logout`, and a browser cannot drop an httponly cookie on its own — so a rejected
+logout would leave the client holding a session it can neither use nor clear. A
+request whose token is missing or forged still gets its cookies expired; it simply
+revokes nothing server-side, because it names no session.
+
 ## CSRF: stateless signed double submit
 
 Because the refresh cookie is httponly, a same-site form or script cannot read it —

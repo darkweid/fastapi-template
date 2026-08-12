@@ -30,11 +30,24 @@ access_token_header = APIKeyHeader(name="Authorization", scheme_name="access-tok
 refresh_token_header = APIKeyHeader(
     name="Authorization", scheme_name="refresh-token", auto_error=False
 )
+# auto_error=False: logout accepts a request with no credentials at all, so that it
+# can still clear the auth cookies. See get_logout_identity.
+logout_token_header = APIKeyHeader(
+    name="Authorization", scheme_name="logout-token", auto_error=False
+)
 
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedUser:
     user: User
+    session_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class SessionIdentity:
+    """The user and session a token names, without loading the user entity."""
+
+    user_id: str
     session_id: str
 
 
@@ -173,6 +186,56 @@ async def get_current_user_with_session(
         raise credentials_exception
 
     return AuthenticatedUser(user=user, session_id=session_id)
+
+
+async def get_logout_identity(
+    token: Annotated[str | None, Security(logout_token_header)] = None,
+) -> SessionIdentity | None:
+    """
+    Identify the session a logout request asks to terminate.
+
+    Unlike every other authenticated dependency this one tolerates an expired access
+    token, and answers None instead of raising when it cannot identify a session.
+    Logout has to stay usable once the access token expires: the refresh cookie is
+    scoped to the refresh route and never reaches this endpoint, and a browser cannot
+    drop an httponly cookie itself, so a rejected logout would leave the client
+    holding a session it can neither use nor clear. The signature is still verified -
+    only the `exp` claim is relaxed - so a forged token identifies nothing.
+
+    Returns:
+        SessionIdentity: The user and session named by a signature-valid access token.
+        None: If no token was sent, or it is forged, malformed or not an access token.
+    """
+    if not token:
+        return None
+
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+
+    try:
+        payload = cast(
+            JWTPayload,
+            jwt.decode(
+                token,
+                config.jwt.JWT_USER_SECRET_KEY,
+                algorithms=[config.jwt.ALGORITHM],
+                options={"verify_exp": False},
+            ),
+        )
+    except jwt.PyJWTError:
+        return None
+
+    try:
+        user_id = payload["sub"]
+        session_id = payload["session_id"]
+        mode = payload["mode"]
+    except KeyError:
+        return None
+
+    if mode != "access_token":
+        return None
+
+    return SessionIdentity(user_id=user_id, session_id=session_id)
 
 
 async def get_access_by_refresh_token(

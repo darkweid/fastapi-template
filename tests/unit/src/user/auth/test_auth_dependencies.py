@@ -29,7 +29,11 @@ from src.user.auth.dependencies import (
 )
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
-from tests.factories.token_factory import build_access_payload, build_refresh_payload
+from tests.factories.token_factory import (
+    build_access_payload,
+    build_refresh_payload,
+    encode_access_payload,
+)
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
 from tests.fakes.redis import InMemoryRedis
@@ -396,3 +400,58 @@ async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_
 
     with pytest.raises(AccessForbiddenException):
         await verify_csrf(request, credentials, _refresh_responder())
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
+    """
+    The reason this dependency exists: with cookie transport the refresh cookie is
+    scoped to the refresh route and never reaches logout, and the browser cannot drop
+    an httponly cookie itself. Rejecting an expired access token here would leave a
+    user who logs out after access expiry holding a session they can neither use nor
+    clear.
+    """
+    payload = build_access_payload(
+        "user-1", session_id="session-1", expires_in_minutes=-10
+    )
+    token = encode_access_payload(payload)
+
+    identity = await dependencies.get_logout_identity(token=token)
+
+    assert identity == dependencies.SessionIdentity(
+        user_id="user-1", session_id="session-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_reads_a_bearer_prefixed_token() -> None:
+    payload = build_access_payload("user-1", session_id="session-1")
+    token = encode_access_payload(payload)
+
+    identity = await dependencies.get_logout_identity(token=f"Bearer {token}")
+
+    assert identity == dependencies.SessionIdentity(
+        user_id="user-1", session_id="session-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_returns_none_without_a_token() -> None:
+    assert await dependencies.get_logout_identity(token=None) is None
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_rejects_a_token_signed_with_another_key() -> None:
+    """Relaxing `exp` must not relax the signature: a forged token names no session."""
+    payload = build_access_payload("user-1", session_id="session-1")
+    forged = jwt.encode(payload, "x" * 32, config.jwt.ALGORITHM)
+
+    assert await dependencies.get_logout_identity(token=forged) is None
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_rejects_a_refresh_token() -> None:
+    payload = build_refresh_payload("user-1", session_id="session-1")
+    token = jwt.encode(payload, config.jwt.JWT_USER_SECRET_KEY, config.jwt.ALGORITHM)
+
+    assert await dependencies.get_logout_identity(token=token) is None
