@@ -69,7 +69,7 @@ services:
     container_name: template-worker
     image: template-app-image:latest
     env_file: ../.env
-    command: taskiq worker taskiq_worker.app:broker
+    command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver
     restart: unless-stopped
     depends_on:
       postgres:

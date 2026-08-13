@@ -22,7 +22,7 @@ services:
 
   worker:
     image: template-app-dev-image:latest
-    command: taskiq worker taskiq_worker.app:broker --reload
+    command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver --reload
     volumes:
       - ..:/app
       - /app/.venv
