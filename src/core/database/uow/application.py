@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database.repositories import BaseRepository
 from src.core.database.uow.abstract import R, RepositoryProtocol
 from src.core.database.uow.sqlalchemy import RepositoryInstance, SQLAlchemyUnitOfWork
+from src.core.outbox.repositories import OutboxRepository
 from src.user.repositories import UserRepository
 
 
@@ -55,6 +56,11 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork[R]):
             UserRepository: The user repository
         """
         return self._get_repository(UserRepository)
+
+    @property
+    def outbox(self) -> OutboxRepository:
+        """Get the OutboxRepository."""
+        return self._get_repository(OutboxRepository)
 
     # Add more repository properties as needed
 
