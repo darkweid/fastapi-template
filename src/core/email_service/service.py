@@ -12,6 +12,7 @@ from src.core.email_service.tasks import (
     send_email_task,
     send_email_with_file_task,
 )
+from src.core.outbox.dispatcher import TaskDispatcher
 from src.core.utils.security import mask_email
 
 logger = get_logger(__name__)
@@ -20,8 +21,11 @@ logger = get_logger(__name__)
 class EmailService:
     _email_adapter = TypeAdapter(EmailStr)
 
-    def __init__(self, mailer: AbstractMailer):
+    def __init__(
+        self, mailer: AbstractMailer, dispatcher: TaskDispatcher | None = None
+    ):
         self._mailer = mailer
+        self._dispatcher = dispatcher
 
     async def send_template_email(
         self,
@@ -65,7 +69,8 @@ class EmailService:
                 if isinstance(template_body, dict)
                 else template_body.model_dump()
             )
-            await send_email_task.kiq(
+            await self._require_dispatcher().enqueue(
+                send_email_task,
                 subject,
                 [str(e) for e in normalized],
                 template_name,
@@ -88,7 +93,8 @@ class EmailService:
     ) -> None:
         validated_recipients = self._normalize_and_validate_recipients(recipients)
 
-        await send_email_with_file_task.kiq(
+        await self._require_dispatcher().enqueue(
+            send_email_with_file_task,
             subject,
             [str(e) for e in validated_recipients],
             [str(path) for path in attachments],
@@ -157,6 +163,13 @@ class EmailService:
             file_paths=[file_path],
             subtype=subtype,
         )
+
+    def _require_dispatcher(self) -> TaskDispatcher:
+        # Worker-side tasks build EmailService(mailer) for immediate sends only;
+        # delayed sends are an API-side path and always get the dispatcher via DI.
+        if self._dispatcher is None:
+            raise RuntimeError("EmailService was constructed without a TaskDispatcher")
+        return self._dispatcher
 
     def _normalize_and_validate_recipients(
         self, recipients: str | list[str]

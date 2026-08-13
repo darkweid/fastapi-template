@@ -30,10 +30,13 @@ class ResetPasswordRequestUseCase:
 
     Workflow:
     1) Retrieve user by email.
-    2) If user exists, queue password reset email using the notifier with throttling.
+    2) If user exists, store the password reset email delivery in the outbox
+       using the notifier with throttling.
+    3) Commit the transaction (the outbox publish hook fires after commit).
 
     Side effects:
-    - Queues an external email notification.
+    - Inserts an outbox row for the password reset email and publishes it
+      after commit.
     - Sets/updates a throttle key in Redis.
 
     Errors:
@@ -65,10 +68,12 @@ class ResetPasswordRequestUseCase:
 
             throttle_key = build_email_throttle_key("password-reset", user.email)
             await self.notifier.send_password_reset_email(
+                uow=uow,
                 user=user,
                 base_url=request_base_url,
                 throttle_key=throttle_key,
             )
+            await uow.commit()
 
             logger.info(
                 "[ResetPasswordRequest] Reset password email successfully sent to %s",

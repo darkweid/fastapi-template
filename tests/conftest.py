@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator, Generator
 import os
+from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 import httpx2
@@ -56,8 +57,13 @@ def mock_mailer() -> MockMailer:
 
 
 @pytest.fixture
-def email_service(mock_mailer: MockMailer) -> EmailService:
-    return EmailService(mock_mailer)
+def email_dispatcher() -> AsyncMock:
+    return AsyncMock()
+
+
+@pytest.fixture
+def email_service(mock_mailer: MockMailer, email_dispatcher: AsyncMock) -> EmailService:
+    return EmailService(mock_mailer, email_dispatcher)
 
 
 @pytest.fixture

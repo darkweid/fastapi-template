@@ -5,7 +5,10 @@ from redis.asyncio import Redis
 from starlette.datastructures import URL
 
 from loggers import get_logger
+from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import InstanceProcessingException
+from src.core.outbox.dependencies import get_task_dispatcher
+from src.core.outbox.dispatcher import TaskDispatcher
 from src.core.redis.dependencies import get_redis_client
 from src.core.utils.security import mask_email
 from src.user.auth.tasks import send_reset_password_email_task
@@ -17,16 +20,18 @@ logger = get_logger(__name__)
 class ResetPasswordNotifier:
     """
     Coordinates sending password-reset emails:
-    - enqueues password-reset email delivery,
+    - stores password-reset email delivery in the outbox of the caller's transaction,
     - performs throttling through Redis (optional).
     """
 
     def __init__(
         self,
+        dispatcher: TaskDispatcher,
         redis_client: Redis | None = None,
         throttle_ttl_sec: int = 60,
         reset_link_path: str = "v1/users/auth/password/reset/confirm",  # ToDo: adjust link with frontend here
     ) -> None:
+        self.dispatcher = dispatcher
         self.redis_client = redis_client
         self.throttle_ttl_sec = throttle_ttl_sec
         self.reset_link_path = reset_link_path
@@ -42,13 +47,17 @@ class ResetPasswordNotifier:
         await self.redis_client.setex(key, self.throttle_ttl_sec, "1")
 
     async def send_password_reset_email(
-        self, user: User, base_url: URL, throttle_key: str | None = None
+        self,
+        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        user: User,
+        base_url: URL,
+        throttle_key: str | None = None,
     ) -> None:
         await self._throttle_or_touch(throttle_key)
         try:
-            # redis_client is TaskiqDepends-injected on the worker side; mypy
-            # still sees it as a required kwarg of the wrapped function's ParamSpec.
-            await send_reset_password_email_task.kiq(  # type: ignore[call-overload]
+            await self.dispatcher.enqueue_transactional(
+                uow,
+                send_reset_password_email_task,
                 user.email,
                 user.full_name,
                 str(base_url),
@@ -56,16 +65,19 @@ class ResetPasswordNotifier:
                 throttle_key,
             )
         except Exception:
+            # The outbox insert failed with the transaction still open: release
+            # the throttle so the user can retry immediately.
             if throttle_key and self.redis_client is not None:
                 await self.redis_client.delete(throttle_key)
             logger.exception(
-                "Failed to queue password reset email for %s",
+                "Failed to enqueue password reset email for %s",
                 mask_email(user.email),
             )
             raise
 
 
 def get_reset_password_notifier(
+    dispatcher: Annotated[TaskDispatcher, Depends(get_task_dispatcher)],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> ResetPasswordNotifier:
-    return ResetPasswordNotifier(redis_client=redis_client)
+    return ResetPasswordNotifier(dispatcher=dispatcher, redis_client=redis_client)
