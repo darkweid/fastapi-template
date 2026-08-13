@@ -30,12 +30,14 @@ class RegisterUseCase:
 
     Workflow:
     1) Create a new user record in the database.
-    2) Commit the transaction.
-    3) Queue verification email delivery.
+    2) Store the verification email delivery in the outbox within the same
+       transaction.
+    3) Commit the transaction (the outbox publish hook fires after commit).
 
     Side effects:
     - Creates a user record in the database.
-    - Queues an external email notification after a successful commit.
+    - Inserts an outbox row for the verification email and publishes it
+      after commit.
 
     Errors:
     - InstanceAlreadyExistsException: if email or username already exists.
@@ -63,21 +65,15 @@ class RegisterUseCase:
                 session=uow.session,
                 data=user_data,
             )
-            await uow.commit()
-
-        # Queued outside the UoW: the account already exists and is committed, so a
-        # broker outage must not fail registration or roll the user back. The user
-        # can request a new verification email from the resend endpoint.
-        try:
+            # Outbox row rides the same transaction: a rollback cancels the
+            # email, a broker outage no longer fails registration.
             await self.notifier.send_verification(
+                uow=uow,
                 user=user,
                 base_url=request_base_url,
             )
-        except Exception:
-            logger.exception(
-                "[Register User] Failed to queue verification email for '%s'.",
-                data.username,
-            )
+            await uow.commit()
+
         logger.info("[Register User] User '%s' registered successfully.", data.username)
         return UserProfileViewModel.model_validate(user)
 

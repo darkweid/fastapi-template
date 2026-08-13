@@ -12,6 +12,7 @@ from src.core.errors.exceptions import (
     PermissionDeniedException,
 )
 from src.core.schemas import SuccessResponse, TokenModel
+from src.core.utils.security import build_email_throttle_key
 from src.main.config import config
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import (
@@ -77,11 +78,13 @@ class FakeUsersRepository:
 class FakeVerificationNotifier:
     def __init__(self) -> None:
         self.send_verification = AsyncMock()
+        self.release_throttle = AsyncMock()
 
 
 class FakeResetPasswordNotifier:
     def __init__(self) -> None:
         self.send_password_reset_email = AsyncMock()
+        self.release_throttle = AsyncMock()
 
 
 def build_uow(
@@ -174,10 +177,11 @@ async def test_register_usecase_creates_user_and_sends_email(
     )
     base_url = URL("http://testserver/")
 
-    async def assert_commit_completed(**_: object) -> None:
-        assert uow.completed is True
-
-    notifier.send_verification.side_effect = assert_commit_completed
+    call_order: list[str] = []
+    notifier.send_verification = AsyncMock(
+        side_effect=lambda **_: call_order.append("notify")
+    )
+    uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
     result = await use_case.execute(data=data, request_base_url=base_url)
 
@@ -188,21 +192,23 @@ async def test_register_usecase_creates_user_and_sends_email(
     users_repo.create.assert_awaited_once()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
+    assert call_order == ["notify", "commit"]
     assert notifier.send_verification.await_args.kwargs == {
+        "uow": uow,
         "user": user,
         "base_url": base_url,
     }
 
 
 @pytest.mark.asyncio
-async def test_register_usecase_returns_success_when_queueing_email_fails(
+async def test_register_usecase_propagates_notifier_failure(
     fake_session: FakeAsyncSession,
 ) -> None:
     user = build_user(email="john@example.com")
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
     notifier = FakeVerificationNotifier()
-    notifier.send_verification.side_effect = RuntimeError("broker down")
+    notifier.send_verification.side_effect = RuntimeError("outbox insert failed")
     use_case = RegisterUseCase(uow=uow, notifier=notifier)
     data = CreateUserModel(
         first_name="John",
@@ -213,13 +219,12 @@ async def test_register_usecase_returns_success_when_queueing_email_fails(
         password="StrongPass1!",
     )
 
-    result = await use_case.execute(
-        data=data, request_base_url=URL("http://testserver/")
-    )
+    with pytest.raises(RuntimeError, match="outbox insert failed"):
+        await use_case.execute(data=data, request_base_url=URL("http://testserver/"))
 
-    assert isinstance(result, UserProfileViewModel)
-    uow.commit.assert_awaited_once()
     notifier.send_verification.assert_awaited_once()
+    uow.commit.assert_not_awaited()
+    uow.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -236,6 +241,37 @@ async def test_resend_verification_returns_success_on_missing_user(
 
     assert result == SuccessResponse(success=True)
     notifier.send_verification.assert_not_awaited()
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resend_verification_success(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeVerificationNotifier()
+    use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
+    base_url = URL("http://x/")
+
+    call_order: list[str] = []
+    notifier.send_verification = AsyncMock(
+        side_effect=lambda **_: call_order.append("notify")
+    )
+    uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+
+    result = await use_case.execute(
+        data=ResendVerificationModel(email=user.email), request_base_url=base_url
+    )
+
+    assert result == SuccessResponse(success=True)
+    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    notifier.send_verification.assert_awaited_once_with(
+        uow=uow, user=user, base_url=base_url, throttle_key=expected_throttle_key
+    )
+    uow.commit.assert_awaited_once()
+    assert call_order == ["notify", "commit"]
 
 
 @pytest.mark.asyncio
@@ -254,6 +290,29 @@ async def test_resend_verification_skips_if_throttled(
 
     assert result == SuccessResponse(success=True)
     notifier.send_verification.assert_awaited_once()
+    assert notifier.send_verification.await_args.kwargs["uow"] is uow
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resend_verification_releases_throttle_when_commit_fails(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeVerificationNotifier()
+    use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
+    uow.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await use_case.execute(
+            data=ResendVerificationModel(email=user.email),
+            request_base_url=URL("http://x/"),
+        )
+
+    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
 @pytest.mark.asyncio
@@ -271,6 +330,7 @@ async def test_resend_verification_user_already_verified(
 
     assert result == SuccessResponse(success=True)
     notifier.send_verification.assert_not_awaited()
+    uow.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -282,12 +342,45 @@ async def test_reset_password_request_success(
     uow = build_uow(fake_session, users_repo)
     notifier = FakeResetPasswordNotifier()
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
+    base_url = URL("http://x/")
+
+    call_order: list[str] = []
+    notifier.send_password_reset_email = AsyncMock(
+        side_effect=lambda **_: call_order.append("notify")
+    )
+    uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
     data = SendResetPasswordRequestModel(email=user.email)
-    result = await use_case.execute(data=data, request_base_url=URL("http://x/"))
+    result = await use_case.execute(data=data, request_base_url=base_url)
 
     assert result == SuccessResponse(success=True)
-    notifier.send_password_reset_email.assert_awaited_once()
+    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    notifier.send_password_reset_email.assert_awaited_once_with(
+        uow=uow, user=user, base_url=base_url, throttle_key=expected_throttle_key
+    )
+    uow.commit.assert_awaited_once()
+    assert call_order == ["notify", "commit"]
+
+
+@pytest.mark.asyncio
+async def test_reset_password_request_releases_throttle_when_commit_fails(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeResetPasswordNotifier()
+    use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
+    uow.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await use_case.execute(
+            data=SendResetPasswordRequestModel(email=user.email),
+            request_base_url=URL("http://x/"),
+        )
+
+    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
 @pytest.mark.asyncio
@@ -304,6 +397,7 @@ async def test_reset_password_request_user_not_found(
 
     assert result == SuccessResponse(success=True)
     notifier.send_password_reset_email.assert_not_awaited()
+    uow.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -7,4 +7,5 @@ table relationships effectively.
 
 # Import all models here
 
+from src.core.outbox.models import OutboxMessage as OutboxMessage
 from src.user.models import User as User  # Re-export the User model explicitly

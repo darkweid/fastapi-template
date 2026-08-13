@@ -48,6 +48,27 @@ class FakeAsyncSession:
     def begin_nested(self) -> AsyncTransactionContext:
         return AsyncTransactionContext(self)
 
+    async def __aenter__(self) -> FakeAsyncSession:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
+        return None
+
+
+class FakeSessionFactory:
+    """Stands in for async_sessionmaker: calling it yields the same fake session."""
+
+    def __init__(self, session: FakeAsyncSession | None = None) -> None:
+        self.session = session or FakeAsyncSession()
+
+    def __call__(self) -> FakeAsyncSession:
+        return self.session
+
 
 class FakeUnitOfWork:
     def __init__(
@@ -58,7 +79,8 @@ class FakeUnitOfWork:
         self._session = session or FakeAsyncSession()
         self._repositories = repositories or {}
         self._completed = False
-        self.commit = AsyncMock(side_effect=self._mark_committed)
+        self._after_commit_hooks: list[Any] = []
+        self.commit = AsyncMock(side_effect=self._commit)
         self.rollback = AsyncMock(side_effect=self._mark_rolled_back)
         self.flush = AsyncMock(side_effect=self._flush)
         self.refresh = AsyncMock(side_effect=self._refresh)
@@ -76,11 +98,22 @@ class FakeUnitOfWork:
             await self.rollback()
         return None
 
-    def _mark_committed(self) -> None:
+    async def _commit(self) -> None:
         self._completed = True
+        hooks, self._after_commit_hooks = self._after_commit_hooks, []
+        for hook in hooks:
+            try:
+                await hook()
+            except Exception:  # noqa: S110 - mirrors the real UoW hook runner
+                pass
+
+    def add_after_commit_hook(self, hook: Any) -> None:
+        self._ensure_not_completed()
+        self._after_commit_hooks.append(hook)
 
     def _mark_rolled_back(self) -> None:
         self._completed = True
+        self._after_commit_hooks = []
 
     def _ensure_not_completed(self) -> None:
         if self._completed:

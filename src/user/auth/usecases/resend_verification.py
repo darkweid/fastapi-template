@@ -33,14 +33,15 @@ class SendVerificationUseCase:
     Workflow:
     1) Retrieve user by email.
     2) Check if user is already verified.
-    3) Send verification email using the notifier with throttling.
+    3) Store the verification email delivery in the outbox using the notifier
+       with throttling.
+    4) Commit the transaction (the outbox publish hook fires after commit).
 
     Side effects:
-    - Sends an external email notification.
-    - Sets/updates a throttle key in Redis.
-
-    Errors:
-    - InfrastructureException: if email sending fails.
+    - Inserts an outbox row for the verification email and publishes it
+      after commit.
+    - Sets/updates a throttle key in Redis; releases it if the transaction
+      fails to commit.
 
     Returns:
     - SuccessResponse: success=True regardless of whether email was sent (for privacy).
@@ -75,6 +76,7 @@ class SendVerificationUseCase:
             throttle_key = build_email_throttle_key("resend_verification", user.email)
             try:
                 await self.notifier.send_verification(
+                    uow=uow,
                     user=user,
                     base_url=request_base_url,
                     throttle_key=throttle_key,
@@ -84,7 +86,16 @@ class SendVerificationUseCase:
                     "[ResendVerification] Skip sending to email '%s' due to throttle",
                     mask_email(data.email),
                 )
+                return SuccessResponse(success=True)
 
+            try:
+                await uow.commit()
+            except Exception:
+                # The rollback discards the outbox row, but the throttle key in
+                # Redis survives it: release it so a retry is not locked out
+                # for the full TTL with no email queued.
+                await self.notifier.release_throttle(throttle_key)
+                raise
             return SuccessResponse(success=True)
 
 

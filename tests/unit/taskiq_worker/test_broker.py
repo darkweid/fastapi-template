@@ -1,8 +1,8 @@
 from taskiq import InMemoryBroker
 from taskiq.middlewares import SmartRetryMiddleware
-from taskiq_redis import RedisAsyncResultBackend, RedisStreamBroker
+from taskiq_redis import ListRedisScheduleSource, RedisStreamBroker
 
-from taskiq_worker.broker import RESULT_TTL_SECONDS, broker, create_production_broker
+from taskiq_worker.broker import broker, create_production_broker
 from taskiq_worker.middlewares import SentryMiddleware
 
 
@@ -16,11 +16,10 @@ def test_production_broker_assembly() -> None:
     production = create_production_broker()
 
     assert isinstance(production, RedisStreamBroker)
-    assert isinstance(production.result_backend, RedisAsyncResultBackend)
-    middleware_types = {type(m) for m in production.middlewares}
-    assert SmartRetryMiddleware in middleware_types
-    assert SentryMiddleware in middleware_types
-
-
-def test_result_ttl_is_one_hour() -> None:
-    assert RESULT_TTL_SECONDS == 3600
+    # No result backend attached: the broker keeps taskiq's do-nothing default.
+    assert type(production.result_backend).__name__ == "DummyResultBackend"
+    retry_middleware = next(
+        m for m in production.middlewares if isinstance(m, SmartRetryMiddleware)
+    )
+    assert isinstance(retry_middleware.schedule_source, ListRedisScheduleSource)
+    assert any(isinstance(m, SentryMiddleware) for m in production.middlewares)

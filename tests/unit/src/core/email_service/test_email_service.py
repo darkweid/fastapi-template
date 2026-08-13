@@ -6,12 +6,8 @@ import pytest
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.schemas import MailTemplateBodyFile, MailTemplateDataBody
 from src.core.email_service.service import EmailService
+from src.core.email_service.tasks import send_email_task, send_email_with_file_task
 from tests.fakes.email import MockMailer
-
-
-class FakeTaskiqTask:
-    def __init__(self) -> None:
-        self.kiq = AsyncMock()
 
 
 class FailingMailer(AbstractMailer):
@@ -196,10 +192,8 @@ async def test_send_template_email_empty_recipients(email_service: EmailService)
 
 @pytest.mark.asyncio
 async def test_send_template_email_with_delay_queues_task(
-    email_service: EmailService, monkeypatch: pytest.MonkeyPatch
+    email_service: EmailService, email_dispatcher: AsyncMock
 ):
-    task = FakeTaskiqTask()
-    monkeypatch.setattr("src.core.email_service.service.send_email_task", task)
     body = MailTemplateDataBody(title="Queued", link="https://queue")
 
     await email_service.send_template_email_with_delay(
@@ -209,7 +203,8 @@ async def test_send_template_email_with_delay_queues_task(
         template_body=body,
     )
 
-    task.kiq.assert_awaited_once_with(
+    assert email_dispatcher.enqueue.await_args.args[0] is send_email_task
+    assert email_dispatcher.enqueue.await_args.args[1:] == (
         "Queued",
         ["user@example.com"],
         "queue.html",
@@ -220,12 +215,8 @@ async def test_send_template_email_with_delay_queues_task(
 
 @pytest.mark.asyncio
 async def test_send_file_to_email_with_delay_queues_task(
-    email_service: EmailService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    email_service: EmailService, email_dispatcher: AsyncMock, tmp_path: Path
 ):
-    task = FakeTaskiqTask()
-    monkeypatch.setattr(
-        "src.core.email_service.service.send_email_with_file_task", task
-    )
     file_path = tmp_path / "file.txt"
     file_path.write_text("content")
 
@@ -235,12 +226,29 @@ async def test_send_file_to_email_with_delay_queues_task(
         attachments=[file_path],
     )
 
-    task.kiq.assert_awaited_once_with(
+    assert email_dispatcher.enqueue.await_args.args[0] is send_email_with_file_task
+    assert email_dispatcher.enqueue.await_args.args[1:] == (
         "Files",
         ["user@example.com"],
         [str(file_path)],
         "plain",
     )
+
+
+@pytest.mark.asyncio
+async def test_send_template_email_with_delay_raises_without_dispatcher(
+    mock_mailer: MockMailer,
+) -> None:
+    email_service = EmailService(mock_mailer)
+    body = MailTemplateDataBody(title="Queued", link="https://queue")
+
+    with pytest.raises(RuntimeError, match="without a TaskDispatcher"):
+        await email_service.send_template_email_with_delay(
+            subject="Queued",
+            recipients=["user@example.com"],
+            template_name="queue.html",
+            template_body=body,
+        )
 
 
 @pytest.mark.asyncio
