@@ -95,10 +95,13 @@ async def test_publish_failure_does_not_break_commit() -> None:
     dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
     uow, _outbox_repo, _row = make_uow_with_outbox()
     broken = AsyncMock(side_effect=RuntimeError("redis down"))
+    # Simulate kiq failure BEFORE hook creation so partial captures the broken method.
+    dispatcher._publish = broken  # noqa: SLF001
 
     async with uow:
         await dispatcher.enqueue_transactional(uow, probe, "hello")
-        dispatcher._publish = broken  # noqa: SLF001 - simulate kiq failure; row stays PENDING for the sweeper
         await uow.commit()  # must not raise
 
     assert uow.completed
+    # Verify the failing hook was actually invoked (not captured by dispatcher).
+    broken.assert_awaited_once()
