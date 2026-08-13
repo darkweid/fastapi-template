@@ -40,7 +40,8 @@ class ResetPasswordRequestUseCase:
     - Sets/updates a throttle key in Redis.
 
     Errors:
-    - InfrastructureException: if email sending fails.
+    - InstanceProcessingException: if a reset email was already sent recently
+      and the throttle window has not elapsed.
 
     Returns:
     - SuccessResponse: success=True regardless of whether email was sent.

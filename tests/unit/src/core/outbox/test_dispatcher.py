@@ -63,15 +63,22 @@ async def test_enqueue_transactional_inserts_row_and_defers_publish() -> None:
 
 
 async def test_publish_hook_marks_row_published() -> None:
-    _broker, _calls, probe = make_broker_and_probe()
     dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
     dispatcher._outbox_repository = AsyncMock()  # noqa: SLF001
     uow, _outbox_repo, row = make_uow_with_outbox()
 
+    kicker = MagicMock()
+    kicker.with_task_id.return_value.kiq = AsyncMock()
+    task = MagicMock()
+    task.kicker.return_value = kicker
+
     async with uow:
-        await dispatcher.enqueue_transactional(uow, probe, "hello")
+        await dispatcher.enqueue_transactional(uow, task, "hello")
         await uow.commit()
 
+    # The outbox row id doubles as the broker task_id: this is what lets the
+    # IdempotencyReceiver dedupe a hook publish against a sweeper republish.
+    kicker.with_task_id.assert_called_once_with(str(row.id))
     dispatcher._outbox_repository.mark_published.assert_awaited_once()  # noqa: SLF001
     assert (
         dispatcher._outbox_repository.mark_published.await_args.args[1] == row.id

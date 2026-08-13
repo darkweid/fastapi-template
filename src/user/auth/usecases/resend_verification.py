@@ -42,9 +42,6 @@ class SendVerificationUseCase:
       after commit.
     - Sets/updates a throttle key in Redis.
 
-    Errors:
-    - InfrastructureException: if email sending fails.
-
     Returns:
     - SuccessResponse: success=True regardless of whether email was sent (for privacy).
     """

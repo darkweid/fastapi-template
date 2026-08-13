@@ -1,9 +1,11 @@
+from datetime import timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 from sqlalchemy.dialects import postgresql
 
 from src.core.outbox.repositories import OutboxRepository
+from src.core.utils.datetime_utils import get_utc_now
 from tests.fakes.db import FakeAsyncSession
 
 
@@ -52,10 +54,6 @@ async def test_mark_publish_failure_not_final_keeps_status() -> None:
 
 
 async def test_purge_published_filters_status_and_cutoff() -> None:
-    from datetime import timedelta
-
-    from src.core.utils.datetime_utils import get_utc_now
-
     session = FakeAsyncSession()
     session.execute.return_value = MagicMock(rowcount=3)
 
