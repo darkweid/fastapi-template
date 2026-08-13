@@ -1,15 +1,20 @@
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from typing import Any, Self, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loggers import get_logger
 from src.core.database.repositories import BaseRepository
 from src.core.database.transactions import safe_begin
 from src.core.database.uow.abstract import R, UnitOfWork
 
 # Type variable for repository instances
 RepositoryInstance = TypeVar("RepositoryInstance", bound=BaseRepository[Any])
+
+logger = get_logger(__name__)
+
+AfterCommitHook = Callable[[], Awaitable[None]]
 
 
 class SQLAlchemyUnitOfWork(UnitOfWork[R]):
@@ -33,6 +38,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         self._session = session
         self._exit_stack = AsyncExitStack()  # noqa
         self._is_completed = False
+        self._after_commit_hooks: list[AfterCommitHook] = []
 
     async def __aenter__(self) -> Self:
         """
@@ -63,6 +69,11 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         if self._is_completed:
             raise RuntimeError("This unit of work has already been completed")
 
+    def add_after_commit_hook(self, hook: AfterCommitHook) -> None:
+        """Register a coroutine to run once after a successful commit."""
+        self._ensure_not_completed()
+        self._after_commit_hooks.append(hook)
+
     async def commit(self) -> None:
         """
         Commit the transaction.
@@ -73,6 +84,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         self._ensure_not_completed()
         await self._session.commit()
         self._is_completed = True
+        await self._run_after_commit_hooks()
 
     async def rollback(self) -> None:
         """
@@ -84,6 +96,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         self._ensure_not_completed()
         await self._session.rollback()
         self._is_completed = True
+        self._after_commit_hooks = []
 
     async def flush(self) -> None:
         """Flush pending changes to the database."""
@@ -103,6 +116,17 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
             attribute_names=attribute_names,
             with_for_update=with_for_update,
         )
+
+    async def _run_after_commit_hooks(self) -> None:
+        hooks, self._after_commit_hooks = self._after_commit_hooks, []
+        for hook in hooks:
+            # Best-effort by design: the data is committed and the outbox
+            # sweeper guarantees delivery, so a failed hook must not fail the
+            # request. This is the one sanctioned exception swallow.
+            try:
+                await hook()
+            except Exception:
+                logger.exception("After-commit hook failed")
 
     @property
     def completed(self) -> bool:
