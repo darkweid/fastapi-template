@@ -13,6 +13,8 @@ EXPECTED_TASKS = {
     "send_reset_password_email",
     "send_email",
     "send_email_with_file",
+    "outbox_sweeper",
+    "outbox_purge",
 }
 
 _LIST_REGISTERED_TASKS_SCRIPT = (

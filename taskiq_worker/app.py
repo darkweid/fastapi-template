@@ -5,6 +5,7 @@ invisible to the worker.
 """
 
 import src.core.email_service.tasks  # noqa: F401
+import src.core.outbox.tasks  # noqa: F401
 from src.main.sentry import init_sentry
 import src.user.auth.tasks  # noqa: F401
 import src.user.tasks  # noqa: F401
