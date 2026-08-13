@@ -40,7 +40,8 @@ class SendVerificationUseCase:
     Side effects:
     - Inserts an outbox row for the verification email and publishes it
       after commit.
-    - Sets/updates a throttle key in Redis.
+    - Sets/updates a throttle key in Redis; releases it if the transaction
+      fails to commit.
 
     Returns:
     - SuccessResponse: success=True regardless of whether email was sent (for privacy).
@@ -87,7 +88,14 @@ class SendVerificationUseCase:
                 )
                 return SuccessResponse(success=True)
 
-            await uow.commit()
+            try:
+                await uow.commit()
+            except Exception:
+                # The rollback discards the outbox row, but the throttle key in
+                # Redis survives it: release it so a retry is not locked out
+                # for the full TTL with no email queued.
+                await self.notifier.release_throttle(throttle_key)
+                raise
             return SuccessResponse(success=True)
 
 

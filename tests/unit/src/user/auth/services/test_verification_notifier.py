@@ -77,3 +77,25 @@ async def test_verification_notifier_cleans_throttle_key_when_queueing_fails(
         )
 
     assert await fake_redis.exists(throttle_key) == 0
+
+
+@pytest.mark.asyncio
+async def test_release_throttle_deletes_key(fake_redis: InMemoryRedis) -> None:
+    notifier = VerificationNotifier(dispatcher=AsyncMock(), redis_client=fake_redis)
+    throttle_key = build_email_throttle_key("resend_verification", "user@example.com")
+    await fake_redis.set(throttle_key, "1", ex=60)
+
+    await notifier.release_throttle(throttle_key)
+
+    assert await fake_redis.exists(throttle_key) == 0
+
+
+@pytest.mark.asyncio
+async def test_release_throttle_swallows_redis_errors() -> None:
+    redis_client = AsyncMock()
+    redis_client.delete.side_effect = ConnectionError("redis down")
+    notifier = VerificationNotifier(dispatcher=AsyncMock(), redis_client=redis_client)
+
+    await notifier.release_throttle("any-key")
+
+    redis_client.delete.assert_awaited_once_with("any-key")

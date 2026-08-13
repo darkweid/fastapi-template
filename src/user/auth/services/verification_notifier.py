@@ -1,3 +1,4 @@
+from contextlib import suppress
 from typing import Annotated
 
 from fastapi import Depends
@@ -46,6 +47,17 @@ class VerificationNotifier:
             )
         await self.redis_client.setex(key, self.throttle_ttl_sec, "1")
 
+    async def release_throttle(self, throttle_key: str | None) -> None:
+        """Best-effort throttle release for flows that failed after setting it.
+
+        The throttle key outlives a rolled-back transaction (Redis is not part
+        of it), so a failed flow must drop the key or the user stays locked out
+        for the full TTL without any email queued.
+        """
+        if throttle_key and self.redis_client is not None:
+            with suppress(Exception):
+                await self.redis_client.delete(throttle_key)
+
     async def send_verification(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
@@ -67,8 +79,7 @@ class VerificationNotifier:
         except Exception:
             # The outbox insert failed with the transaction still open: release
             # the throttle so the user can retry immediately.
-            if throttle_key and self.redis_client is not None:
-                await self.redis_client.delete(throttle_key)
+            await self.release_throttle(throttle_key)
             logger.exception(
                 "Failed to enqueue verification email for %s",
                 mask_email(user.email),

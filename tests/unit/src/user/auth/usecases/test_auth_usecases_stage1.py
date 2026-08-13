@@ -78,11 +78,13 @@ class FakeUsersRepository:
 class FakeVerificationNotifier:
     def __init__(self) -> None:
         self.send_verification = AsyncMock()
+        self.release_throttle = AsyncMock()
 
 
 class FakeResetPasswordNotifier:
     def __init__(self) -> None:
         self.send_password_reset_email = AsyncMock()
+        self.release_throttle = AsyncMock()
 
 
 def build_uow(
@@ -293,6 +295,27 @@ async def test_resend_verification_skips_if_throttled(
 
 
 @pytest.mark.asyncio
+async def test_resend_verification_releases_throttle_when_commit_fails(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeVerificationNotifier()
+    use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
+    uow.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await use_case.execute(
+            data=ResendVerificationModel(email=user.email),
+            request_base_url=URL("http://x/"),
+        )
+
+    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
+
+
+@pytest.mark.asyncio
 async def test_resend_verification_user_already_verified(
     fake_session: FakeAsyncSession,
 ) -> None:
@@ -337,6 +360,27 @@ async def test_reset_password_request_success(
     )
     uow.commit.assert_awaited_once()
     assert call_order == ["notify", "commit"]
+
+
+@pytest.mark.asyncio
+async def test_reset_password_request_releases_throttle_when_commit_fails(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeResetPasswordNotifier()
+    use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
+    uow.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await use_case.execute(
+            data=SendResetPasswordRequestModel(email=user.email),
+            request_base_url=URL("http://x/"),
+        )
+
+    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
 @pytest.mark.asyncio

@@ -37,7 +37,8 @@ class ResetPasswordRequestUseCase:
     Side effects:
     - Inserts an outbox row for the password reset email and publishes it
       after commit.
-    - Sets/updates a throttle key in Redis.
+    - Sets/updates a throttle key in Redis; releases it if the transaction
+      fails to commit.
 
     Errors:
     - InstanceProcessingException: if a reset email was already sent recently
@@ -74,7 +75,14 @@ class ResetPasswordRequestUseCase:
                 base_url=request_base_url,
                 throttle_key=throttle_key,
             )
-            await uow.commit()
+            try:
+                await uow.commit()
+            except Exception:
+                # The rollback discards the outbox row, but the throttle key in
+                # Redis survives it: release it so a retry is not locked out
+                # for the full TTL with no email queued.
+                await self.notifier.release_throttle(throttle_key)
+                raise
 
             logger.info(
                 "[ResetPasswordRequest] Reset password email successfully sent to %s",
