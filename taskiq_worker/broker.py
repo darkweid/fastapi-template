@@ -1,7 +1,7 @@
 from taskiq import InMemoryBroker
 from taskiq.abc.broker import AsyncBroker
 from taskiq.middlewares import SmartRetryMiddleware
-from taskiq_redis import RedisScheduleSource, RedisStreamBroker
+from taskiq_redis import ListRedisScheduleSource, RedisStreamBroker
 
 from src.main.config import config
 from taskiq_worker.middlewares import SentryMiddleware
@@ -18,14 +18,14 @@ STREAM_MAXLEN = 100_000
 RETRY_DELAY_SECONDS = 60
 
 
-def create_retry_schedule_source() -> RedisScheduleSource:
-    return RedisScheduleSource(config.redis.tasks_dsn)
+def create_retry_schedule_source() -> ListRedisScheduleSource:
+    return ListRedisScheduleSource(config.redis.tasks_dsn)
 
 
 # Shared by SmartRetryMiddleware (writes one-shot retry schedules) and the
 # scheduler (fires them when due). None under TESTING: the in-memory broker
 # retries nothing and the scheduler never runs in tests.
-retry_schedule_source: RedisScheduleSource | None = (
+retry_schedule_source: ListRedisScheduleSource | None = (
     None if config.app.TESTING else create_retry_schedule_source()
 )
 

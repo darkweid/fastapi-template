@@ -1,6 +1,6 @@
 from taskiq import InMemoryBroker
 from taskiq.middlewares import SmartRetryMiddleware
-from taskiq_redis import RedisScheduleSource, RedisStreamBroker
+from taskiq_redis import ListRedisScheduleSource, RedisStreamBroker
 
 from taskiq_worker.broker import broker, create_production_broker
 from taskiq_worker.middlewares import SentryMiddleware
@@ -21,5 +21,5 @@ def test_production_broker_assembly() -> None:
     retry_middleware = next(
         m for m in production.middlewares if isinstance(m, SmartRetryMiddleware)
     )
-    assert isinstance(retry_middleware.schedule_source, RedisScheduleSource)
+    assert isinstance(retry_middleware.schedule_source, ListRedisScheduleSource)
     assert any(isinstance(m, SentryMiddleware) for m in production.middlewares)
