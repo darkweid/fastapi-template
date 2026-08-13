@@ -1,10 +1,10 @@
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from src.core.email_service import tasks
-from src.core.email_service.fastapi_mailer import FastAPIMailer
+from src.core.email_service.enums import MessageType
+from src.core.email_service.smtp_mailer import SmtpMailer
 from src.core.email_service.tasks import send_email_task, send_email_with_file_task
 from tests.fakes.email import MockMailer
 from tests.helpers.providers import ProvideValue
@@ -24,7 +24,7 @@ async def test_send_email_task_calls_mailer(
     assert payload["recipients"] == ["a@b.com"]
     assert payload["template_name"] == "tpl.html"
     assert payload["template_data"] == {"k": "v"}
-    assert payload["subtype"] == "html"
+    assert payload["subtype"] is MessageType.HTML
 
 
 @pytest.mark.asyncio
@@ -38,28 +38,8 @@ async def test_send_email_with_file_task_calls_mailer(
     assert len(mock_mailer.sent_attachments) == 1
 
 
-@pytest.mark.asyncio
-async def test_fastapi_mailer_wrappers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    send_message_mock = AsyncMock()
-
-    mailer = object.__new__(FastAPIMailer)
-    mailer._mailer = MagicMock(send_message=send_message_mock)
-
-    file_path = tmp_path / "a.txt"
-    file_path.write_text("content")
-
-    await mailer.send_template("S", ["a@example.com"], "tpl", {"k": "v"}, "html")
-    await mailer.send_with_attachments(
-        "S", ["a@example.com"], "body", [file_path], "plain"
-    )
-
-    assert send_message_mock.await_count == 2
-    first_call_args = send_message_mock.await_args_list[0]
-    second_call_args = send_message_mock.await_args_list[1]
-    assert first_call_args.kwargs["template_name"] == "tpl"
-    assert not second_call_args.kwargs  # second call has no template_name kwarg
+def test_get_mailer_builds_smtp_mailer() -> None:
+    assert isinstance(tasks.get_mailer(), SmtpMailer)
 
 
 @pytest.mark.asyncio

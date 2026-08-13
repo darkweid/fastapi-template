@@ -8,8 +8,8 @@ asyncpg
 click>=8.3.3  # security: PYSEC-2026-2132
 email-validator
 fastapi
-fastapi_mail
 gunicorn
+jinja2
 mako>=1.4.1
 passlib
 pydantic

@@ -3,6 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.core.email_service.enums import MessageType
 from src.core.email_service.interfaces import AbstractMailer
 
 
@@ -17,7 +18,7 @@ class MockMailer(AbstractMailer):
         recipients: list[str],
         template_name: str,
         template_data: BaseModel | dict[str, Any],
-        subtype: str = "html",
+        subtype: MessageType = MessageType.HTML,
     ) -> None:
         if isinstance(template_data, BaseModel):
             payload = template_data.model_dump()
@@ -39,7 +40,7 @@ class MockMailer(AbstractMailer):
         recipients: list[str],
         body_text: str,
         file_paths: list[Path],
-        subtype: str = "plain",
+        subtype: MessageType = MessageType.PLAIN,
     ) -> None:
         self.sent_attachments.append(
             {

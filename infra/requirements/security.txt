@@ -12,21 +12,21 @@ cachecontrol[filecache]==0.14.4
     # via
     #   cachecontrol
     #   pip-audit
-certifi==2026.4.22
+certifi==2026.7.22
     # via requests
-charset-normalizer==3.4.7
+charset-normalizer==3.4.9
     # via requests
-cyclonedx-python-lib==11.7.0
+cyclonedx-python-lib==11.11.1
     # via pip-audit
 defusedxml==0.7.1
     # via py-serializable
-filelock==3.29.0
+filelock==3.32.2
     # via cachecontrol
-idna==3.15
+idna==3.18
     # via requests
 license-expression==30.4.4
     # via cyclonedx-python-lib
-markdown-it-py==4.0.0
+markdown-it-py==4.2.0
     # via rich
 mdurl==0.1.2
     # via markdown-it-py
@@ -34,7 +34,7 @@ msgpack==1.2.1
     # via cachecontrol
 packageurl-python==0.17.6
     # via cyclonedx-python-lib
-packaging==26.2
+packaging==26.3
     # via
     #   pip-audit
     #   pip-requirements-parser
@@ -44,7 +44,7 @@ pip-audit==2.10.1
     # via -r security.in
 pip-requirements-parser==32.0.1
     # via pip-audit
-platformdirs==4.9.6
+platformdirs==4.11.2
     # via pip-audit
 py-serializable==2.1.0
     # via cyclonedx-python-lib
@@ -54,7 +54,7 @@ pyparsing==3.3.2
     # via pip-requirements-parser
 pyyaml==6.0.3
     # via bandit
-requests==2.33.1
+requests==2.34.2
     # via
     #   cachecontrol
     #   pip-audit
@@ -64,7 +64,7 @@ rich==15.0.0
     #   pip-audit
 sortedcontainers==2.4.0
     # via cyclonedx-python-lib
-stevedore==5.7.0
+stevedore==5.9.0
     # via bandit
 tomli==2.4.1
     # via pip-audit

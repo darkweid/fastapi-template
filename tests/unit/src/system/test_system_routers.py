@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
-import httpx
+import httpx2
 import pytest
 
 from src.core.database.session import get_session
@@ -28,8 +28,8 @@ async def test_check_health_endpoint(
     dependency_overrides.set(get_health_service, ProvideValue(FakeHealthService()))
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
         response = await client.get("/health/")
@@ -45,8 +45,8 @@ async def test_get_utc_time(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> No
     fixed_now = datetime(2024, 1, 1, 12, 30, 45, 123456, tzinfo=ZoneInfo("UTC"))
     monkeypatch.setattr(routers, "get_utc_now", ProvideValue(fixed_now))
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
         response = await client.get("/time/")

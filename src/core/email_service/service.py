@@ -3,10 +3,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi_mail import MessageType
 from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
 from loggers import get_logger
+from src.core.email_service.enums import MessageType
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.tasks import (
     send_email_task,
@@ -29,7 +29,7 @@ class EmailService:
         recipients: str | list[str],
         template_name: str,
         template_body: BaseModel | dict[str, Any],
-        subtype: MessageType = MessageType.html,
+        subtype: MessageType = MessageType.HTML,
     ) -> None:
         normalized = self._normalize_and_validate_recipients(recipients)
         try:
@@ -38,7 +38,7 @@ class EmailService:
                 [str(e) for e in normalized],
                 template_name,
                 template_body,
-                subtype.value,
+                subtype,
             )
             logger.debug(
                 "Email '%s' sent to %s",
@@ -55,7 +55,7 @@ class EmailService:
         recipients: str | list[str],
         template_name: str,
         template_body: BaseModel | dict[str, Any],
-        subtype: MessageType = MessageType.html,
+        subtype: MessageType = MessageType.HTML,
     ) -> None:
         normalized = self._normalize_and_validate_recipients(recipients)
         try:
@@ -84,7 +84,7 @@ class EmailService:
         subject: str,
         recipients: str | list[str],
         attachments: list[Path],
-        subtype: MessageType = MessageType.plain,
+        subtype: MessageType = MessageType.PLAIN,
     ) -> None:
         validated_recipients = self._normalize_and_validate_recipients(recipients)
 
@@ -106,7 +106,7 @@ class EmailService:
         recipients: str | list[str],
         body_text: str,
         file_paths: list[Path],
-        subtype: MessageType = MessageType.plain,
+        subtype: MessageType = MessageType.PLAIN,
     ) -> None:
         try:
             validated_recipients = self._normalize_and_validate_recipients(recipients)
@@ -116,7 +116,7 @@ class EmailService:
                 [str(e) for e in validated_recipients],
                 body_text,
                 file_paths,
-                subtype.value,
+                subtype,
             )
             logger.debug(
                 "Email with attachments sent to %s",
@@ -138,7 +138,7 @@ class EmailService:
         recipients: str | list[str],
         body_text: str,
         file_path: Path,
-        subtype: MessageType = MessageType.plain,
+        subtype: MessageType = MessageType.PLAIN,
     ) -> None:
         """
         Send an email with a single attachment.

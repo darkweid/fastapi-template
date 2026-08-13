@@ -64,19 +64,20 @@ repos:
         ]
         exclude: ^(tests/|migrations/|scripts/)
         additional_dependencies:
-          - fastapi==0.138.1
+          - aiosmtplib==5.1.2
+          - fastapi==0.141.1
+          - jinja2==3.1.6
           - pydantic==2.13.4
-          - sqlalchemy==2.0.51
+          - sqlalchemy==2.0.52
           - taskiq==0.12.4
           - taskiq-redis==1.2.3
           - PyJWT==2.13.0
-          - sentry-sdk==2.63.0
-          - pydantic-settings==2.14.2
-          - redis==8.0.1
+          - sentry-sdk==2.67.1
+          - pydantic-settings==2.15.0
+          - redis==8.1.0
           - pytest==9.1.1
-          - alembic==1.18.5
-          - fastapi-mail==1.6.5
+          - alembic==1.19.1
           - types-passlib==1.7.7.20260211
-          - types-PyYAML==6.0.12.20260518
-          - types-requests==2.33.0.20260518
+          - types-PyYAML==6.0.12.20260724
+          - types-requests==2.33.0.20260712
           - types-ujson==5.10.0.20250822

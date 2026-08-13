@@ -95,7 +95,7 @@ Then: all user sessions are invalidated and UnauthorizedException is raised.
 Core fixtures live in `tests/conftest.py`.
 
 - `app` - FastAPI application
-- `async_client` - HTTPX AsyncClient for `app`
+- `async_client` - httpx2 AsyncClient for `app`
 - `dependency_overrides` - safe setup/reset for DI overrides
 - `settings` - test `Config` from `get_settings` (used by app overrides)
 - `fake_redis` - in-memory Redis
