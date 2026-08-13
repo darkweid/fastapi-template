@@ -69,7 +69,9 @@ services:
     container_name: template-worker
     image: template-app-image:latest
     env_file: ../.env
-    command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver
+    # --max-async-tasks 20 is mirrored by tasks_engine pool_size+max_overflow
+    # in src/core/database/engine.py - change both together.
+    command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver --max-async-tasks 20
     restart: unless-stopped
     depends_on:
       postgres:

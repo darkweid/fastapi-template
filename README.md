@@ -14,7 +14,7 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - DB via SQLAlchemy async, repositories + Unit of Work for transactional work.
 - Caching: Redis cache layer (`src/core/redis/*`) with tags, decorators, lifecycle helpers, and deterministic ETag support for route responses.
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
-- Messaging: taskiq worker/scheduler over Redis Streams.
+- Messaging: taskiq worker/scheduler over Redis Streams with a transactional outbox (atomic enqueue with the DB transaction, worker-side dedup, delayed retries). Background tasks are enqueued via `TaskDispatcher` (`enqueue` for fire-and-forget, `enqueue_transactional` to enqueue inside a UnitOfWork transaction).
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
 - Email service: templated mailer with async tasks for sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
