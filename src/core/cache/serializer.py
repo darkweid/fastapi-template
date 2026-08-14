@@ -21,7 +21,10 @@ def _adapter(model: type[Any]) -> TypeAdapter[Any]:
 
 def _encode_unknown(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
+        # by_alias mirrors FastAPI's own serialization: a response_model with
+        # aliased fields must round-trip through the cache under the same keys
+        # it would be re-validated against, or extra="forbid" rejects the payload.
+        return value.model_dump(mode="json", by_alias=True)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, (Decimal, UUID)):

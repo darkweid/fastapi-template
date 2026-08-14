@@ -1,15 +1,22 @@
+from pydantic import ConfigDict, Field
 import pytest
 
 from src.core.cache.decorators import cached
 from src.core.cache.interface import CacheKey
 from src.core.cache.memory_cache import InMemoryCache
-from src.core.cache.runtime import reset_cache, set_cache
+from src.core.cache.runtime import get_cache_instance, reset_cache, set_cache
 from src.core.cache.serializer import JsonSerializer
 from src.core.schemas import Base
 
 
 class Summary(Base):
     name: str
+
+
+class AliasedSummary(Base):
+    model_config = ConfigDict(populate_by_name=True)
+
+    full_name: str = Field(alias="fullName")
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +81,6 @@ async def test_invalidated_namespace_recomputes() -> None:
         return Summary(name=next(values))
 
     assert (await load(1)).name == "ada"
-    from src.core.cache.runtime import get_cache_instance
 
     await get_cache_instance().invalidate("user:1")
 
@@ -87,3 +93,22 @@ async def test_function_without_return_annotation_is_rejected() -> None:
         @cached(key_builder=summary_key, ttl=60)
         async def load(user_id: int):  # type: ignore[no-untyped-def]
             return None
+
+
+async def test_aliased_field_round_trips_through_the_cache(
+    runtime_cache: InMemoryCache,
+) -> None:
+    @cached(key_builder=summary_key, ttl=60)
+    async def load(user_id: int) -> AliasedSummary:
+        return AliasedSummary(full_name="Ada Lovelace")
+
+    first = await load(1)
+    second = await load(1)
+
+    assert first == second == AliasedSummary(full_name="Ada Lovelace")
+    # Proves the stored payload uses the alias, not the field name - which is
+    # what a response_model with the same alias would re-validate against.
+    raw = await runtime_cache.get_raw(CacheKey(namespace="user:1", suffix="summary"))
+    assert raw is not None
+    assert '"fullName"' in raw
+    assert "full_name" not in raw

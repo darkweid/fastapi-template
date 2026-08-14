@@ -2,16 +2,13 @@ from collections.abc import Awaitable, Callable
 from functools import wraps
 import hashlib
 from inspect import signature
-from typing import Any, TypeVar, cast, get_type_hints
+from typing import Annotated, Any, TypeVar, get_args, get_origin, get_type_hints
 
 from fastapi import Request, Response, status
 
-from loggers import get_logger
 from src.core.cache.interface import CacheKey, CacheScope
 from src.core.cache.runtime import get_cache_instance
 from src.core.cache.serializer import JsonSerializer
-
-logger = get_logger(__name__)
 
 R = TypeVar("R")
 
@@ -23,7 +20,10 @@ IF_NONE_MATCH_HEADER = "If-None-Match"
 _serializer = JsonSerializer()
 
 
-def _return_model(func: Callable[..., Any]) -> type[Any]:
+def _return_model(func: Callable[..., Any]) -> Any:
+    # Not always a bare `type`: a return annotation like `list[Summary]` or
+    # `Summary | None` is a generic alias / union, not a class - TypeAdapter
+    # accepts all of those, so the honest signature here is Any, not type[Any].
     hints = get_type_hints(func)
     model = hints.get("return")
     if model is None:
@@ -31,7 +31,7 @@ def _return_model(func: Callable[..., Any]) -> type[Any]:
             f"{func.__qualname__} needs a return annotation: the cache decodes "
             "cached payloads into that type."
         )
-    return cast(type[Any], model)
+    return model
 
 
 def cached(
@@ -66,8 +66,18 @@ def cached(
 
 
 def _find_parameter(func: Callable[..., Any], annotation: type[Any]) -> str:
-    for name, parameter in signature(func).parameters.items():
-        if parameter.annotation is annotation:
+    # include_extras keeps Annotated[X, ...] wrappers so DI-style parameters
+    # (Annotated[Request, Depends(...)]) still resolve to their inner type, and
+    # get_type_hints (rather than raw Parameter.annotation) resolves string
+    # annotations produced by `from __future__ import annotations`.
+    hints = get_type_hints(func, include_extras=True)
+    for name in signature(func).parameters:
+        hint = hints.get(name)
+        if hint is None:
+            continue
+        if get_origin(hint) is Annotated:
+            hint = get_args(hint)[0]
+        if isinstance(hint, type) and issubclass(hint, annotation):
             return name
     raise TypeError(
         f"{func.__qualname__} must declare a parameter annotated as "
@@ -103,6 +113,14 @@ def cached_route(
 
     The endpoint declares request and response itself; PRIVATE scope requires an
     identity callback so that one user's response can never be served to another.
+    If that callback resolves to None for a given request, the cache is bypassed
+    entirely for that call rather than risk collapsing distinct, unidentifiable
+    callers onto one shared entry.
+
+    Limitation: incompatible with `response_model_exclude_unset` /
+    `response_model_exclude_defaults` on the decorated route - the decorator has
+    no visibility into those flags, and the cached payload is always a full model
+    dump, so a value served from the cache reports every field as set.
     """
     if scope is CacheScope.PRIVATE and identity is None:
         raise ValueError("CacheScope.PRIVATE requires an identity callback.")
@@ -113,11 +131,17 @@ def cached_route(
 
         @wraps(func)
         async def inner(*args: Any, **kwargs: Any) -> Any:
-            cache = get_cache_instance()
             request: Request = kwargs[request_param]
             response: Response = kwargs[response_param]
 
             identity_id = await identity(request) if identity else None
+            if scope is CacheScope.PRIVATE and identity_id is None:
+                # No identity means no safe cache key: every caller the identity
+                # callback cannot resolve would otherwise collapse onto the same
+                # namespace-less entry and receive each other's private response.
+                return await func(*args, **kwargs)
+
+            cache = get_cache_instance()
             key = key_builder(request, identity_id)
 
             raw = await cache.get_raw(key)
