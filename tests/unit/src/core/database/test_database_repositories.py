@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import enum
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import Boolean, DateTime, Integer, String, select
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Integer, String, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
@@ -527,3 +528,80 @@ async def test_soft_delete_repository_batch_soft_delete_validates_filters_once(
 
     assert result == 1
     assert validate_calls == 1
+
+
+class ListingModel(SQLAlchemyBase):
+    __tablename__ = "listing_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    quantity: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class ListingStatus(enum.StrEnum):
+    DRAFT = "draft"
+
+
+class EnumModel(SQLAlchemyBase):
+    __tablename__ = "listing_enum_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[ListingStatus] = mapped_column(SAEnum(ListingStatus))
+
+
+def test_base_repository_accepts_valid_list_query_fields() -> None:
+    class ValidRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        searchable_fields = ("name",)
+        sortable_fields = ("created_at", "name")
+        default_order_by = "created_at"
+
+    assert ValidRepository().searchable_fields == ("name",)
+
+
+def test_base_repository_rejects_unknown_sortable_field() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        sortable_fields = ("published_at",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_unknown_default_order_by() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        default_order_by = "published_at"
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_unknown_searchable_field() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        searchable_fields = ("nickname",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_non_string_searchable_field() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        searchable_fields = ("quantity",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_enum_searchable_field() -> None:
+    class BrokenRepository(BaseRepository[EnumModel]):
+        model = EnumModel
+        searchable_fields = ("status",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()

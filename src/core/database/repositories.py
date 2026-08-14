@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Generic, Literal, TypeVar, cast
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import Enum as SAEnum, String, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -24,9 +24,47 @@ class BaseRepository(Generic[T]):
 
     model: type[T]
 
+    # Columns a client is allowed to search and sort by. Empty by default:
+    # `search` and `order_by` arrive from client input, so a domain opts in
+    # explicitly instead of exposing every column of its table.
+    searchable_fields: tuple[str, ...] = ()
+    sortable_fields: tuple[str, ...] = ()
+    default_order_by: str | None = None
+
     def __init__(self) -> None:
         if not hasattr(self, "model"):
             raise NotImplementedError("Subclasses must define class variable 'model'")
+        self._assert_list_query_fields()
+
+    def _assert_list_query_fields(self) -> None:
+        """
+        Fail at startup when a declared searchable/sortable column is wrong.
+
+        A misdeclared column would otherwise surface as a 500 on the first
+        request: `ilike` against a non-text column is a PostgreSQL error.
+        """
+        orderable_fields = (
+            *self.sortable_fields,
+            *((self.default_order_by,) if self.default_order_by else ()),
+        )
+        for field in orderable_fields:
+            if not hasattr(self.model, field):
+                raise TypeError(
+                    f"{self.model.__name__} has no orderable attribute '{field}'"
+                )
+
+        for field in self.searchable_fields:
+            attribute = getattr(self.model, field, None)
+            if attribute is None:
+                raise TypeError(
+                    f"{self.model.__name__} has no searchable attribute '{field}'"
+                )
+            column_type = getattr(attribute.expression, "type", None)
+            if not isinstance(column_type, String) or isinstance(column_type, SAEnum):
+                raise TypeError(
+                    f"{self.model.__name__}.{field} must be a text column to be "
+                    "searchable"
+                )
 
     async def create(
         self, session: AsyncSession, data: dict[str, Any], commit: bool = False
