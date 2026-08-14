@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load
 
 from src.core.database.base import Base as SQLAlchemyBase
+from src.core.database.query import ListQuery
 from src.core.database.repositories import BaseRepository
 from src.core.errors.exceptions import InstanceNotFoundException
 from src.core.pagination import (
@@ -87,6 +88,7 @@ class BaseService(Generic[ModelType, CreateSchema, RepositoryType, ResponseSchem
         session: AsyncSession,
         pagination: PaginationParams,
         eager: list[Load] | None = None,
+        query: ListQuery | None = None,
         **filters: Any,
     ) -> PaginatedResponse[ResponseSchema]:
         """Retrieve a paginated list of records matching the filters."""
@@ -95,6 +97,7 @@ class BaseService(Generic[ModelType, CreateSchema, RepositoryType, ResponseSchem
             page=pagination.page,
             size=pagination.size,
             eager=eager,
+            query=query,
             **filters,
         )
         schema_to_use: type[ResponseSchema] | None = self._response_schema
