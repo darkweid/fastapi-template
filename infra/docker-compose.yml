@@ -46,11 +46,13 @@ services:
     container_name: template-app
     image: template-app-image:latest
     env_file: ../.env
-    command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
+    command: gunicorn -k uvicorn_worker.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
     restart: unless-stopped
     stop_grace_period: 35s
     healthcheck:
-      test: ["CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/health/"]
+      # /live/ touches no dependency: a Postgres or Redis outage must not make
+      # docker restart an app container that is serving requests fine.
+      test: ["CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/live/"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -76,6 +78,14 @@ services:
     command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver --max-async-tasks 20
     restart: unless-stopped
     stop_grace_period: 35s
+    healthcheck:
+      # No HTTP surface here, so the check asserts what the worker actually
+      # needs: the broker Redis is reachable from inside this container.
+      test: ["CMD-SHELL", "python -c 'import asyncio; from redis.asyncio import Redis; from src.main.config import config; asyncio.run(Redis.from_url(config.redis.tasks_dsn).ping())'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +109,12 @@ services:
     env_file: ../.env
     command: taskiq scheduler taskiq_worker.scheduler:scheduler
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import asyncio; from redis.asyncio import Redis; from src.main.config import config; asyncio.run(Redis.from_url(config.redis.tasks_dsn).ping())'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
       redis:
         condition: service_healthy

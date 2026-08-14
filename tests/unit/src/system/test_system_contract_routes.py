@@ -30,10 +30,24 @@ async def test_system_routes_contract(
     dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
     monkeypatch.setattr(routers, "get_utc_now", fixed_utc_now)
 
+    live_response = await async_client.get("/live/")
+
+    assert live_response.status_code == 200
+    assert live_response.json() == {"status": "ok"}
+
+    ready_response = await async_client.get("/ready/")
+
+    assert ready_response.status_code == 200
+    assert ready_response.json() == {"status": "ok"}
+
     health_response = await async_client.get("/health/")
 
     assert health_response.status_code == 200
-    assert health_response.json() == {"status": "ok"}
+    assert health_response.json() == {
+        "status": "ok",
+        "postgres": True,
+        "redis": True,
+    }
 
     time_response = await async_client.get("/time/")
 
