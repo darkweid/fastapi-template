@@ -29,7 +29,9 @@ FORBIDDEN_BOOLEANS = {
 # URLs that must point somewhere the outside world can reach. A deploy that
 # keeps the example value here mails every user a link to their own machine.
 PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
-LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # noqa: S104 - matched, not bound
+# The literals below are hostnames to match, not addresses to bind to, which is
+# what the linters read them as.
+LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # noqa: S104 # nosec B104
 
 
 def parse_env(path: Path) -> dict[str, str]:
