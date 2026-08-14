@@ -1,7 +1,6 @@
 from typing import Annotated
 
 from fastapi import Depends
-from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
@@ -24,7 +23,6 @@ class SendVerificationUseCase:
 
     Inputs:
     - data: ResendVerificationModel containing user email.
-    - request_base_url: The base URL for the verification link.
 
     Validations:
     - User must exist (if not, return success to prevent email enumeration).
@@ -55,9 +53,7 @@ class SendVerificationUseCase:
         self.uow = uow
         self.notifier = notifier
 
-    async def execute(
-        self, data: ResendVerificationModel, request_base_url: URL
-    ) -> SuccessResponse:
+    async def execute(self, data: ResendVerificationModel) -> SuccessResponse:
         async with self.uow as uow:
             user = await uow.users.get_single(session=uow.session, email=data.email)
             if not user:
@@ -78,7 +74,6 @@ class SendVerificationUseCase:
                 await self.notifier.send_verification(
                     uow=uow,
                     user=user,
-                    base_url=request_base_url,
                     throttle_key=throttle_key,
                 )
             except InstanceProcessingException:

@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from starlette.datastructures import URL
 
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.utils.security import build_email_throttle_key
@@ -24,7 +23,6 @@ async def test_reset_password_notifier_queues_task_with_expected_payload(
     await notifier.send_password_reset_email(
         uow=fake_uow,
         user=user,
-        base_url=URL("http://testserver/"),
     )
 
     assert dispatcher.enqueue_transactional.await_args.args[:2] == (
@@ -34,8 +32,6 @@ async def test_reset_password_notifier_queues_task_with_expected_payload(
     assert dispatcher.enqueue_transactional.await_args.args[2:] == (
         user.email,
         user.full_name,
-        "http://testserver/",
-        "v1/users/auth/password/reset/confirm",
         None,
     )
 
@@ -54,7 +50,6 @@ async def test_reset_password_notifier_rejects_throttled_requests(
         await notifier.send_password_reset_email(
             uow=fake_uow,
             user=user,
-            base_url=URL("http://testserver/"),
             throttle_key=throttle_key,
         )
 
@@ -74,7 +69,6 @@ async def test_reset_password_notifier_cleans_throttle_key_when_queueing_fails(
         await notifier.send_password_reset_email(
             uow=fake_uow,
             user=user,
-            base_url=URL("http://testserver/"),
             throttle_key=throttle_key,
         )
 

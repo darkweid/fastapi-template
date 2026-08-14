@@ -40,8 +40,6 @@ async def test_kiq_resolves_redis_client_through_broker_dependency_injection(
     await send_verification_email_task.kiq(
         "user@example.com",
         "John Doe",
-        "http://testserver/",
-        "v1/users/auth/verify",
         None,
     )
 

@@ -23,6 +23,20 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
+## Email Links
+Verification and password-reset emails link to your front-end, never to the API, and
+never to a host taken from the request — a forged `Host` on `POST /password/reset`
+would otherwise send the victim a genuine email pointing at the attacker's domain.
+Three settings govern the link (`src/main/config.py`, `AppConfig`):
+
+- `PUBLIC_BASE_URL` — **required, no default.** Absolute origin of the front-end,
+  e.g. `https://app.example.com`.
+- `EMAIL_VERIFY_PATH` (default `/verify-email`) and `PASSWORD_RESET_PATH`
+  (default `/reset-password`) — the pages that receive `?token=...`.
+
+Those pages read the token out of the query string and call the API themselves:
+`GET /v1/users/auth/verify?token=...` and `PUT /v1/users/auth/password/reset/confirm`.
+
 ## Auth Cookie & CSRF Configuration
 The refresh token is delivered as an httponly cookie by default, with a stateless
 signed double-submit CSRF check on the refresh route; native clients that want the

@@ -3,7 +3,6 @@ from typing import Annotated
 
 from fastapi import Depends
 from redis.asyncio import Redis
-from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
@@ -30,12 +29,10 @@ class VerificationNotifier:
         dispatcher: TaskDispatcher,
         redis_client: Redis | None = None,
         throttle_ttl_sec: int = 60,
-        verify_path: str = "v1/users/auth/verify",
     ) -> None:
         self.dispatcher = dispatcher
         self.redis_client = redis_client
         self.throttle_ttl_sec = throttle_ttl_sec
-        self.verify_path = verify_path
 
     async def _throttle_or_touch(self, key: str | None) -> None:
         if not key or not self.redis_client:
@@ -62,7 +59,6 @@ class VerificationNotifier:
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
         user: User,
-        base_url: URL,
         throttle_key: str | None = None,
     ) -> None:
         await self._throttle_or_touch(throttle_key)
@@ -72,8 +68,6 @@ class VerificationNotifier:
                 send_verification_email_task,
                 user.email,
                 user.full_name,
-                str(base_url),
-                self.verify_path,
                 throttle_key,
             )
         except Exception:

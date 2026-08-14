@@ -3,7 +3,6 @@ from typing import Annotated
 
 from fastapi import Depends
 from redis.asyncio import Redis
-from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
@@ -30,12 +29,10 @@ class ResetPasswordNotifier:
         dispatcher: TaskDispatcher,
         redis_client: Redis | None = None,
         throttle_ttl_sec: int = 60,
-        reset_link_path: str = "v1/users/auth/password/reset/confirm",  # ToDo: adjust link with frontend here
     ) -> None:
         self.dispatcher = dispatcher
         self.redis_client = redis_client
         self.throttle_ttl_sec = throttle_ttl_sec
-        self.reset_link_path = reset_link_path
 
     async def _throttle_or_touch(self, key: str | None) -> None:
         if not key or not self.redis_client:
@@ -62,7 +59,6 @@ class ResetPasswordNotifier:
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
         user: User,
-        base_url: URL,
         throttle_key: str | None = None,
     ) -> None:
         await self._throttle_or_touch(throttle_key)
@@ -72,8 +68,6 @@ class ResetPasswordNotifier:
                 send_reset_password_email_task,
                 user.email,
                 user.full_name,
-                str(base_url),
-                self.reset_link_path,
                 throttle_key,
             )
         except Exception:

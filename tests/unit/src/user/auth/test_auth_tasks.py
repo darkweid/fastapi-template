@@ -23,8 +23,6 @@ async def test_send_verification_email_creates_token_and_sends_email(
     await send_verification_email_task(
         "user@example.com",
         "John Doe",
-        "http://testserver/",
-        "v1/users/auth/verify",
         None,
         redis_client=fake_redis,
     )
@@ -33,7 +31,9 @@ async def test_send_verification_email_creates_token_and_sends_email(
     sent_email = mock_mailer.sent_template_emails[0]
     assert sent_email["recipients"] == ["user@example.com"]
     assert sent_email["template_name"] == "verification.html"
-    assert "v1/users/auth/verify?token=" in sent_email["template_data"]["link"]
+    assert sent_email["template_data"]["link"].startswith(
+        "http://frontend.test/verify-email?token="
+    )
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("verification", "user@example.com")
@@ -60,8 +60,6 @@ async def test_send_verification_email_cleans_up_token_and_throttle_on_failure(
         await send_verification_email_task(
             "user@example.com",
             "John Doe",
-            "http://testserver/",
-            "v1/users/auth/verify",
             "throttle:key",
             redis_client=fake_redis,
         )
@@ -86,8 +84,6 @@ async def test_send_reset_password_email_creates_token_and_sends_email(
     await send_reset_password_email_task(
         "user@example.com",
         "John Doe",
-        "http://testserver/",
-        "v1/users/auth/password/reset/confirm",
         None,
         redis_client=fake_redis,
     )
@@ -96,7 +92,9 @@ async def test_send_reset_password_email_creates_token_and_sends_email(
     sent_email = mock_mailer.sent_template_emails[0]
     assert sent_email["recipients"] == ["user@example.com"]
     assert sent_email["template_name"] == "reset_password.html"
-    assert "password/reset/confirm?token=" in sent_email["template_data"]["link"]
+    assert sent_email["template_data"]["link"].startswith(
+        "http://frontend.test/reset-password?token="
+    )
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("reset_password", "user@example.com")
@@ -123,8 +121,6 @@ async def test_send_reset_password_email_cleans_up_token_and_throttle_on_failure
         await send_reset_password_email_task(
             "user@example.com",
             "John Doe",
-            "http://testserver/",
-            "v1/users/auth/password/reset/confirm",
             "throttle:key",
             redis_client=fake_redis,
         )

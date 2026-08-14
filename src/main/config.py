@@ -252,6 +252,13 @@ class AppConfig(BaseModel):
     PROJECT_NAME: str
     PROJECT_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
+    # Origin of the front-end that receives users arriving from an email. Links
+    # are built from it and never from the request, because Host is client input
+    # and a reset link pointed at another domain hands over the account.
+    PUBLIC_BASE_URL: str
+    EMAIL_VERIFY_PATH: str = "/verify-email"
+    PASSWORD_RESET_PATH: str = "/reset-password"
+
     # Interactive docs stay open in DEBUG. Outside it they are served only when
     # both credentials are set; unset means the app publishes no docs at all.
     DOCS_USERNAME: str = ""
@@ -283,6 +290,22 @@ class AppConfig(BaseModel):
                 pass
         sep = "," if "," in v else ";"
         return [item.strip() for item in v.split(sep) if item.strip()]
+
+    @field_validator("PUBLIC_BASE_URL")
+    @classmethod
+    def validate_public_base_url(cls, value: str) -> str:
+        url = value.strip().rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(
+                "PUBLIC_BASE_URL must be an absolute http(s) URL, "
+                "for example https://app.example.com"
+            )
+        return url
+
+    @field_validator("EMAIL_VERIFY_PATH", "PASSWORD_RESET_PATH")
+    @classmethod
+    def normalize_public_path(cls, value: str) -> str:
+        return "/" + value.strip().lstrip("/")
 
     @model_validator(mode="after")
     def reject_wildcard_origin_with_credentials(self) -> "AppConfig":

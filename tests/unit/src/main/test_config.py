@@ -42,6 +42,7 @@ def _base_app_config_data() -> dict[str, object]:
         "TRUST_PROXY_HEADERS": "true",
         "PROJECT_NAME": "app",
         "PROJECT_SECRET_KEY": "unit-test-project-secret-key-long-enough",
+        "PUBLIC_BASE_URL": "https://app.example.com",
         "PING_INTERVAL": 10,
         "CONNECTION_TTL": 10,
     }
@@ -188,6 +189,34 @@ def test_app_config_ships_no_docs_credentials_by_default() -> None:
 
     assert app_config.DOCS_USERNAME == ""
     assert app_config.DOCS_PASSWORD == ""
+
+
+def test_app_config_requires_public_base_url() -> None:
+    data = _base_app_config_data()
+    del data["PUBLIC_BASE_URL"]
+
+    with pytest.raises(ValidationError):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_public_base_url_without_scheme() -> None:
+    data = _base_app_config_data()
+    data["PUBLIC_BASE_URL"] = "app.example.com"
+
+    with pytest.raises(ValueError, match="absolute http\\(s\\) URL"):
+        AppConfig(**data)
+
+
+def test_app_config_normalizes_public_base_url_and_paths() -> None:
+    data = _base_app_config_data()
+    data["PUBLIC_BASE_URL"] = "https://app.example.com/"
+    data["EMAIL_VERIFY_PATH"] = "confirm-email"
+
+    app_config = AppConfig(**data)
+
+    assert app_config.PUBLIC_BASE_URL == "https://app.example.com"
+    assert app_config.EMAIL_VERIFY_PATH == "/confirm-email"
+    assert app_config.PASSWORD_RESET_PATH == "/reset-password"
 
 
 def test_find_project_root_robust_returns_start_when_missing(
