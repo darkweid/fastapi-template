@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Integer, String, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, load_only, mapped_column
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
@@ -376,9 +376,14 @@ async def test_base_repository_get_paginated_list_does_not_eager_load_count_quer
         FakeResult(scalar=0),
     ]
 
-    await repo.get_paginated_list(session=session, page=1, size=10)
+    await repo.get_paginated_list(
+        session=session, page=1, size=10, eager=(load_only(RepositoryModel.name),)
+    )
 
-    count_query = session.execute.await_args_list[1].args[0]
+    items_query, count_query = (
+        call.args[0] for call in session.execute.await_args_list
+    )
+    assert items_query._with_options != ()
     assert count_query._with_options == ()
 
 
@@ -394,12 +399,21 @@ async def test_soft_delete_repository_get_paginated_list_keeps_is_deleted_filter
     ]
 
     await repo.get_paginated_list(
-        session=session, page=1, size=10, query=ListQuery(order_by=None)
+        session=session,
+        page=1,
+        size=10,
+        query=ListQuery(conditions=FilterCondition(gte={"id": 5})),
     )
 
-    items_query = session.execute.await_args_list[0].args[0]
+    items_query, count_query = (
+        call.args[0] for call in session.execute.await_args_list
+    )
     items_sql = str(items_query.compile(dialect=postgresql.dialect()))
+    count_sql = str(count_query.compile(dialect=postgresql.dialect()))
     assert "is_deleted =" in items_sql
+    assert "id >=" in items_sql
+    assert "is_deleted =" in count_sql
+    assert "id >=" in count_sql
 
 
 @pytest.mark.asyncio
@@ -672,6 +686,15 @@ def test_base_repository_rejects_unknown_searchable_field() -> None:
     class BrokenRepository(BaseRepository[ListingModel]):
         model = ListingModel
         searchable_fields = ("nickname",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_non_column_searchable_field() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        searchable_fields = ("__tablename__",)
 
     with pytest.raises(TypeError):
         BrokenRepository()

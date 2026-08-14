@@ -56,11 +56,11 @@ class BaseRepository(Generic[T]):
 
         for field in self.searchable_fields:
             attribute = getattr(self.model, field, None)
-            if attribute is None:
+            column_type = getattr(getattr(attribute, "expression", None), "type", None)
+            if column_type is None:
                 raise TypeError(
                     f"{self.model.__name__} has no searchable attribute '{field}'"
                 )
-            column_type = getattr(attribute.expression, "type", None)
             if not isinstance(column_type, String) or isinstance(column_type, SAEnum):
                 raise TypeError(
                     f"{self.model.__name__}.{field} must be a text column to be "
@@ -187,9 +187,7 @@ class BaseRepository(Generic[T]):
             self.model, self.sortable_fields, self.default_order_by
         )
 
-        statement = select(self.model).filter_by(**filters)
-        for clause in where_clauses:
-            statement = statement.where(clause)
+        statement = select(self.model).filter_by(**filters).where(*where_clauses)
         if eager:
             statement = statement.options(*eager)
         statement = statement.order_by(*order_by)
@@ -202,10 +200,11 @@ class BaseRepository(Generic[T]):
         # and `items` describe different result sets. Eager options are left out:
         # they add joins a count does not need.
         count_statement = (
-            select(func.count()).select_from(self.model).filter_by(**filters)
+            select(func.count())
+            .select_from(self.model)
+            .filter_by(**filters)
+            .where(*where_clauses)
         )
-        for clause in where_clauses:
-            count_statement = count_statement.where(clause)
         total = int((await session.execute(count_statement)).scalar_one())
 
         return items, total
