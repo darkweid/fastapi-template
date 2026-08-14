@@ -119,7 +119,7 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 │   │
 │   ├── system/                          # System-level functionality
 │   │   ├── dependencies.py              # System DI providers
-│   │   ├── routers.py                   # System API endpoints (health, time)
+│   │   ├── routers.py                   # System API endpoints (live, ready, health, time)
 │   │   ├── schemas.py                   # System Pydantic schemas
 │   │   └── services.py                  # Health check service
 │   │

@@ -25,3 +25,4 @@ taskiq
 taskiq-redis
 uuid6
 uvicorn
+uvicorn-worker

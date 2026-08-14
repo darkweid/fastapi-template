@@ -183,7 +183,10 @@ for `app.conf` once the certificate is in place.
   published at all while either of the two is blank. The password takes the same
   32-character minimum as the other secrets, must be ASCII, and the three routes are
   rate limited — Basic auth has no lockout of its own.
-- Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
+- Probes: http://localhost:8000/live/ (liveness, no dependencies — what the container
+  healthcheck polls), http://localhost:8000/ready/ (readiness, 503 while Postgres is
+  unreachable), http://localhost:8000/health/ (detailed per-dependency report; always
+  200, with `"status": "degraded"` and a per-dependency breakdown while something is down)
 
 ## Useful Make Targets
 - `make` (or `make help`) — list every target with its description
