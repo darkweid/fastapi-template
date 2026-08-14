@@ -29,6 +29,19 @@ def ensure_datetime(d: datetime | date) -> datetime:
     return datetime.combine(d, datetime.min.time())
 
 
+def ensure_aware_utc(dt: datetime) -> datetime:
+    """Return `dt` as an offset-aware UTC datetime.
+
+    A naive value is read as UTC rather than rejected: every timestamp column
+    in this project is `DateTime(timezone=True)`, so a naive bound has no other
+    sensible meaning, and mixing naive and aware values raises `TypeError` on
+    the first comparison between them.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def parse_date_range(
     from_date: str | date | datetime | None,
     to_date: str | date | datetime | None,
@@ -190,12 +203,6 @@ def guard_not_future_local_date(
     :raises InstanceProcessingException: If target_date is after the current local date in the given timezone.
     """
 
-    def _ensure_aware_utc(dt: datetime) -> datetime:
-        # Make datetime timezone-aware in UTC
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-
     try:
         tz: ZoneInfo = ZoneInfo(tz_str)
     except ZoneInfoNotFoundError:
@@ -204,7 +211,7 @@ def guard_not_future_local_date(
     now_local_date = get_utc_now().astimezone(tz).date()
 
     if isinstance(target_date, datetime):
-        target_local_date = _ensure_aware_utc(target_date).astimezone(tz).date()
+        target_local_date = ensure_aware_utc(target_date).astimezone(tz).date()
     elif isinstance(target_date, date):
         target_local_date = target_date
 

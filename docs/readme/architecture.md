@@ -51,6 +51,38 @@ Benefits:
 - Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.
 - Keep repositories focused on data access; put orchestration and business logic in usecases/services.
 
+### List Queries (Search, Sort, Date Range)
+A list endpoint's search, sort and date-range filtering is described declaratively with `ListQuery` (`src/core/database/query.py`), not hand-rolled per repository.
+
+- **Repository side:** a repository opts client-selectable sorting in by declaring `searchable_fields`, `sortable_fields` and `default_order_by` as class attributes on `BaseRepository`. Both allowlists are empty by default — a client cannot search or pick a sort column until a domain explicitly opts it in, because `search` and `order_by` arrive from client input and must never reach an arbitrary column. Never put secrets, hashes or tokens in `searchable_fields`. This does not mean an undeclared repository has no ordering at all: when the client omits `order_by`, results are ordered by `default_order_by` if set, else by `created_at` if the model has that column, else only by the primary key.
+
+```python
+class ArticleRepository(SoftDeleteRepository[Article]):
+    model = Article
+    searchable_fields = ("title", "summary")
+    sortable_fields = ("created_at", "title")
+    default_order_by = "created_at"
+```
+
+- **Construction-time validation:** `BaseRepository.__init__` runs `_assert_list_query_fields()`, which checks that every declared `sortable_fields` / `default_order_by` attribute resolves to a real column (not a hybrid property or a relationship — neither is orderable, and both would otherwise pass and crash at query time instead) and that `searchable_fields` are text columns (`String`, not `Enum`). A misdeclared column raises when the repository is constructed, not when a request supplies a bad field — a developer-time error, not a client-triggered one.
+- **HTTP side:** endpoints declare `Annotated[ListQueryParams, Query()]` (`src/core/pagination/schemas.py`) and translate it with `params.to_list_query(date_field=..., conditions=...)` into a `ListQuery`. Both `date_field` and `conditions` are chosen by the server — the client only supplies `search`, `order_by`, `order`, `date_from`, `date_to`. `ListQueryParams` inherits `extra="forbid"`, so an unlisted query parameter (an analytics tag, a cache-buster, an ad-hoc filter) is rejected with 422 rather than silently ignored; a route that needs extra filters subclasses `ListQueryParams` instead of declaring them alongside it.
+
+```python
+@router.get("/articles")
+async def list_articles(
+    params: Annotated[ListQueryParams, Query()],
+    use_case: Annotated[ListArticlesUseCase, Depends(get_list_articles_use_case)],
+) -> PaginatedResponse[ArticleViewModel]:
+    return await use_case.execute(params)
+```
+
+The use case passes the resulting `ListQuery` straight to `get_paginated_list(session, page, size, query=list_query)`, which builds the `WHERE`/`ORDER BY` clauses and runs a matching `COUNT` for `total`.
+
+- **Errors:** a field outside the allowlist, `date_from` after `date_to`, a period requested against a column the model doesn't have, or a `search` term against a repository with no `searchable_fields`, all raise `FilteringError`, mapped to HTTP 400.
+- **Period bounds:** both are normalised to UTC before they are compared or bound, so a client may mix an offset-aware bound with a naive one; a naive value is read as UTC, matching the `DateTime(timezone=True)` columns every timestamp in this project uses. Bounds are inclusive on both ends.
+- **Ordering:** `ListQuery.build_order_by` always appends the primary key after the requested sort column. Without that tiebreaker, limit/offset pagination over a non-unique sort column silently duplicates and skips rows between pages. The requested/default sort column is built with `nulls_last()`, so NULLs always sort last regardless of `asc`/`desc`, overriding PostgreSQL's own default — this matters because that column may be nullable. The primary-key tiebreaker clause deliberately omits `nulls_last()`: a primary key is `NOT NULL`, so the modifier would only force a `Sort` node instead of letting a plain btree index serve deep-offset pages.
+- **Search performance:** `search` compiles to `ILIKE '%...%'`, which cannot use a plain btree index. On a large table, back it with `pg_trgm` (`CREATE EXTENSION pg_trgm` plus a GIN index with `gin_trgm_ops` on the searched columns) or full-text search.
+
 ### Advisory Transaction Locks
 Use PostgreSQL advisory transaction locks to serialize critical sections without row-level locking.
 
