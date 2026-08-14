@@ -10,7 +10,9 @@ from src.core.schemas import SuccessResponse
 from src.user.auth.dependencies import get_current_user
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
+from src.user.schemas import UserProfileViewModel
 from src.user.usecases.update_password import get_update_user_password_use_case
+from src.user.usecases.update_profile import get_update_user_profile_use_case
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
 from tests.helpers.limiter import noop_rate_limiter
@@ -21,6 +23,15 @@ from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 class FakeUpdatePasswordUseCase:
     def __init__(self, result: SuccessResponse) -> None:
         self.execute = AsyncMock(return_value=result)
+
+
+class FakeUpdateProfileUseCase:
+    def __init__(
+        self,
+        result: UserProfileViewModel | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.execute = AsyncMock(return_value=result, side_effect=error)
 
 
 class FakeUserService:
@@ -121,3 +132,54 @@ async def test_update_user_password(
 
     assert response.status_code == 200
     assert response.json() == {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_update_user_profile_returns_404_when_user_is_missing(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(
+        get_update_user_profile_use_case,
+        ProvideValue(
+            FakeUpdateProfileUseCase(error=InstanceNotFoundException("User not found"))
+        ),
+    )
+
+    response = await async_client.patch("/v1/users/me", json={"first_name": "Grace"})
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": "Instance not found",
+        "message": "User not found",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"first_name": ""}, id="first_name-below-min-length"),
+        pytest.param({"first_name": "x" * 51}, id="first_name-above-max-length"),
+        pytest.param({"username": "ab"}, id="username-below-min-length"),
+        pytest.param({"username": "x" * 51}, id="username-above-max-length"),
+        pytest.param({"nickname": "Grace"}, id="unknown-field-is-rejected"),
+    ],
+)
+async def test_update_user_profile_rejects_invalid_payloads(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    payload: dict[str, str],
+) -> None:
+    user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(
+        get_update_user_profile_use_case,
+        ProvideValue(FakeUpdateProfileUseCase()),
+    )
+
+    response = await async_client.patch("/v1/users/me", json=payload)
+
+    assert response.status_code == 422

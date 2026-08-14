@@ -7,6 +7,10 @@ import httpx2
 import pytest
 import pytest_asyncio
 
+from src.core.cache.dependencies import get_cache
+from src.core.cache.memory_cache import InMemoryCache
+from src.core.cache.runtime import reset_cache, set_cache
+from src.core.cache.serializer import JsonSerializer
 from src.core.database.session import get_session, get_unit_of_work
 from src.core.email_service.dependencies import get_email_service
 from src.core.email_service.service import EmailService
@@ -39,6 +43,21 @@ def dependency_overrides(app: FastAPI) -> Generator[DependencyOverrides]:
     overrides = DependencyOverrides(app)
     yield overrides
     overrides.reset()
+
+
+@pytest.fixture(autouse=True)
+def cache() -> Generator[InMemoryCache]:
+    # Autouse for every test, not only app_with_fakes: @cached_route resolves the
+    # cache via get_cache_instance() at call time, so any test hitting a decorated
+    # route through the plain async_client fixture needs a bound instance too.
+    instance = InMemoryCache(
+        serializer=JsonSerializer(),
+        default_ttl=60,
+        version_ttl=604800,
+    )
+    set_cache(instance)
+    yield instance
+    reset_cache()
 
 
 @pytest.fixture
@@ -86,6 +105,7 @@ def app_with_fakes(
     fake_session: FakeAsyncSession,
     fake_uow: FakeUnitOfWork,
     settings: Config,
+    cache: InMemoryCache,
 ) -> FastAPI:
     dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
     dependency_overrides.set(get_s3_adapter, ProvideAsyncValue(fake_s3))
@@ -93,6 +113,7 @@ def app_with_fakes(
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
     dependency_overrides.set(get_unit_of_work, ProvideAsyncValue(fake_uow))
     dependency_overrides.set(get_settings, ProvideValue(settings))
+    dependency_overrides.set(get_cache, ProvideAsyncValue(cache))
     return app
 
 

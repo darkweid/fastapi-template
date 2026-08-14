@@ -25,7 +25,23 @@ async def cleanup_unverified_users(
     *,
     session: Annotated[AsyncSession, TaskiqDepends(get_tasks_session)],
 ) -> str:
-    """Soft-delete users that never verified their account within the max age."""
+    """
+    Soft-delete users that never verified their account within the max age.
+
+    Does not bump the user:{id} cache namespace, for two independent reasons.
+    `batch_soft_delete` returns only an affected-row count, not the deleted ids,
+    so there is nothing to key an invalidation on without an extra query this bulk
+    path is not worth paying for - and no task can invalidate anyway: the cache is
+    initialized by the API process only (`on_cache_startup`, `src/main/lifespan.py`),
+    so `get_cache_instance()` raises inside a worker. A project that needs
+    worker-side invalidation builds a `RedisCache` on the worker's own Redis client
+    and calls `set_cache` at broker startup, then injects it through a provider in
+    `taskiq_worker/dependencies.py`.
+
+    A cached summary for one of these (already-unverified, inactive) accounts can
+    therefore serve a deleted user for up to its TTL - a bounded staleness window,
+    not a silent violation of the "every user-row write bumps the namespace" rule.
+    """
     cutoff = get_utc_now() - UNVERIFIED_USER_MAX_AGE
     uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
     try:

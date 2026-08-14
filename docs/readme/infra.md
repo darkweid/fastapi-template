@@ -29,6 +29,34 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 - **Nginx:** Reverse proxy to app with template security headers.
 - **Redis:** Cache backend with password; also the taskiq broker (Streams), the retry schedule source for delayed retries, and storage for `IdempotencyReceiver` dedup markers — no task result backend.
 
+## Cache Operations
+The cache layer (`src/core/cache/`) has no dedicated Redis connection — it runs on
+`app.state.redis_client`, the application client created in
+`src/main/lifespan.py` and shared with auth token storage and the health probe.
+There is no separate service or port to provision.
+
+Rate limiting and taskiq do *not* share that client: `on_limiter_startup` hands
+`FastAPILimiter.init` a DSN string and it opens its own pool, and the taskiq
+broker (plus the retry schedule source) connects on its own as well. An API
+container therefore holds three independent Redis connection pools, and a worker
+or scheduler container holds the broker's — size `maxclients` from that count,
+not from one pool per process.
+
+- Under memory pressure, prefer `maxmemory-policy allkeys-lru` (or actively monitor
+  `INFO stats` → `evicted_keys`). Every namespace and tag version counter is itself
+  a Redis key; if the eviction policy reclaims a counter before the values it
+  guards, the next read falls back to version `0` and can serve a value that a
+  prior `invalidate()` or `invalidate_tags()` call was supposed to have retired.
+  Counters are few and tiny — one per namespace, one per tag — so this is a
+  policy question, not a capacity one.
+- The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
+  per invocation without hash tags, so as written they run correctly against a
+  single Redis instance but not against a sharded Redis Cluster — a cluster
+  deployment needs hash-tagged keys (or a separate non-clustered instance for the
+  cache) before this layer would work unmodified. Tags widen this: a read of a
+  tagged entry resolves the namespace counter, every tag counter, and the value
+  key in one script, so all of them must hash to the same slot.
+
 ## Prerequisites
 - Python 3.13 (for local scripts/hooks)
 - Docker

@@ -252,15 +252,86 @@ public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 
 ## Cache Architecture
 
-`src/core/redis/cache/coder/`
+`src/core/cache/`
 
-Two coder implementations:
-- **JsonCoder** — safe for any data, no code execution risk.
-- **PickleCoder** — faster serialization for internal-only cache data. Appropriate only when Redis access is restricted to the application.
+Every cached value is serialized as JSON and decoded through a `TypeAdapter` built
+from the caller's declared type (`src/core/cache/serializer.py`) — there is no
+pickle path anywhere in this layer. A compromised or untrusted Redis instance can
+hand back malformed JSON, which fails to decode, but it cannot make the process
+execute arbitrary code the way a pickle payload could.
 
-Tag-based invalidation (`CacheTags` enum) allows selective cache purging by resource type without full cache flushes.
+Invalidation is a version bump over Lua, not a key scan or a tag registry — there
+is no `KEYS`/`SCAN` call and no set of members to enumerate. An entry answers to
+its namespace (`cache.invalidate(namespace)`) and to every tag its key declares
+(`cache.invalidate_tags("users")`); each is one counter, so a tag flush costs one
+increment no matter how many entries carry the tag.
 
-**Why it matters:** Pickle deserialization can execute arbitrary code. The coder choice should match the trust level of the Redis environment. Tag-based invalidation prevents stale data from being served after mutations.
+**Fail-open, and what it costs:** a lost connection or a timeout is swallowed —
+reads report a miss, writes and version bumps are dropped — so a Redis outage
+degrades the API instead of breaking it. Everything else Redis can raise (a
+malformed command, a broken script) propagates, because that is a bug and hiding
+it would also burn the degradation reporter's cooldown and mute the report of a
+genuine outage. The price of failing open is on the write path: if the invalidation
+of a mutation is the call that gets swallowed, the transaction still commits and a
+value cached before the outage keeps serving until its TTL runs out. Route TTLs are
+the bound on that staleness; a project that needs a hard guarantee routes
+invalidation through the outbox instead.
+
+**Key hygiene:** a cache key's `suffix` (`CacheKey(namespace, suffix, tags)`) must
+never carry an email address, phone number, token, or other identifying value that
+isn't already the endpoint's own path parameter. The same rule binds tag names,
+which are shared across namespaces and so must describe a kind of entry
+(`users`, `catalog`), never one subject. Key builders live per domain
+(`src/user/cache_keys.py` is the reference) precisely so this rule has one place to
+enforce, instead of every call site assembling its own key string.
+
+**`CacheScope.PRIVATE` vs `CacheScope.PUBLIC`:** `@cached_route` requires an explicit
+`scope`, and the two are not interchangeable safety-wise.
+- `PRIVATE` requires an `identity` callback and emits `Cache-Control: private`. Use
+  it whenever the response body differs by caller — the response for user A must
+  never satisfy a request from user B's browser or a shared proxy sitting between
+  them. If the identity callback returns `None` for a given request (caller cannot
+  be identified), the decorator bypasses the cache entirely for that call rather
+  than risk collapsing distinct callers onto one entry. The identity is appended to
+  the cache key by the decorator itself, not by the key builder — a builder is free
+  to ignore who is asking, and a `PRIVATE` entry is still per-caller.
+- `PUBLIC` emits `Cache-Control: public, max-age=<ttl>`. Under RFC 9111 §3.5, a
+  shared cache (a CDN, a corporate proxy, any intermediary between the client and
+  this API) is normally forbidden from storing a response to a request that carried
+  an `Authorization` header — unless the response explicitly says `public`. Setting
+  `PUBLIC` on an authenticated endpoint is exactly that override: it tells every
+  intermediary on the path that it is allowed to cache and replay this
+  authorization-gated response to other clients. Every `PUBLIC` response therefore
+  also carries `Vary: Authorization`, so a shared cache must key its entry by the
+  credential that produced it and cannot serve a stored response to a request that
+  arrived with a different `Authorization` header, or with none at all.
+
+  `Vary` narrows the blast radius; it does not make `PUBLIC` safe by itself. It
+  says nothing about callers who share one token, and it does not apply to this
+  API's own Redis entry, which is shared by every permitted viewer by design.
+
+  `GET /v1/users/{user_id}` (`src/user/routers.py`) does this deliberately: it
+  requires the `VIEW_USERS` permission, but the response body is identical for
+  every caller who holds that permission — there is nothing in it that varies by
+  who is asking, so one shared cache entry per `user_id` is the intended behavior,
+  not a leak. The template ships no CDN or shared caching proxy in front of the
+  API, so today `PUBLIC` only affects `RedisCache`, which nothing outside this
+  process can reach. **If a project adds a CDN or a shared caching proxy in front
+  of the API, any endpoint using `PUBLIC` must be re-evaluated first** — a response
+  that looks caller-independent today can stop being so after a future change to
+  the endpoint (e.g. adding a per-viewer field), and at that point `PUBLIC` would
+  let the shared cache serve one caller's data to another. When the response does
+  vary by caller, or when in doubt, use `PRIVATE` with an `identity` callback
+  instead.
+
+**Why it matters:** JSON-only serialization removes a remote-code-execution vector
+that pickle-based caches carry. Version counters remove an entire class of
+invalidation bugs — a partial purge, a tag set that drifted out of sync with the
+entries it was supposed to name — because nothing is enumerated: an entry that
+resolves a bumped counter is simply no longer addressable. The `PUBLIC`/`PRIVATE`
+distinction is what stands between "one cache
+entry serves every permitted viewer" and "one user's cached response leaks to
+another" once a shared cache sits on the request path.
 
 ## Taskiq Task Security
 

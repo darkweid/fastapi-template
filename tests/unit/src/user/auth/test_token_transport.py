@@ -8,6 +8,9 @@ import pytest
 from src.core.database.session import get_session
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
+from src.system import routers as system_routers
+from src.user import routers as user_routers
+from src.user.auth import routers as user_auth_routers
 from src.user.auth.cookies import (
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
@@ -324,3 +327,37 @@ def test_every_token_route_declares_the_transport_dependency(app) -> None:
         assert _declares_transport(
             route_context.dependant
         ), f"{route_context.path} bypasses the responder"
+
+
+def test_cached_route_decorator_order_is_preserved(app: FastAPI) -> None:
+    # `functools.wraps` copies `__name__`, so a wrapper produced by @cached_route is
+    # indistinguishable from the undecorated function by name alone - that is why
+    # @cached_route stamps a `__cached_route__` marker on the object it returns
+    # instead. When the decorator order is correct (@cached_route inside
+    # @router.get), the marked wrapper is both the module attribute and the
+    # registered route endpoint. Invert the order and @router.get registers the
+    # undecorated function while @cached_route's marked wrapper only reaches the
+    # module attribute - this walk catches exactly that mismatch.
+    # Scans every module that defines a router, not just src.user.routers, so an
+    # inversion introduced in a future router module cannot pass silently.
+    router_modules = (user_routers, user_auth_routers, system_routers)
+    marked_endpoints = [
+        obj
+        for module in router_modules
+        for obj in vars(module).values()
+        if callable(obj) and getattr(obj, "__cached_route__", False)
+    ]
+    assert marked_endpoints, "expected at least one @cached_route-decorated endpoint"
+
+    registered_endpoints = {
+        route_context.original_route.endpoint
+        for route_context in routing.iter_route_contexts(app.routes)
+        if isinstance(route_context.original_route, APIRoute)
+    }
+
+    for endpoint in marked_endpoints:
+        assert endpoint in registered_endpoints, (
+            f"{endpoint.__qualname__} carries __cached_route__ but is not "
+            "registered as any route's endpoint - @cached_route must sit inside "
+            "@router.get, otherwise the router registers the undecorated function"
+        )

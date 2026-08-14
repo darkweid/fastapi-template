@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, Mock
 
 from fastapi import Request, Response
@@ -9,6 +10,7 @@ import redis.exceptions as redis_exc
 from src.core.limiter import FastAPILimiter
 import src.core.limiter.depends as limiter_depends
 from src.core.limiter.depends import RateLimiter
+from src.core.redis.degradation import RedisDegradationReporter
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.requests import build_request
 
@@ -27,33 +29,18 @@ class ErrorRedis:
 
 
 @pytest.fixture
-def limiter_state() -> tuple[
-    object | None,
-    str | None,
-    dict[str, object],
-    int | None,
-    int | None,
-]:
+def limiter_state() -> Iterator[None]:
     prev_redis = FastAPILimiter.redis
     prev_sha = FastAPILimiter.lua_sha
     prev_windows = RateLimiter._fallback_windows.copy()
-    prev_degraded_since = RateLimiter._redis_degraded_since_ms
-    prev_last_report_ms = RateLimiter._last_redis_degraded_report_ms
+    prev_reporter = RateLimiter._degradation_reporter
     RateLimiter._fallback_windows = {}
-    RateLimiter._redis_degraded_since_ms = None
-    RateLimiter._last_redis_degraded_report_ms = None
-    yield (
-        prev_redis,
-        prev_sha,
-        prev_windows,
-        prev_degraded_since,
-        prev_last_report_ms,
-    )
+    RateLimiter._degradation_reporter = RedisDegradationReporter("RateLimiter")
+    yield
     FastAPILimiter.redis = prev_redis
     FastAPILimiter.lua_sha = prev_sha
     RateLimiter._fallback_windows = prev_windows
-    RateLimiter._redis_degraded_since_ms = prev_degraded_since
-    RateLimiter._last_redis_degraded_report_ms = prev_last_report_ms
+    RateLimiter._degradation_reporter = prev_reporter
 
 
 def test_rate_limiter_invalid_window_raises() -> None:
@@ -63,9 +50,7 @@ def test_rate_limiter_invalid_window_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_rate_limiter_raises_when_not_initialized(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
 ) -> None:
     FastAPILimiter.redis = None
     FastAPILimiter.lua_sha = None
@@ -79,9 +64,7 @@ async def test_rate_limiter_raises_when_not_initialized(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_allows_request_when_under_limit(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     fake_redis: InMemoryRedis,
 ) -> None:
     FastAPILimiter.redis = fake_redis
@@ -98,9 +81,7 @@ async def test_rate_limiter_allows_request_when_under_limit(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_calls_callback_on_limit(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     fake_redis: InMemoryRedis,
 ) -> None:
     FastAPILimiter.redis = fake_redis
@@ -121,9 +102,7 @@ async def test_rate_limiter_calls_callback_on_limit(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_loads_script_when_missing(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     fake_redis: InMemoryRedis,
 ) -> None:
     FastAPILimiter.redis = fake_redis
@@ -141,9 +120,7 @@ async def test_rate_limiter_loads_script_when_missing(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_uses_in_memory_fallback_on_redis_error(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FastAPILimiter.redis = ErrorRedis()
@@ -169,9 +146,7 @@ async def test_rate_limiter_uses_in_memory_fallback_on_redis_error(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_fallback_window_resets_after_expiry(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FastAPILimiter.redis = ErrorRedis()
@@ -197,9 +172,7 @@ async def test_rate_limiter_fallback_window_resets_after_expiry(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_fallback_evicts_oldest_window_when_capacity_reached(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FastAPILimiter.redis = ErrorRedis()
@@ -257,9 +230,7 @@ async def test_rate_limiter_fallback_evicts_oldest_window_when_capacity_reached(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_allows_request_when_fallback_itself_fails(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FastAPILimiter.redis = ErrorRedis()
@@ -287,9 +258,7 @@ async def test_rate_limiter_allows_request_when_fallback_itself_fails(
 
 @pytest.mark.asyncio
 async def test_rate_limiter_reports_sentry_on_fallback_activation_with_cooldown(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FastAPILimiter.redis = ErrorRedis()
@@ -306,31 +275,31 @@ async def test_rate_limiter_reports_sentry_on_fallback_activation_with_cooldown(
         return current_time_ms
 
     monkeypatch.setattr(limiter_depends, "_current_time_ms", fake_now_ms)
+    RateLimiter._degradation_reporter = RedisDegradationReporter(
+        "RateLimiter", clock=fake_now_ms
+    )
     monkeypatch.setattr(
-        limiter_depends.sentry_sdk,
-        "capture_message",
+        "src.core.redis.degradation.sentry_sdk.capture_message",
         capture_message_mock,
     )
 
     await limiter(request, response)
     await limiter(request, response)
-    current_time_ms += RateLimiter._fallback_sentry_cooldown_ms + 1
+    current_time_ms += RateLimiter._degradation_reporter._cooldown_ms + 1
     await limiter(request, response)
 
     callback.assert_not_awaited()
     assert capture_message_mock.call_count == 2
     first_call = capture_message_mock.call_args_list[0]
     second_call = capture_message_mock.call_args_list[1]
-    assert "In-memory fallback limiter is active" in first_call.args[0]
+    assert "[RateLimiter] Redis is unavailable" in first_call.args[0]
     assert first_call.kwargs["level"] == "error"
-    assert "In-memory fallback limiter is active" in second_call.args[0]
+    assert "[RateLimiter] Redis is unavailable" in second_call.args[0]
 
 
 @pytest.mark.asyncio
 async def test_rate_limiter_reports_sentry_on_redis_recovery(
-    limiter_state: tuple[
-        object | None, str | None, dict[str, object], int | None, int | None
-    ],
+    limiter_state: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FastAPILimiter.redis = object()
@@ -347,9 +316,11 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
         return current_time_ms
 
     monkeypatch.setattr(limiter_depends, "_current_time_ms", fake_now_ms)
+    RateLimiter._degradation_reporter = RedisDegradationReporter(
+        "RateLimiter", clock=fake_now_ms
+    )
     monkeypatch.setattr(
-        limiter_depends.sentry_sdk,
-        "capture_message",
+        "src.core.redis.degradation.sentry_sdk.capture_message",
         capture_message_mock,
     )
     eval_redis_limit_mock = AsyncMock(
@@ -367,10 +338,13 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
     callback.assert_not_awaited()
     assert capture_message_mock.call_count == 2
     assert (
-        "In-memory fallback limiter is active"
+        "[RateLimiter] Redis is unavailable"
         in capture_message_mock.call_args_list[0].args[0]
     )
     assert capture_message_mock.call_args_list[0].kwargs["level"] == "error"
-    assert "Redis limiter recovered" in capture_message_mock.call_args_list[1].args[0]
+    assert (
+        "[RateLimiter] Redis recovered"
+        in capture_message_mock.call_args_list[1].args[0]
+    )
     assert "Downtime: 500ms" in capture_message_mock.call_args_list[1].args[0]
     assert capture_message_mock.call_args_list[1].kwargs["level"] == "info"
