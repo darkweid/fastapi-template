@@ -9,7 +9,7 @@ def test_user_new_password_allows_printable_ascii_symbols_outside_old_whitelist(
 ):
     password = "Strong1~ "
 
-    model = UserNewPassword(password=password)
+    model = UserNewPassword(current_password="OldPass1!", password=password)
 
     assert model.password == password
 
@@ -17,7 +17,7 @@ def test_user_new_password_allows_printable_ascii_symbols_outside_old_whitelist(
 def test_user_new_password_allows_maximum_length_boundary() -> None:
     password = "Aa1!" + ("x" * 124)
 
-    model = UserNewPassword(password=password)
+    model = UserNewPassword(current_password="OldPass1!", password=password)
 
     assert len(model.password) == 128
 
@@ -26,7 +26,7 @@ def test_user_new_password_rejects_password_longer_than_128_characters() -> None
     password = "Aa1!" + ("x" * 125)
 
     with pytest.raises(ValidationError) as exc_info:
-        UserNewPassword(password=password)
+        UserNewPassword(current_password="OldPass1!", password=password)
 
     error_message = exc_info.value.errors()[0]["msg"]
     assert (
@@ -37,4 +37,4 @@ def test_user_new_password_rejects_password_longer_than_128_characters() -> None
 
 def test_user_new_password_rejects_non_ascii_characters() -> None:
     with pytest.raises(ValidationError):
-        UserNewPassword(password="Strong1!пароль")
+        UserNewPassword(current_password="OldPass1!", password="Strong1!пароль")

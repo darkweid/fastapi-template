@@ -112,6 +112,7 @@ async def update_user_password(
     ],
 ) -> SuccessResponse:
     """
-    Updates the user password.
+    Updates the user password. Requires the current password and signs out every
+    active session, including this one.
     """
     return await use_case.execute(data=user_form_data, user_id=current_user.id)
