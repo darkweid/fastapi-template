@@ -13,8 +13,9 @@ class HealthCheckResponse(Base):
     """
     Detailed per-dependency report served at /health/ for monitoring.
 
-    Orchestrators must not consult it: a Redis outage degrades the status
-    without making the process itself unhealthy.
+    Always answers 200, including while a dependency is down - that is the one
+    moment the per-dependency detail matters. Orchestrators read /live/ and
+    /ready/ instead, which turn an outage into a status code.
     """
 
     status: Literal["ok", "degraded"]

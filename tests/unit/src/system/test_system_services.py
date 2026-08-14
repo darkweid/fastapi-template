@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import socket
 from unittest.mock import AsyncMock, Mock
 
@@ -8,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.core.errors.exceptions import ServiceUnavailableException
 from src.system.repositories import SystemRepository
-from src.system.services import HealthService, ensure_postgres_ready
+from src.system.services import HealthService, ReadinessService
 from tests.fakes.db import FakeAsyncSession
 
 
@@ -22,14 +23,21 @@ class RedisFail:
         raise RuntimeError("down")
 
 
+def build_readiness() -> ReadinessService:
+    return ReadinessService(repository=SystemRepository())
+
+
+def build_service(redis_client: object) -> HealthService:
+    return HealthService(redis_client=redis_client, readiness=build_readiness())
+
+
 @pytest.mark.asyncio
 async def test_health_service_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     sentry_mock = Mock()
     monkeypatch.setattr("sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
-    service = HealthService(redis_client=RedisOk(), repository=SystemRepository())
 
-    result = await service.get_status(session=session)
+    result = await build_service(RedisOk()).get_status(session=session)
 
     assert result.status == "ok"
     assert result.postgres is True
@@ -44,9 +52,8 @@ async def test_health_service_redis_failure_degrades(
     sentry_mock = Mock()
     monkeypatch.setattr("sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
-    service = HealthService(redis_client=RedisFail(), repository=SystemRepository())
 
-    result = await service.get_status(session=session)
+    result = await build_service(RedisFail()).get_status(session=session)
 
     assert result.status == "degraded"
     assert result.postgres is True
@@ -55,39 +62,39 @@ async def test_health_service_redis_failure_degrades(
 
 
 @pytest.mark.asyncio
-async def test_health_service_postgres_failure_raises(
+async def test_health_service_reports_postgres_failure_without_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """/health/ must keep answering with a body exactly when a dependency dies."""
     sentry_mock = Mock()
     monkeypatch.setattr("sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
     session.execute = AsyncMock(side_effect=SQLAlchemyError("fail"))
-    service = HealthService(redis_client=RedisOk(), repository=SystemRepository())
 
-    with pytest.raises(ServiceUnavailableException):
-        await service.get_status(session=session)
+    result = await build_service(RedisOk()).get_status(session=session)
 
+    assert result.status == "degraded"
+    assert result.postgres is False
+    assert result.redis is True
     sentry_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_ensure_postgres_ready_passes_on_live_database() -> None:
-    session = FakeAsyncSession()
-
-    await ensure_postgres_ready(session, SystemRepository())
+async def test_ensure_ready_passes_on_live_database() -> None:
+    await build_readiness().ensure_ready(FakeAsyncSession())
 
 
 @pytest.mark.asyncio
-async def test_ensure_postgres_ready_raises_on_dead_database() -> None:
+async def test_ensure_ready_raises_on_dead_database() -> None:
     session = FakeAsyncSession()
     session.execute = AsyncMock(side_effect=SQLAlchemyError("fail"))
 
     with pytest.raises(ServiceUnavailableException):
-        await ensure_postgres_ready(session, SystemRepository())
+        await build_readiness().ensure_ready(session)
 
 
 @pytest.mark.asyncio
-async def test_ensure_postgres_ready_raises_on_unresolvable_host() -> None:
+async def test_ensure_ready_raises_on_unresolvable_host() -> None:
     """A host that does not resolve reaches the probe as a bare socket error."""
     session = FakeAsyncSession()
     session.execute = AsyncMock(
@@ -95,4 +102,21 @@ async def test_ensure_postgres_ready_raises_on_unresolvable_host() -> None:
     )
 
     with pytest.raises(ServiceUnavailableException):
-        await ensure_postgres_ready(session, SystemRepository())
+        await build_readiness().ensure_ready(session)
+
+
+@pytest.mark.asyncio
+async def test_ensure_ready_raises_when_the_probe_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saturated connection pool must fail fast, not hang the probe."""
+    monkeypatch.setattr("src.system.services.POSTGRES_PROBE_TIMEOUT_SECONDS", 0.01)
+    session = FakeAsyncSession()
+
+    async def never_answers(*args: object, **kwargs: object) -> None:
+        await asyncio.sleep(3600)
+
+    session.execute = never_answers
+
+    with pytest.raises(ServiceUnavailableException):
+        await build_readiness().ensure_ready(session)

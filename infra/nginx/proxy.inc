@@ -10,18 +10,33 @@ error_page 413 = @error_payload_too_large;
 error_page 502 = @error_bad_gateway;
 error_page 504 = @error_gateway_timeout;
 
+# The CORS headers below are what makes the JSON readable: without them a
+# browser blocks the response and a cross-origin SPA sees a network error
+# instead of the body. The origin is reflected rather than matched against a
+# list, which nginx does not have - these three responses carry a fixed string
+# and no application data, and the real allowlist stays in the app's CORS
+# middleware, which answers every non-error request.
 location @error_payload_too_large {
     default_type application/json;
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Access-Control-Allow-Credentials true always;
+    add_header Vary Origin always;
     return 413 '{"error":"Payload too large","message":"Request body exceeds the maximum allowed size"}';
 }
 
 location @error_bad_gateway {
     default_type application/json;
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Access-Control-Allow-Credentials true always;
+    add_header Vary Origin always;
     return 502 '{"error":"Bad gateway","message":"The service is temporarily unreachable"}';
 }
 
 location @error_gateway_timeout {
     default_type application/json;
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Access-Control-Allow-Credentials true always;
+    add_header Vary Origin always;
     return 504 '{"error":"Gateway timeout","message":"The service took too long to respond"}';
 }
 

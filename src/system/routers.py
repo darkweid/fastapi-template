@@ -5,10 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.session import get_session
 from src.core.utils.datetime_utils import get_utc_now
-from src.system.dependencies import get_health_service, get_system_repository
-from src.system.repositories import SystemRepository
+from src.system.dependencies import get_health_service, get_readiness_service
 from src.system.schemas import HealthCheckResponse, ProbeResponse, ServerTimeResponse
-from src.system.services import HealthService, ensure_postgres_ready
+from src.system.services import HealthService, ReadinessService
 
 router = APIRouter()
 
@@ -23,11 +22,11 @@ async def check_liveness() -> ProbeResponse:
 @router.get("/ready/", response_model=ProbeResponse)
 @router.head("/ready/", response_model=ProbeResponse, include_in_schema=False)
 async def check_readiness(
+    readiness_service: Annotated[ReadinessService, Depends(get_readiness_service)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    repository: Annotated[SystemRepository, Depends(get_system_repository)],
 ) -> ProbeResponse:
     """Readiness probe: reports whether the service can reach its database."""
-    await ensure_postgres_ready(session, repository)
+    await readiness_service.ensure_ready(session=session)
     return ProbeResponse()
 
 

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable
 
 from redis.asyncio import Redis
@@ -10,67 +11,86 @@ from src.system.schemas import HealthCheckResponse
 
 logger = get_logger(__name__)
 
+# A probe must answer in bounded time. Without this it inherits the request
+# pool's 30s pool_timeout, so a saturated pool leaves the load balancer waiting
+# half a minute before hearing anything at all.
+POSTGRES_PROBE_TIMEOUT_SECONDS = 2.0
 
-async def ensure_postgres_ready(
-    session: AsyncSession, repository: SystemRepository
-) -> None:
+
+class ReadinessService:
     """
-    Gate readiness on PostgreSQL only - the single dependency without which
-    the service cannot answer any meaningful request.
+    Backs /ready/, and owns the PostgreSQL probe both probes share.
 
-    A module-level function rather than a HealthService method so that /ready/
-    never has to resolve a Redis client it would not use.
-
-    The probe catches everything: a host that does not resolve reaches it as a
-    bare socket.gaierror from the driver, never wrapped into SQLAlchemyError,
-    and an unreachable database has to come back as a 503 rather than as an
-    unexpected 500 from the middleware.
-
-    Raises:
-        ServiceUnavailableException: PostgreSQL is unreachable (HTTP 503).
+    Separate from HealthService so that readiness depends on PostgreSQL and
+    nothing else: a Redis outage must never be able to pull every instance out
+    of the load balancer.
     """
-    try:
-        await repository.ping(session)
-    except Exception as exc:
-        logger.error("Postgres health check failed", exc_info=exc)
-        raise ServiceUnavailableException(
-            "Readiness check failed: PostgreSQL is unreachable",
-            additional_info={"postgres": False},
-        ) from exc
+
+    def __init__(self, repository: SystemRepository) -> None:
+        self.repository = repository
+
+    async def ensure_ready(self, session: AsyncSession) -> None:
+        """
+        Gate readiness on PostgreSQL only - the single dependency without which
+        the service cannot answer any meaningful request.
+
+        Raises:
+            ServiceUnavailableException: PostgreSQL is unreachable, or the
+                request pool cannot hand out a connection within the probe
+                timeout (HTTP 503). Not logged here: the handler logs every
+                503 once, and a polling probe must not log an outage twice.
+        """
+        if not await self.check_postgres(session):
+            raise ServiceUnavailableException(
+                "Readiness check failed: PostgreSQL is unreachable",
+                additional_info={"postgres": False},
+            )
+
+    async def check_postgres(self, session: AsyncSession) -> bool:
+        """
+        Catches everything on purpose: a host that does not resolve reaches the
+        probe as a bare socket.gaierror from the driver, never wrapped into
+        SQLAlchemyError, and a probe that raises on an unreachable database
+        defeats its own point.
+        """
+        try:
+            async with asyncio.timeout(POSTGRES_PROBE_TIMEOUT_SECONDS):
+                await self.repository.ping(session)
+            return True
+        except Exception as exc:
+            logger.warning("Postgres health check failed: %s", exc)
+            return False
 
 
 class HealthService:
     """
     Owns the detailed per-dependency report served at /health/.
 
-    /live/ checks nothing and /ready/ uses ensure_postgres_ready above, so this
-    class exists for the one endpoint that legitimately needs a Redis client.
-
-    Neither probe reports to Sentry: they run on a timer, so a single outage
-    would file one event per poll. Redis degradation that actually affects
-    traffic is reported once, with a cooldown, by the rate limiter fallback.
+    Neither this nor ReadinessService reports to Sentry. They run on a timer,
+    so a single outage would file one event per poll, and the outage is what
+    infrastructure alerting watches anyway. Redis degradation that actually
+    affects traffic is reported once, with a cooldown, by the rate limiter
+    fallback.
     """
 
-    def __init__(self, redis_client: Redis, repository: SystemRepository) -> None:
+    def __init__(self, redis_client: Redis, readiness: ReadinessService) -> None:
         self.redis_client = redis_client
-        self.repository = repository
+        self.readiness = readiness
 
     async def get_status(self, session: AsyncSession) -> HealthCheckResponse:
         """
         Report the state of every dependency.
 
-        PostgreSQL being down raises 503, matching /ready/. Redis being down
-        only degrades the status: the process still serves requests, and
-        failing the check would take a healthy container out of rotation.
-
-        Raises:
-            ServiceUnavailableException: PostgreSQL is unreachable (HTTP 503).
+        Never raises: this is the endpoint monitoring reads to find out *which*
+        dependency is down, so it must keep answering with a body exactly when
+        something is broken. /ready/ is what turns a Postgres outage into a 503.
         """
-        await ensure_postgres_ready(session, self.repository)
+        postgres_is_ok = await self.readiness.check_postgres(session)
         redis_is_ok = await self._check_redis()
+        is_healthy = postgres_is_ok and redis_is_ok
         return HealthCheckResponse(
-            status="ok" if redis_is_ok else "degraded",
-            postgres=True,
+            status="ok" if is_healthy else "degraded",
+            postgres=postgres_is_ok,
             redis=redis_is_ok,
         )
 
@@ -81,5 +101,5 @@ class HealthService:
                 return bool(await ping_result)
             return bool(ping_result)
         except Exception as exc:
-            logger.error("Redis health check failed", exc_info=exc)
+            logger.warning("Redis health check failed: %s", exc)
             return False
