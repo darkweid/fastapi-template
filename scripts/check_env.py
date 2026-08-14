@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 
 # Keys carrying credentials. A value here that still equals the one in
 # .env.example is a secret published in the repository. Anchored at the end on
@@ -12,12 +13,23 @@ SECRET_KEY_PATTERN = re.compile(r"(PASSWORD|SECRET|TOKEN|DSN|KEY|KEY_ID)$")
 # .env.example cannot quietly turn the comparison above into a no-op.
 PLACEHOLDER_MARKER = "-not-real"
 
-# Settings whose example value is fine locally but never in a deploy.
-FORBIDDEN_VALUES = {
-    "DEBUG": {"true", "1", "yes"},
-    "VALIDATE_CERTS": {"false", "0", "no"},
-    "COOKIE_SECURE": {"false", "0", "no"},
+# Every spelling pydantic accepts, not just the obvious ones: DEBUG=on parses
+# as True and would otherwise walk past a check that only knows "true".
+TRUTHY_VALUES = {"1", "true", "t", "y", "yes", "on"}
+FALSY_VALUES = {"0", "false", "f", "n", "no", "off"}
+
+# Settings whose example value is fine locally but never in a deploy, mapped to
+# the boolean that is forbidden there.
+FORBIDDEN_BOOLEANS = {
+    "DEBUG": True,
+    "VALIDATE_CERTS": False,
+    "COOKIE_SECURE": False,
 }
+
+# URLs that must point somewhere the outside world can reach. A deploy that
+# keeps the example value here mails every user a link to their own machine.
+PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
+LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # noqa: S104 - matched, not bound
 
 
 def parse_env(path: Path) -> dict[str, str]:
@@ -29,6 +41,24 @@ def parse_env(path: Path) -> dict[str, str]:
         key, _, value = stripped.partition("=")
         entries[key.strip()] = value.strip().strip('"').strip("'")
     return entries
+
+
+def as_bool(value: str) -> bool | None:
+    """Parses a value the way pydantic would, or None when it is not a boolean."""
+    normalized = value.strip().lower()
+    if normalized in TRUTHY_VALUES:
+        return True
+    if normalized in FALSY_VALUES:
+        return False
+    return None
+
+
+def points_at_localhost(value: str) -> bool:
+    hostname = urlparse(value.strip()).hostname
+    if not hostname:
+        return False
+    hostname = hostname.lower()
+    return hostname in LOCAL_HOSTNAMES or hostname.startswith("127.")
 
 
 def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[str]:
@@ -45,8 +75,16 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
             problems.append(
                 f"{key} still holds the placeholder value from .env.example"
             )
-        if value.lower() in FORBIDDEN_VALUES.get(key, set()):
+
+        forbidden = FORBIDDEN_BOOLEANS.get(key)
+        if forbidden is not None and as_bool(value) is forbidden:
             problems.append(f"{key}={value} is not allowed outside local development")
+
+        if key in PUBLIC_URL_KEYS and points_at_localhost(value):
+            problems.append(
+                f"{key}={value} points at localhost: users receive email links "
+                "they cannot open"
+            )
 
     return problems
 
