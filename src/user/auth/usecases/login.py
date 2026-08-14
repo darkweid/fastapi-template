@@ -5,6 +5,8 @@ from fastapi import Depends
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.cache.dependencies import get_cache
+from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import InstanceProcessingException
@@ -18,6 +20,7 @@ from src.core.utils.security import (
 )
 from src.user.auth.schemas import LoginUserModel
 from src.user.auth.security import create_access_token, create_refresh_token
+from src.user.cache_keys import user_cache_keys
 from src.user.models import User
 
 INVALID_CREDENTIALS_MESSAGE = "Incorrect email or password."
@@ -44,10 +47,15 @@ class LoginUserUseCase:
     3) Check if user is verified.
     4) Check if user is active.
     5) Rehash and persist the password if needed.
-    6) Generate access and refresh tokens.
+    6) Invalidate the user cache namespace.
+    7) Commit the transaction and generate access and refresh tokens.
 
     Side effects:
     - Persists password hash updates when rehashing is required.
+    - Bumps the user:{id} cache namespace version - every write to the user row
+      does this unconditionally, including this one where the row is only
+      sometimes touched (the rehash branch), so no one has to remember an
+      exception to the rule.
     - Token creation handles its own caching.
 
     Errors:
@@ -62,9 +70,11 @@ class LoginUserUseCase:
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
         redis_client: Redis,
+        cache: Cache,
     ) -> None:
         self.uow = uow
         self.redis_client = redis_client
+        self.cache = cache
 
     async def execute(
         self,
@@ -105,6 +115,7 @@ class LoginUserUseCase:
             await self._rehash_password_if_needed(uow, user, data.password)
             session_id = str(uuid4())
             token_data = {"sub": str(user.id)}
+            await self.cache.invalidate(user_cache_keys.namespace(user.id))
             await uow.commit()
             return TokenModel(
                 access_token=await create_access_token(
@@ -137,8 +148,10 @@ def get_login_user_use_case(
         ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
     ],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
+    cache: Annotated[Cache, Depends(get_cache)],
 ) -> LoginUserUseCase:
     return LoginUserUseCase(
         uow=uow,
         redis_client=redis_client,
+        cache=cache,
     )

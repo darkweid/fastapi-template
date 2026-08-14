@@ -5,6 +5,8 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.cache.dependencies import get_cache
+from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import UnauthorizedException
@@ -18,6 +20,7 @@ from src.user.auth.token_helpers import (
     invalidate_all_user_sessions,
     validate_active_one_time_token,
 )
+from src.user.cache_keys import user_cache_keys
 
 logger = get_logger(__name__)
 
@@ -42,13 +45,15 @@ class ResetPasswordConfirmUseCase:
     3) Hash and update the user's password in the database.
     4) Flush pending DB changes.
     5) Delete the active reset-token key and invalidate all user sessions.
-    6) Commit the transaction.
+    6) Invalidate the user cache namespace.
+    7) Commit the transaction.
 
     Side effects:
     - Updates user record in the database.
     - Deletes the active reset-token key from Redis before commit to avoid
       partial-success password changes when Redis is unavailable.
     - Deletes user session keys from Redis before commit for the same reason.
+    - Bumps the user:{id} cache namespace version.
 
     Errors:
     - None (returns success=False for invalid tokens/users).
@@ -61,9 +66,11 @@ class ResetPasswordConfirmUseCase:
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
         redis_client: Redis,
+        cache: Cache,
     ) -> None:
         self.uow = uow
         self.redis_client = redis_client
+        self.cache = cache
 
     async def execute(
         self,
@@ -110,6 +117,7 @@ class ResetPasswordConfirmUseCase:
                         redis_client=self.redis_client,
                     )
                     await invalidate_all_user_sessions(str(user.id), self.redis_client)
+                    await self.cache.invalidate(user_cache_keys.namespace(user.id))
                     await uow.commit()
                     logger.debug(
                         "[ResetPasswordConfirm] All user %s sessions invalidated.",
@@ -143,8 +151,10 @@ def get_reset_password_confirm_use_case(
         ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
     ],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
+    cache: Annotated[Cache, Depends(get_cache)],
 ) -> ResetPasswordConfirmUseCase:
     return ResetPasswordConfirmUseCase(
         uow=uow,
         redis_client=redis_client,
+        cache=cache,
     )

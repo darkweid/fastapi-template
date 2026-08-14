@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.cache.memory_cache import InMemoryCache
 from src.core.schemas import SuccessResponse
 from src.user.auth.schemas import UserNewPassword
 from src.user.usecases.update_password import UpdateUserPasswordUseCase
@@ -27,10 +28,11 @@ def build_uow(
 async def test_update_password_user_not_found(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
 ) -> None:
     users_repo = FakeUsersRepository(updated_user=None)
     uow = build_uow(fake_session, users_repo)
-    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis)
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     result = await use_case.execute(
         data=UserNewPassword(password="StrongPass1!"),
@@ -46,6 +48,7 @@ async def test_update_password_success(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
 ) -> None:
     user = build_user()
     users_repo = FakeUsersRepository(updated_user=user)
@@ -56,7 +59,7 @@ async def test_update_password_success(
         invalidate_mock,
     )
 
-    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis)
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
         data=UserNewPassword(password="StrongPass1!"),
         user_id=user.id,
@@ -73,6 +76,7 @@ async def test_update_password_redis_failure_skips_commit(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
 ) -> None:
     user = build_user()
     users_repo = FakeUsersRepository(updated_user=user)
@@ -83,7 +87,7 @@ async def test_update_password_redis_failure_skips_commit(
         invalidate_mock,
     )
 
-    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis)
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(RuntimeError, match="redis down"):
         await use_case.execute(
@@ -101,6 +105,7 @@ async def test_update_password_commit_failure_after_invalidation(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
 ) -> None:
     user = build_user()
     users_repo = FakeUsersRepository(updated_user=user)
@@ -112,7 +117,7 @@ async def test_update_password_commit_failure_after_invalidation(
         invalidate_mock,
     )
 
-    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis)
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(RuntimeError, match="db down"):
         await use_case.execute(

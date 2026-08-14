@@ -5,6 +5,8 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.cache.dependencies import get_cache
+from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import UnauthorizedException
@@ -16,6 +18,7 @@ from src.user.auth.token_helpers import (
     invalidate_active_one_time_token,
     validate_active_one_time_token,
 )
+from src.user.cache_keys import user_cache_keys
 
 logger = get_logger(__name__)
 
@@ -39,12 +42,14 @@ class VerifyEmailUseCase:
     3) Retrieve user by normalized email.
     4) If user is already verified, consume the token and return success.
     5) Update user's is_verified status to True.
-    6) Commit the transaction.
-    7) Consume the token.
+    6) Invalidate the user cache namespace.
+    7) Commit the transaction.
+    8) Consume the token.
 
     Side effects:
     - Updates user record in the database.
     - Deletes the active verification-token key from Redis after successful use.
+    - Bumps the user:{id} cache namespace version.
 
     Returns:
     - SuccessResponse: success=True if verified or already verified, False if the
@@ -55,9 +60,11 @@ class VerifyEmailUseCase:
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
         redis_client: Redis,
+        cache: Cache,
     ) -> None:
         self.uow = uow
         self.redis_client = redis_client
+        self.cache = cache
 
     async def execute(self, token: str) -> SuccessResponse:
         async with self.uow as uow:
@@ -102,6 +109,7 @@ class VerifyEmailUseCase:
                     {"is_verified": True},
                     email=normalized_email,
                 )
+                await self.cache.invalidate(user_cache_keys.namespace(user.id))
                 await uow.commit()
                 await invalidate_active_one_time_token(
                     purpose="verification",
@@ -133,8 +141,10 @@ def get_verify_email_use_case(
         ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
     ],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
+    cache: Annotated[Cache, Depends(get_cache)],
 ) -> VerifyEmailUseCase:
     return VerifyEmailUseCase(
         uow=uow,
         redis_client=redis_client,
+        cache=cache,
     )

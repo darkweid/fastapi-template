@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
 from src.user.auth.schemas import LoginUserModel
 import src.user.auth.usecases.login as login_usecase
@@ -39,6 +40,7 @@ async def test_login_rehashes_password_when_needed(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
 ) -> None:
     user = build_user()
     uow = build_uow(user, fake_session)
@@ -55,7 +57,7 @@ async def test_login_rehashes_password_when_needed(
     monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
         LoginUserModel(email="user@example.com", password="plain-pass")
     )
@@ -79,6 +81,7 @@ async def test_login_does_not_rehash_when_not_needed(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
 ) -> None:
     user = build_user()
     uow = build_uow(user, fake_session)
@@ -93,7 +96,7 @@ async def test_login_does_not_rehash_when_not_needed(
     monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
         LoginUserModel(email="user@example.com", password="plain-pass")
     )
@@ -112,6 +115,7 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
 ) -> None:
     uow = build_uow(None, fake_session)
     verify_mock = AsyncMock(return_value=False)
@@ -119,7 +123,7 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
     monkeypatch.setattr(login_usecase.logger, "debug", debug_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(InstanceProcessingException, match=INVALID_CREDENTIALS_MESSAGE):
         await use_case.execute(
@@ -141,6 +145,7 @@ async def test_login_returns_unified_error_for_wrong_password(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
 ) -> None:
     user = build_user()
     uow = build_uow(user, fake_session)
@@ -149,7 +154,7 @@ async def test_login_returns_unified_error_for_wrong_password(
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
     monkeypatch.setattr(login_usecase.logger, "debug", debug_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(InstanceProcessingException, match=INVALID_CREDENTIALS_MESSAGE):
         await use_case.execute(
@@ -178,6 +183,7 @@ async def test_login_returns_unified_error_for_account_state_failures(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
 ) -> None:
     uow = build_uow(user, fake_session)
     verify_mock = AsyncMock(return_value=True)
@@ -185,7 +191,7 @@ async def test_login_returns_unified_error_for_account_state_failures(
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
     monkeypatch.setattr(login_usecase.logger, "debug", debug_mock)
 
-    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis)
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(InstanceProcessingException, match=INVALID_CREDENTIALS_MESSAGE):
         await use_case.execute(
