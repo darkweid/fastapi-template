@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
@@ -114,6 +114,47 @@ def test_build_where_clauses_rejects_inverted_date_range() -> None:
 
     with pytest.raises(FilteringError):
         query.build_where_clauses(QueryModel, SEARCHABLE)
+
+
+def test_build_where_clauses_accepts_mixed_naive_and_aware_date_bounds() -> None:
+    # A client can send one bound with an offset and one without. Comparing
+    # those two raises `TypeError`, which is not a `FilteringError` and so
+    # escapes the 400 handler as a 500. A naive bound is read as UTC.
+    now = get_utc_now()
+    query = ListQuery(
+        date_from=(now - timedelta(days=7)).replace(tzinfo=None),
+        date_to=now,
+    )
+
+    clauses = query.build_where_clauses(QueryModel, SEARCHABLE)
+
+    assert len(clauses) == 2
+    compiled = compile_clauses(clauses)
+    assert "created_at >=" in compiled.string
+    assert "created_at <=" in compiled.string
+
+
+def test_build_where_clauses_rejects_inverted_range_across_timezones() -> None:
+    # Inverted only once both bounds are in UTC: 10:00+02:00 is 08:00Z, which
+    # is earlier than the naive 09:00 the client sent as the range start.
+    query = ListQuery(
+        date_from=datetime.fromisoformat("2026-08-14T09:00:00"),
+        date_to=datetime.fromisoformat("2026-08-14T10:00:00+02:00"),
+    )
+
+    with pytest.raises(FilteringError):
+        query.build_where_clauses(QueryModel, SEARCHABLE)
+
+
+def test_build_where_clauses_binds_naive_date_bound_as_utc() -> None:
+    naive = datetime.fromisoformat("2026-08-14T09:00:00")
+    query = ListQuery(date_from=naive)
+
+    clauses = query.build_where_clauses(QueryModel, SEARCHABLE)
+    bound = compile_clauses(clauses).params["created_at_1"]
+
+    assert bound.tzinfo is not None
+    assert bound == naive.replace(tzinfo=UTC)
 
 
 def test_build_where_clauses_rejects_unknown_date_field() -> None:

@@ -10,6 +10,7 @@ from sqlalchemy.sql.expression import ColumnClause
 
 from src.core.database.filters import FilterCondition
 from src.core.errors.exceptions import FilteringError
+from src.core.utils.datetime_utils import ensure_aware_utc
 
 SortOrder = Literal["asc", "desc"]
 
@@ -85,18 +86,25 @@ class ListQuery:
         ):
             raise FilteringError("Date filtering is not supported for this resource")
 
-        if (
-            self.date_from is not None
-            and self.date_to is not None
-            and self.date_from > self.date_to
-        ):
+        # Both bounds are normalised to UTC before anything else touches them.
+        # A client can send one naive and one aware bound; comparing those two
+        # raises `TypeError`, which escapes the `FilteringError` handler and
+        # turns a malformed range into a 500. Normalising also keeps a naive
+        # bound from reaching a `DateTime(timezone=True)` column, where the
+        # driver would read it in the session timezone instead of UTC.
+        date_from = (
+            ensure_aware_utc(self.date_from) if self.date_from is not None else None
+        )
+        date_to = ensure_aware_utc(self.date_to) if self.date_to is not None else None
+
+        if date_from is not None and date_to is not None and date_from > date_to:
             raise FilteringError("Date range start must not be later than its end")
 
         clauses: list[ColumnElement[bool]] = []
-        if self.date_from is not None:
-            clauses.append(column >= self.date_from)
-        if self.date_to is not None:
-            clauses.append(column <= self.date_to)
+        if date_from is not None:
+            clauses.append(column >= date_from)
+        if date_to is not None:
+            clauses.append(column <= date_to)
         return clauses
 
     def _build_search_clause(
