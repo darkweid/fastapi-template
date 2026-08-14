@@ -225,7 +225,7 @@ class AppConfig(BaseModel):
     LOG_LEVEL: str
     LOG_LEVEL_FILE: str
 
-    CORS_ALLOWED_ORIGINS: list[str] = Field(["*"])
+    CORS_ALLOWED_ORIGINS: list[str] = Field([])
     CORS_ALLOWED_CREDENTIALS: bool = True
     CORS_ALLOWED_METHODS: list[str] = Field(["*"])
     CORS_ALLOWED_HEADERS: list[str] = Field(["*"])
@@ -272,6 +272,23 @@ class AppConfig(BaseModel):
                 pass
         sep = "," if "," in v else ";"
         return [item.strip() for item in v.split(sep) if item.strip()]
+
+    @model_validator(mode="after")
+    def reject_wildcard_origin_with_credentials(self) -> "AppConfig":
+        """
+        Fail startup on the combination that opens the API to every site.
+
+        Starlette answers a wildcard allowlist by echoing the request's own
+        Origin back, so paired with allow_credentials any third-party page can
+        make credentialed cross-origin calls and read the responses.
+        """
+        if "*" in self.CORS_ALLOWED_ORIGINS and self.CORS_ALLOWED_CREDENTIALS:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS=* cannot be combined with "
+                "CORS_ALLOWED_CREDENTIALS=true: list the front-end origins "
+                "explicitly, or turn credentials off."
+            )
+        return self
 
 
 class Config(BaseModel):

@@ -14,7 +14,7 @@ def _base_app_config_data() -> dict[str, object]:
         "LOCAL_TIMEZONE": "UTC",
         "LOG_LEVEL": "INFO",
         "LOG_LEVEL_FILE": "WARNING",
-        "CORS_ALLOWED_ORIGINS": "*",
+        "CORS_ALLOWED_ORIGINS": "https://app.example.com",
         "CORS_ALLOWED_CREDENTIALS": True,
         "CORS_ALLOWED_METHODS": "*",
         "CORS_ALLOWED_HEADERS": "*",
@@ -61,6 +61,45 @@ def test_app_config_reads_cors_allowed_credentials_flag() -> None:
     app_config = AppConfig(**data)
 
     assert app_config.CORS_ALLOWED_CREDENTIALS is False
+
+
+def test_app_config_defaults_to_no_cors_origins() -> None:
+    data = _base_app_config_data()
+    del data["CORS_ALLOWED_ORIGINS"]
+
+    app_config = AppConfig(**data)
+
+    assert app_config.CORS_ALLOWED_ORIGINS == []
+
+
+def test_app_config_rejects_wildcard_origin_with_credentials() -> None:
+    # Starlette echoes back any Origin when this pair is set, which turns every
+    # third-party page into an authenticated client of this API.
+    data = _base_app_config_data()
+    data["CORS_ALLOWED_ORIGINS"] = "*"
+    data["CORS_ALLOWED_CREDENTIALS"] = True
+
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS=\\*"):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_wildcard_among_explicit_origins_with_credentials() -> None:
+    data = _base_app_config_data()
+    data["CORS_ALLOWED_ORIGINS"] = "https://app.example.com,*"
+    data["CORS_ALLOWED_CREDENTIALS"] = True
+
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS=\\*"):
+        AppConfig(**data)
+
+
+def test_app_config_allows_wildcard_origin_without_credentials() -> None:
+    data = _base_app_config_data()
+    data["CORS_ALLOWED_ORIGINS"] = "*"
+    data["CORS_ALLOWED_CREDENTIALS"] = False
+
+    app_config = AppConfig(**data)
+
+    assert app_config.CORS_ALLOWED_ORIGINS == ["*"]
 
 
 def test_find_project_root_robust_finds_marker(
