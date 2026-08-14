@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.compiler import Compiled
 from sqlalchemy.sql.elements import ColumnElement
@@ -26,6 +27,14 @@ class QueryModel(SQLAlchemyBase):
         DateTime(timezone=True), nullable=True
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    @hybrid_property
+    def computed_created_at(self) -> datetime | None:
+        return self.created_at
+
+    @computed_created_at.expression
+    def computed_created_at(cls) -> object:  # noqa: N805
+        return cls.created_at + timedelta()
 
 
 SEARCHABLE = ("name", "email")
@@ -114,6 +123,17 @@ def test_build_where_clauses_rejects_unknown_date_field() -> None:
         query.build_where_clauses(QueryModel, SEARCHABLE)
 
 
+def test_build_where_clauses_rejects_non_column_date_field() -> None:
+    # A hybrid property is a real, existing attribute (unlike the "unknown
+    # date field" case above), but its expression is not column-shaped;
+    # comparing it directly would silently build the wrong SQL instead of
+    # raising, so it must be rejected the same way as a missing attribute.
+    query = ListQuery(date_from=get_utc_now(), date_field="computed_created_at")
+
+    with pytest.raises(FilteringError):
+        query.build_where_clauses(QueryModel, SEARCHABLE)
+
+
 def test_build_where_clauses_ignores_date_field_without_bounds() -> None:
     query = ListQuery(date_field="published_at")
 
@@ -152,12 +172,17 @@ def test_build_order_by_uses_requested_column_and_direction() -> None:
 
 
 def test_build_order_by_appends_primary_key_tiebreaker() -> None:
+    # The primary key is NOT NULL by definition, so its tiebreaker clause
+    # does not carry `nulls_last()` — unlike the requested/default sort
+    # column, which may be nullable.
     clauses = order_by_strings(ListQuery(order_by="name", order="asc"))
 
-    assert clauses[1] == "query_models.id ASC NULLS LAST"
+    assert clauses[1] == "query_models.id ASC"
 
 
 def test_build_order_by_does_not_duplicate_primary_key() -> None:
+    # Here the primary key *is* the requested sort column, so this exercises
+    # `_directed()` (with `nulls_last()`), not the plain tiebreaker clause.
     clauses = order_by_strings(ListQuery(order_by="id"), sortable=("id",))
 
     assert clauses == ["query_models.id DESC NULLS LAST"]
@@ -179,12 +204,14 @@ def test_build_order_by_falls_back_to_default_column() -> None:
     clauses = order_by_strings(ListQuery())
 
     assert clauses[0] == "query_models.created_at DESC NULLS LAST"
+    assert clauses[1] == "query_models.id DESC"
 
 
 def test_build_order_by_falls_back_to_created_at_without_default() -> None:
     clauses = order_by_strings(ListQuery(), default=None)
 
     assert clauses[0] == "query_models.created_at DESC NULLS LAST"
+    assert clauses[1] == "query_models.id DESC"
 
 
 def test_build_order_by_falls_back_to_primary_key_without_created_at() -> None:
@@ -197,4 +224,4 @@ def test_build_order_by_falls_back_to_primary_key_without_created_at() -> None:
         str(clause) for clause in ListQuery().build_order_by(OrderlessModel, (), None)
     ]
 
-    assert clauses == ["orderless_models.id DESC NULLS LAST"]
+    assert clauses == ["orderless_models.id DESC"]

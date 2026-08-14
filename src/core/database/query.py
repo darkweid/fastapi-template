@@ -6,6 +6,7 @@ from typing import Any, Literal, cast
 from sqlalchemy import inspect, or_
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql.elements import ColumnElement, UnaryExpression
+from sqlalchemy.sql.expression import ColumnClause
 
 from src.core.database.filters import FilterCondition
 from src.core.errors.exceptions import FilteringError
@@ -15,12 +16,17 @@ SortOrder = Literal["asc", "desc"]
 _ESCAPE_CHAR = "\\"
 
 
-def escape_like_literal(value: str, escape_char: str = _ESCAPE_CHAR) -> str:
-    """Escape LIKE metacharacters so user input is matched literally."""
+def escape_like_literal(value: str) -> str:
+    """Escape LIKE metacharacters so user input is matched literally.
+
+    Always escapes with `_ESCAPE_CHAR`: `_build_search_clause` hardcodes the
+    same character in the `ilike(escape=...)` call, so the two can never
+    disagree.
+    """
     return (
-        value.replace(escape_char, escape_char * 2)
-        .replace("%", f"{escape_char}%")
-        .replace("_", f"{escape_char}_")
+        value.replace(_ESCAPE_CHAR, _ESCAPE_CHAR * 2)
+        .replace("%", f"{_ESCAPE_CHAR}%")
+        .replace("_", f"{_ESCAPE_CHAR}_")
     )
 
 
@@ -69,7 +75,14 @@ class ListQuery:
             return []
 
         column = getattr(model, self.date_field, None)
-        if column is None:
+        # A missing attribute (`column is None`) and a non-column attribute
+        # (a hybrid property, a relationship, a dunder) must fail the same
+        # neutral way: comparing either one directly with `>=`/`<=` can raise
+        # a non-project exception (`AttributeError`, `NotImplementedError`)
+        # or, worse, silently build unintended SQL instead of raising at all.
+        if column is None or not isinstance(
+            getattr(column, "expression", None), ColumnClause
+        ):
             raise FilteringError("Date filtering is not supported for this resource")
 
         if (
@@ -128,12 +141,21 @@ class ListQuery:
         # Python object (the ORM wraps the mapped column in an annotated proxy),
         # so identity comparison always fails; `==` would build a SQL expression
         # instead of a boolean. Comparing the plain `.name` attribute is a normal
-        # string comparison and avoids both traps.
+        # string comparison and avoids both traps. `chosen` can be an
+        # expression that has no `.name` at all (a hybrid property, a
+        # relationship comparator) despite passing `_assert_list_query_fields`
+        # for the *searchable* half of a different field, so the lookup is
+        # defensive: `getattr(..., "name", None)` instead of a bare attribute
+        # access, and the comparison only runs when a name was found.
         chosen = column.expression if column is not None else None
+        chosen_name = getattr(chosen, "name", None)
         for primary_key_column in inspect(model).primary_key:
-            if chosen is not None and primary_key_column.name == chosen.name:
+            if chosen_name is not None and primary_key_column.name == chosen_name:
                 continue
-            clauses.append(self._directed(primary_key_column))
+            # The primary key is NOT NULL by definition, so `nulls_last()`
+            # buys nothing here and only prevents a plain btree index from
+            # serving the query, forcing a `Sort` node on deep-offset pages.
+            clauses.append(self._pk_directed(primary_key_column))
 
         return clauses
 
@@ -162,3 +184,13 @@ class ListQuery:
         # the loosest common return type across all its column-like inputs; the
         # concrete runtime type is always a `UnaryExpression`.
         return cast(UnaryExpression[Any], ordered.nulls_last())
+
+    def _pk_directed(self, column: Any) -> UnaryExpression[Any]:
+        """Direct a primary-key tiebreaker clause without `nulls_last()`.
+
+        A primary key is `NOT NULL`, so the modifier is a no-op for
+        correctness and only costs a `Sort` node PostgreSQL would otherwise
+        avoid via a plain btree index scan.
+        """
+        ordered = column.asc() if self.order == "asc" else column.desc()
+        return cast(UnaryExpression[Any], ordered)

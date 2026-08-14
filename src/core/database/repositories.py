@@ -1,14 +1,15 @@
-from typing import Any, Generic, Literal, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 
 from sqlalchemy import Enum as SAEnum, String, func, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.expression import ColumnClause
 
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
-from src.core.database.query import ListQuery
+from src.core.database.query import ListQuery, SortOrder
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
@@ -37,7 +38,8 @@ class BaseRepository(Generic[T]):
 
     def _assert_list_query_fields(self) -> None:
         """
-        Fail at startup when a declared searchable/sortable column is wrong.
+        Fail when the repository is constructed (per request, via `Depends()`)
+        if a declared searchable/sortable column is wrong.
 
         A misdeclared column would otherwise surface as a 500 on the first
         request: `ilike` against a non-text column is a PostgreSQL error.
@@ -48,8 +50,14 @@ class BaseRepository(Generic[T]):
         )
         for field in orderable_fields:
             attribute = getattr(self.model, field, None)
-            column_type = getattr(getattr(attribute, "expression", None), "type", None)
-            if column_type is None:
+            expression = getattr(attribute, "expression", None)
+            # A hybrid property or a relationship can have a typed
+            # `.expression` too, but neither is a real column: `build_order_by`
+            # cannot dedupe them against the primary key by `.name`, and
+            # `.desc()`/`.asc()` on a relationship comparator raises
+            # `NotImplementedError` at query time instead of failing here.
+            # Requiring a `ColumnClause`-shaped expression catches both.
+            if not isinstance(expression, ColumnClause):
                 raise TypeError(
                     f"{self.model.__name__} has no orderable attribute '{field}'"
                 )
@@ -302,7 +310,7 @@ class BaseRepository(Generic[T]):
     def _apply_default_ordering(
         self,
         query: Any,
-        order: Literal["asc", "desc"] = "desc",
+        order: SortOrder = "desc",
     ) -> Any:
         """Apply default ordering by created_at, falling back to id."""
         order_by = getattr(self.model, "created_at", None)

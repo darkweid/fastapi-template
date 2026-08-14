@@ -1,14 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import enum
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Integer, String, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    String,
+    select,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, load_only, mapped_column
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import Mapped, load_only, mapped_column, relationship
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
@@ -18,6 +28,7 @@ from src.core.database.repositories import (
     SoftDeleteRepository,
 )
 from src.core.errors.exceptions import FilteringError
+from src.core.utils.datetime_utils import get_utc_now
 
 
 class RepositoryModel(SQLAlchemyBase):
@@ -290,7 +301,7 @@ async def test_base_repository_get_paginated_list_applies_default_created_at_ord
     order_by_clauses = [str(clause) for clause in query._order_by_clauses]
     assert order_by_clauses == [
         "repository_models.created_at DESC NULLS LAST",
-        "repository_models.id DESC NULLS LAST",
+        "repository_models.id DESC",
     ]
 
 
@@ -344,10 +355,69 @@ async def test_base_repository_get_paginated_list_keeps_exact_filters_with_query
         name="alpha",
     )
 
-    count_query = session.execute.await_args_list[1].args[0]
+    items_query, count_query = (
+        call.args[0] for call in session.execute.await_args_list
+    )
+    items_sql = str(items_query.compile(dialect=postgresql.dialect()))
     count_sql = str(count_query.compile(dialect=postgresql.dialect()))
+    assert "name =" in items_sql
+    assert "id >=" in items_sql
     assert "name =" in count_sql
     assert "id >=" in count_sql
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_applies_date_range_to_items_and_count() -> (
+    None
+):
+    repo = SearchableRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+    now = get_utc_now()
+
+    await repo.get_paginated_list(
+        session=session,
+        page=1,
+        size=10,
+        query=ListQuery(date_from=now - timedelta(days=7), date_to=now),
+    )
+
+    items_query, count_query = (
+        call.args[0] for call in session.execute.await_args_list
+    )
+    items_sql = str(items_query.compile(dialect=postgresql.dialect()))
+    count_sql = str(count_query.compile(dialect=postgresql.dialect()))
+    assert "created_at >=" in items_sql
+    assert "created_at <=" in items_sql
+    assert "created_at >=" in count_sql
+    assert "created_at <=" in count_sql
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_applies_requested_ordering() -> None:
+    repo = SearchableRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+
+    await repo.get_paginated_list(
+        session=session,
+        page=1,
+        size=10,
+        query=ListQuery(order_by="name", order="asc"),
+    )
+
+    items_query = session.execute.await_args_list[0].args[0]
+    order_by_clauses = [str(clause) for clause in items_query._order_by_clauses]
+    assert order_by_clauses == [
+        "repository_models.name ASC NULLS LAST",
+        "repository_models.id ASC",
+    ]
 
 
 @pytest.mark.asyncio
@@ -645,6 +715,41 @@ class EnumModel(SQLAlchemyBase):
     status: Mapped[ListingStatus] = mapped_column(SAEnum(ListingStatus))
 
 
+class HybridModel(SQLAlchemyBase):
+    __tablename__ = "listing_hybrid_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    first: Mapped[str] = mapped_column(String(64))
+    last: Mapped[str] = mapped_column(String(64))
+
+    @hybrid_property
+    def full_name(self) -> str:
+        return f"{self.first} {self.last}"
+
+    @full_name.expression
+    def full_name(cls) -> Any:  # noqa: N805
+        return cls.first + " " + cls.last
+
+
+class RelationshipParentModel(SQLAlchemyBase):
+    __tablename__ = "listing_relationship_parents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    children: Mapped[list[RelationshipChildModel]] = relationship(
+        back_populates="parent"
+    )
+
+
+class RelationshipChildModel(SQLAlchemyBase):
+    __tablename__ = "listing_relationship_children"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("listing_relationship_parents.id")
+    )
+    parent: Mapped[RelationshipParentModel] = relationship(back_populates="children")
+
+
 def test_base_repository_accepts_valid_list_query_fields() -> None:
     class ValidRepository(BaseRepository[ListingModel]):
         model = ListingModel
@@ -713,6 +818,29 @@ def test_base_repository_rejects_enum_searchable_field() -> None:
     class BrokenRepository(BaseRepository[EnumModel]):
         model = EnumModel
         searchable_fields = ("status",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_hybrid_property_sortable_field() -> None:
+    # A hybrid property passes search validation (it compiles to a usable
+    # ILIKE expression) but is not column-shaped, so it must not pass the
+    # orderable check: `build_order_by` cannot dedupe it against the primary
+    # key and `.desc()`/`.asc()` on its expression is not what the caller
+    # expects.
+    class BrokenRepository(BaseRepository[HybridModel]):
+        model = HybridModel
+        sortable_fields = ("full_name",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_relationship_sortable_field() -> None:
+    class BrokenRepository(BaseRepository[RelationshipParentModel]):
+        model = RelationshipParentModel
+        sortable_fields = ("children",)
 
     with pytest.raises(TypeError):
         BrokenRepository()
