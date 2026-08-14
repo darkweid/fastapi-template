@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from unittest.mock import AsyncMock
 
 import pytest
@@ -51,3 +52,4 @@ async def test_base_service_passes_list_query_to_repository() -> None:
     assert response.total == 0
     assert repository.get_paginated_list.await_args.kwargs["query"] is list_query
     assert repository.get_paginated_list.await_args.kwargs["is_active"] is True
+    assert "query" in inspect.signature(BaseService.get_paginated_list).parameters
