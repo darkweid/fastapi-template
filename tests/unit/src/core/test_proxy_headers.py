@@ -76,7 +76,7 @@ async def test_trusted_peer_takes_rightmost_untrusted_hop() -> None:
         trusted_hosts=[*TRUSTED_HOSTS, "172.16.0.0/12"],
     )
 
-    assert scope["client"] == ("198.51.100.9", 40000)
+    assert scope["client"] == ("198.51.100.9", 0)
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_spoofed_left_entries_are_ignored() -> None:
         headers={"X-Forwarded-For": "9.9.9.9, 198.51.100.9"},
     )
 
-    assert scope["client"] == ("198.51.100.9", 40000)
+    assert scope["client"] == ("198.51.100.9", 0)
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_chain_of_only_trusted_hops_falls_back_to_leftmost() -> None:
         headers={"X-Forwarded-For": "192.168.1.10, 10.0.0.9"},
     )
 
-    assert scope["client"] == ("192.168.1.10", 40000)
+    assert scope["client"] == ("192.168.1.10", 0)
 
 
 @pytest.mark.asyncio
@@ -125,14 +125,19 @@ async def test_trusted_peer_without_forwarded_for_keeps_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wildcard_trusts_the_whole_chain() -> None:
+async def test_wildcard_entry_trusts_nothing() -> None:
+    """
+    AppConfig rejects "*" outright, so the only way one reaches the middleware
+    is a direct instantiation. It must not become a blanket trust: that would
+    let the caller hand us their own address.
+    """
     scope = await call_middleware(
         client=("203.0.113.7", 40000),
         headers={"X-Forwarded-For": "9.9.9.9, 198.51.100.9"},
         trusted_hosts=["*"],
     )
 
-    assert scope["client"] == ("9.9.9.9", 40000)
+    assert scope["client"] == ("203.0.113.7", 40000)
 
 
 @pytest.mark.asyncio
@@ -142,7 +147,97 @@ async def test_ipv6_hop_is_accepted() -> None:
         headers={"X-Forwarded-For": "2001:db8::1, 10.0.0.9"},
     )
 
-    assert scope["client"] == ("2001:db8::1", 40000)
+    assert scope["client"] == ("2001:db8::1", 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("forwarded_for", "expected"),
+    [
+        pytest.param("198.51.100.9:44321, 10.0.0.9", "198.51.100.9", id="ipv4-port"),
+        pytest.param(
+            "[2001:db8::1]:443, 10.0.0.9", "2001:db8::1", id="bracketed-ipv6-port"
+        ),
+        pytest.param("[2001:db8::1], 10.0.0.9", "2001:db8::1", id="bracketed-ipv6"),
+        pytest.param("2001:DB8::1, 10.0.0.9", "2001:db8::1", id="ipv6-case"),
+        pytest.param(
+            "198.51.100.9, 10.0.0.9:443", "198.51.100.9", id="trusted-hop-port"
+        ),
+    ],
+)
+async def test_hop_shapes_collapse_onto_one_address(
+    forwarded_for: str, expected: str
+) -> None:
+    """
+    Proxies write the same client in several shapes. All of them have to land on
+    one address, or one caller occupies several rate-limit buckets.
+    """
+    scope = await call_middleware(
+        client=("10.0.0.5", 40000),
+        headers={"X-Forwarded-For": forwarded_for},
+    )
+
+    assert scope["client"] == (expected, 0)
+
+
+@pytest.mark.asyncio
+async def test_repeated_forwarded_for_headers_are_read_in_order() -> None:
+    """
+    A proxy that appends its hop as a second header line, rather than extending
+    the first, must still win over what the client sent.
+    """
+    recorder = ScopeRecorder()
+    middleware = TrustedProxyHeadersMiddleware(recorder, trusted_hosts=TRUSTED_HOSTS)
+    scope: dict[str, Any] = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [
+            (b"x-forwarded-for", b"9.9.9.9"),
+            (b"x-forwarded-for", b"198.51.100.9"),
+        ],
+        "client": ("10.0.0.5", 40000),
+        "scheme": "http",
+    }
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request"}
+
+    async def send(message: dict[str, Any]) -> None:
+        return None
+
+    await middleware(scope, receive, send)
+
+    assert recorder.scope is not None
+    assert recorder.scope["client"] == ("198.51.100.9", 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "forwarded_proto",
+    [
+        pytest.param("evil scheme", id="not-a-scheme"),
+        pytest.param("javascript", id="javascript"),
+        pytest.param("", id="empty"),
+    ],
+)
+async def test_unknown_forwarded_scheme_is_ignored(forwarded_proto: str) -> None:
+    scope = await call_middleware(
+        client=("10.0.0.5", 40000),
+        headers={"X-Forwarded-Proto": forwarded_proto},
+    )
+
+    assert scope["scheme"] == "http"
+
+
+@pytest.mark.asyncio
+async def test_forwarded_scheme_is_normalized() -> None:
+    scope = await call_middleware(
+        client=("10.0.0.5", 40000),
+        headers={"X-Forwarded-Proto": "HTTPS, http"},
+    )
+
+    assert scope["scheme"] == "https"
 
 
 @pytest.mark.asyncio
