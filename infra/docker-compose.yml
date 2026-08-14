@@ -19,6 +19,7 @@ services:
       dockerfile: infra/postgres/Dockerfile
     image: template-postgres:18
     restart: always
+    shm_size: 256m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -46,7 +47,8 @@ services:
     image: template-app-image:latest
     env_file: ../.env
     command: gunicorn -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
-    restart: on-failure
+    restart: unless-stopped
+    stop_grace_period: 35s
     healthcheck:
       test: ["CMD", "wget", "--spider", "http://0.0.0.0:${APP_BACKEND_PORT}/health/"]
       interval: 10s
@@ -73,6 +75,7 @@ services:
     # in src/core/database/engine.py - change both together.
     command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver --max-async-tasks 20
     restart: unless-stopped
+    stop_grace_period: 35s
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,7 +145,9 @@ services:
     restart: unless-stopped
     env_file: ../.env
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Plain `redis-cli ping` exits 0 even on NOAUTH under requirepass, so a
+      # broken instance reads as healthy; authenticate and assert the PONG.
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5

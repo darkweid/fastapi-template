@@ -37,7 +37,6 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 ## Quick Start
 ```bash
 cp .env.example .env   # main env
-cp .env.test .env.test # optional test env (used when TESTING=true)
 make run-dev          # dev images + autoreload, exposes 8000 via nginx
 # or:
 make run              # prod-like build
@@ -89,4 +88,4 @@ make clean            # remove stack + volumes/images/orphans
 - TLS terminates at Nginx: copy `infra/nginx/tls.conf.example` over the `app.conf` mount, put the certificate under `infra/nginx/certs/` (git-ignored) and set the real hostname. It redirects plain http to https and leaves the ACME challenge path reachable.
 - `Strict-Transport-Security` comes from the application, not from Nginx — one header, one source. It is only appropriate once clients actually reach the site over HTTPS end to end.
 - `infra/firewall/` closes the host: UFW for host listeners plus a `DOCKER-USER` chain for container traffic, installed as a systemd unit. Run `sudo bash harden-host.sh` on the server; see `infra/firewall/README.md`.
-- `client_max_body_size 10m` is the current default. Increase it deliberately if the project introduces larger upload scenarios.
+- `client_max_body_size 20m` is the current default, kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`. Change both together if the project needs larger uploads.
