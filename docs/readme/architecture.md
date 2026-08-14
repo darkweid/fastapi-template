@@ -51,6 +51,37 @@ Benefits:
 - Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.
 - Keep repositories focused on data access; put orchestration and business logic in usecases/services.
 
+### List Queries (Search, Sort, Date Range)
+A list endpoint's search, sort and date-range filtering is described declaratively with `ListQuery` (`src/core/database/query.py`), not hand-rolled per repository.
+
+- **Repository side:** a repository opts in by declaring `searchable_fields`, `sortable_fields` and `default_order_by` as class attributes on `BaseRepository`. Both allowlists are empty by default — search and sorting are off until a domain explicitly opts a column in, because `search` and `order_by` arrive from client input and must never reach an arbitrary column. Never put secrets, hashes or tokens in `searchable_fields`.
+
+```python
+class ArticleRepository(SoftDeleteRepository[Article]):
+    model = Article
+    searchable_fields = ("title", "summary")
+    sortable_fields = ("created_at", "title")
+    default_order_by = "created_at"
+```
+
+- **Startup validation:** `BaseRepository.__init__` runs `_assert_list_query_fields()`, which checks that every declared column exists on `model` and that `searchable_fields` are text columns (`String`, not `Enum`). A misdeclared column fails at application startup, not on the first request that happens to hit it.
+- **HTTP side:** endpoints declare `Annotated[ListQueryParams, Query()]` (`src/core/pagination/schemas.py`) and translate it with `params.to_list_query(date_field=..., conditions=...)` into a `ListQuery`. Both `date_field` and `conditions` are chosen by the server — the client only supplies `search`, `order_by`, `order`, `date_from`, `date_to`.
+
+```python
+@router.get("/articles")
+async def list_articles(
+    params: Annotated[ListQueryParams, Query()],
+    use_case: Annotated[ListArticlesUseCase, Depends(get_list_articles_use_case)],
+) -> PaginatedResponse[ArticleViewModel]:
+    return await use_case.execute(params)
+```
+
+The use case passes the resulting `ListQuery` straight to `get_paginated_list(session, page, size, query=list_query)`, which builds the `WHERE`/`ORDER BY` clauses and runs a matching `COUNT` for `total`.
+
+- **Errors:** a field outside the allowlist, `date_from` after `date_to`, or a period requested against a column the model doesn't have all raise `FilteringError`, mapped to HTTP 400.
+- **Ordering:** `ListQuery.build_order_by` always appends the primary key after the requested sort column. Without that tiebreaker, limit/offset pagination over a non-unique sort column silently duplicates and skips rows between pages.
+- **Search performance:** `search` compiles to `ILIKE '%...%'`, which cannot use a plain btree index. On a large table, back it with `pg_trgm` (`CREATE EXTENSION pg_trgm` plus a GIN index with `gin_trgm_ops` on the searched columns) or full-text search.
+
 ### Advisory Transaction Locks
 Use PostgreSQL advisory transaction locks to serialize critical sections without row-level locking.
 
