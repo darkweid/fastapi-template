@@ -4,11 +4,16 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
+
+# Shortest secret the app accepts anywhere. Matches the HMAC-SHA256 block size,
+# which is the weakest signature the JWT algorithm allowlist permits.
+SECRET_MIN_LENGTH = 32
 
 
 class S3Config(BaseModel):
@@ -138,7 +143,7 @@ class CookieConfig(BaseModel):
     COOKIE_SECURE: bool = True
     COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
     COOKIE_DOMAIN: str | None = None
-    CSRF_SECRET_KEY: str
+    CSRF_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -169,12 +174,14 @@ class CookieConfig(BaseModel):
 
 
 class JWTConfig(BaseModel):
-    JWT_USER_SECRET_KEY: str
-    JWT_VERIFY_SECRET_KEY: str
-    JWT_ADMIN_SECRET_KEY: str
-    JWT_RESET_PASSWORD_SECRET_KEY: str
+    # A signing key shorter than the HMAC block size weakens HS256 and is almost
+    # always a placeholder left over from .env.example.
+    JWT_USER_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_VERIFY_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_ADMIN_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_RESET_PASSWORD_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
-    ALGORITHM: str
+    ALGORITHM: Literal["HS256", "HS384", "HS512"]
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
@@ -225,7 +232,7 @@ class AppConfig(BaseModel):
     LOG_LEVEL: str
     LOG_LEVEL_FILE: str
 
-    CORS_ALLOWED_ORIGINS: list[str] = Field(["*"])
+    CORS_ALLOWED_ORIGINS: list[str] = Field([])
     CORS_ALLOWED_CREDENTIALS: bool = True
     CORS_ALLOWED_METHODS: list[str] = Field(["*"])
     CORS_ALLOWED_HEADERS: list[str] = Field(["*"])
@@ -244,7 +251,19 @@ class AppConfig(BaseModel):
     )
 
     PROJECT_NAME: str
-    PROJECT_SECRET_KEY: str
+    PROJECT_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+
+    # Origin of the front-end that receives users arriving from an email. Links
+    # are built from it and never from the request, because Host is client input
+    # and a reset link pointed at another domain hands over the account.
+    PUBLIC_BASE_URL: str
+    EMAIL_VERIFY_PATH: str = "/verify-email"
+    PASSWORD_RESET_PATH: str = "/reset-password"
+
+    # Interactive docs stay open in DEBUG. Outside it they are served only when
+    # both credentials are set; unset means the app publishes no docs at all.
+    DOCS_USERNAME: str = ""
+    DOCS_PASSWORD: str = ""
 
     PING_INTERVAL: int
     CONNECTION_TTL: int
@@ -272,6 +291,99 @@ class AppConfig(BaseModel):
                 pass
         sep = "," if "," in v else ";"
         return [item.strip() for item in v.split(sep) if item.strip()]
+
+    @field_validator("PUBLIC_BASE_URL")
+    @classmethod
+    def validate_public_base_url(cls, value: str) -> str:
+        url = value.strip().rstrip("/")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(
+                "PUBLIC_BASE_URL must be an absolute http(s) URL, "
+                "for example https://app.example.com"
+            )
+        if any(char.isspace() for char in url):
+            raise ValueError("PUBLIC_BASE_URL must not contain whitespace")
+        if parsed.query or parsed.fragment:
+            raise ValueError(
+                "PUBLIC_BASE_URL must be an origin with an optional path, "
+                "without a query string or a fragment: the token is appended "
+                "to it as a query parameter"
+            )
+        return url
+
+    @field_validator("EMAIL_VERIFY_PATH", "PASSWORD_RESET_PATH")
+    @classmethod
+    def normalize_public_path(cls, value: str) -> str:
+        return "/" + value.strip().lstrip("/")
+
+    @model_validator(mode="after")
+    def reject_wildcard_origin_with_credentials(self) -> "AppConfig":
+        """
+        Fail startup on the combination that opens the API to every site.
+
+        Starlette answers a wildcard allowlist by echoing the request's own
+        Origin back, so paired with allow_credentials any third-party page can
+        make credentialed cross-origin calls and read the responses. "null" is
+        the same hole wearing a different hat: a sandboxed iframe or a data:
+        document sends `Origin: null`, and any page can open one.
+        """
+        unsafe = {"*", "null"} & {
+            origin.strip().lower() for origin in self.CORS_ALLOWED_ORIGINS
+        }
+        if unsafe and self.CORS_ALLOWED_CREDENTIALS:
+            raise ValueError(
+                f"CORS_ALLOWED_ORIGINS={sorted(unsafe)[0]} cannot be combined "
+                "with CORS_ALLOWED_CREDENTIALS=true: list the front-end origins "
+                "explicitly, or turn credentials off."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def reject_wildcard_proxy_trust(self) -> "AppConfig":
+        """
+        Fail startup when every proxy hop is trusted.
+
+        With a wildcard nothing in the forwarded chain is attacker-free, so the
+        resolver has no honest end to start from and the rate limiter ends up
+        keyed by a value the caller writes. List the edge addresses or ranges
+        instead - for a CDN, the published ranges of that CDN.
+        """
+        if "*" in [host.strip() for host in self.TRUST_PROXY_HOSTS]:
+            raise ValueError(
+                "TRUST_PROXY_HOSTS=* would trust the whole X-Forwarded-For "
+                "chain, which lets any caller pick their own rate-limit "
+                "identity: list the proxy addresses or CIDR ranges instead."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_docs_credentials(self) -> "AppConfig":
+        """
+        Keep the docs password brute-force resistant, or absent.
+
+        Both blank means the docs are simply not published, which is a valid
+        choice. Once they are published, the password is the only thing in
+        front of a full map of the API, so it answers to the same minimum as
+        every other secret. HTTP Basic transports credentials as base64 of a
+        latin-1 string and FastAPI decodes them as ASCII, so a non-ASCII
+        password would lock the operator out with no way to tell why.
+        """
+        if not (self.DOCS_USERNAME or self.DOCS_PASSWORD):
+            return self
+
+        if not (self.DOCS_USERNAME and self.DOCS_PASSWORD):
+            raise ValueError(
+                "DOCS_USERNAME and DOCS_PASSWORD must both be set to publish "
+                "the docs, or both be empty to keep them unpublished."
+            )
+        if len(self.DOCS_PASSWORD) < SECRET_MIN_LENGTH:
+            raise ValueError(
+                f"DOCS_PASSWORD must be at least {SECRET_MIN_LENGTH} characters"
+            )
+        if not (self.DOCS_USERNAME.isascii() and self.DOCS_PASSWORD.isascii()):
+            raise ValueError("DOCS_USERNAME and DOCS_PASSWORD must be ASCII-only")
+        return self
 
 
 class Config(BaseModel):

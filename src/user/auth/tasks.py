@@ -12,6 +12,8 @@ from src.core.email_service.schemas import (
 from src.core.email_service.service import EmailService
 from src.core.email_service.tasks import get_mailer
 from src.core.utils.security import mask_email
+from src.core.utils.urls import build_public_url
+from src.main.config import config
 from src.user.auth.security import (
     create_reset_password_token,
     create_verification_token,
@@ -27,10 +29,8 @@ logger = get_logger(__name__)
 async def send_verification_email_task(
     email: str,
     full_name: str,
-    base_url: str,
-    verify_path: str = "v1/users/auth/verify",
-    throttle_key: str | None = None,
     *,
+    throttle_key: str | None = None,
     redis_client: Annotated[Redis, TaskiqDepends(get_tasks_redis_client)],
 ) -> None:
     email_service = EmailService(get_mailer())
@@ -39,7 +39,11 @@ async def send_verification_email_task(
             {"email": email},
             redis_client=redis_client,
         )
-        link = f"{base_url}{verify_path}?token={token}"
+        link = build_public_url(
+            config.app.PUBLIC_BASE_URL,
+            config.app.EMAIL_VERIFY_PATH,
+            token=token,
+        )
         await email_service.send_template_email(
             subject="Verification Message",
             recipients=email,
@@ -70,10 +74,8 @@ async def send_verification_email_task(
 async def send_reset_password_email_task(
     email: str,
     full_name: str,
-    base_url: str,
-    reset_link_path: str = "v1/users/auth/password/reset/confirm",
-    throttle_key: str | None = None,
     *,
+    throttle_key: str | None = None,
     redis_client: Annotated[Redis, TaskiqDepends(get_tasks_redis_client)],
 ) -> None:
     email_service = EmailService(get_mailer())
@@ -82,7 +84,11 @@ async def send_reset_password_email_task(
             {"email": email},
             redis_client=redis_client,
         )
-        link = f"{base_url}{reset_link_path}?token={token}"
+        link = build_public_url(
+            config.app.PUBLIC_BASE_URL,
+            config.app.PASSWORD_RESET_PATH,
+            token=token,
+        )
         await email_service.send_template_email(
             subject="Resetting password",
             recipients=email,

@@ -77,4 +77,5 @@ class ResetPasswordModel(StrongPasswordValidationMixin, Base):
 
 
 class UserNewPassword(StrongPasswordValidationMixin, Base):
+    current_password: str
     password: str

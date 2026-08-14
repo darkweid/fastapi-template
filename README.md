@@ -23,6 +23,28 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
+## Email Links
+Verification and password-reset emails link to your front-end, never to the API, and
+never to a host taken from the request — a forged `Host` on `POST /password/reset`
+would otherwise send the victim a genuine email pointing at the attacker's domain.
+Three settings govern the link (`src/main/config.py`, `AppConfig`):
+
+- `PUBLIC_BASE_URL` — **required, no default.** Absolute origin of the front-end,
+  e.g. `https://app.example.com`.
+- `EMAIL_VERIFY_PATH` (default `/verify-email`) and `PASSWORD_RESET_PATH`
+  (default `/reset-password`) — the pages that receive `?token=...`.
+
+Those pages read the token out of the query string and call the API themselves:
+`GET /v1/users/auth/verify?token=...` and `PUT /v1/users/auth/password/reset/confirm`.
+
+`scripts/check_env.py` (run by the deploy workflow) rejects a `PUBLIC_BASE_URL`
+pointing at localhost, so the example value cannot reach a deploy unnoticed.
+
+Upgrading an existing fork: the email tasks no longer take `base_url` and the
+path as arguments, so any message already sitting in the outbox or the broker
+carries a payload the new signature cannot bind. Drain the queue before rolling
+out, or expect those specific emails to fail their retries and be dropped.
+
 ## Auth Cookie & CSRF Configuration
 The refresh token is delivered as an httponly cookie by default, with a stateless
 signed double-submit CSRF check on the refresh route; native clients that want the
@@ -44,12 +66,11 @@ for the full contract. Four settings in `.env` govern this (`src/main/config.py`
   - `COOKIE_SECURE=true`. Browsers discard a `SameSite=None` cookie that is not
     `Secure`, and they do so silently, so the app would look healthy while every
     client lost its session. `CookieConfig` refuses to start on that combination.
-  - An explicit CORS origin allowlist. The shipped defaults are
-    `CORS_ALLOWED_ORIGINS=["*"]` with `CORS_ALLOWED_CREDENTIALS=true`, and Starlette's
-    `CORSMiddleware` then echoes back whatever origin asks. That is acceptable for a
-    header-only API, but not once auth state lives in a cookie the browser attaches
-    automatically: replace `["*"]` with the real front-end origins before enabling
-    `none`. If `CORS_ALLOWED_HEADERS` was ever narrowed from `["*"]`, it must list
+  - An explicit CORS origin allowlist. `CORS_ALLOWED_ORIGINS` defaults to `[]` and
+    `AppConfig` refuses to start on `["*"]` together with
+    `CORS_ALLOWED_CREDENTIALS=true`, because Starlette's `CORSMiddleware` then echoes
+    back whatever origin asks — list the real front-end origins. If
+    `CORS_ALLOWED_HEADERS` was ever narrowed from `["*"]`, it must list
     `X-CSRF-Token` and `X-Token-Transport`.
 - `COOKIE_DOMAIN` (default unset/blank) — leave blank unless the auth cookies must
   be shared across subdomains.
@@ -156,7 +177,12 @@ TLS terminates at Nginx — `infra/nginx/tls.conf.example` is a drop-in replacem
 for `app.conf` once the certificate is in place.
 
 ## Common Services
-- API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only)
+- API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only).
+  `/docs`, `/redoc` and `/openapi.json` are open only while `DEBUG=true`. Otherwise they
+  are served behind HTTP Basic using `DOCS_USERNAME` / `DOCS_PASSWORD`, and are not
+  published at all while either of the two is blank. The password takes the same
+  32-character minimum as the other secrets, must be ASCII, and the three routes are
+  rate limited — Basic auth has no lockout of its own.
 - Probes: http://localhost:8000/live/ (liveness, no dependencies — what the container
   healthcheck polls), http://localhost:8000/ready/ (readiness, 503 while Postgres is
   unreachable), http://localhost:8000/health/ (detailed per-dependency report; always

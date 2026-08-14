@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Request, Response
+from fastapi import APIRouter, Body, Depends, Response
 
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
@@ -61,16 +61,13 @@ router = APIRouter()
     dependencies=[Depends(RateLimiter(times=10, minutes=10))],
 )
 async def signup_user(
-    request: Request,
     user_form_data: CreateUserModel,
     use_case: Annotated[RegisterUseCase, Depends(get_register_use_case)],
 ) -> UserProfileViewModel:
     """
     Create a new user account.
     """
-    return await use_case.execute(
-        data=user_form_data, request_base_url=request.base_url
-    )
+    return await use_case.execute(data=user_form_data)
 
 
 @router.post(
@@ -83,7 +80,6 @@ async def signup_user(
     ],
 )
 async def send_verification_email(
-    request: Request,
     data: ResendVerificationModel,
     use_case: Annotated[
         SendVerificationUseCase, Depends(get_send_verification_use_case)
@@ -92,7 +88,7 @@ async def send_verification_email(
     """
     Sends the verification link to the user's email.
     """
-    return await use_case.execute(data=data, request_base_url=request.base_url)
+    return await use_case.execute(data=data)
 
 
 @router.get("/verify", status_code=200)
@@ -218,7 +214,6 @@ async def logout_user(
     ],
 )
 async def send_reset_password_request(
-    request: Request,
     data: SendResetPasswordRequestModel,
     use_case: Annotated[
         ResetPasswordRequestUseCase, Depends(get_reset_password_request_use_case)
@@ -227,7 +222,7 @@ async def send_reset_password_request(
     """
     Sends a password reset link to the user's email.
     """
-    return await use_case.execute(data=data, request_base_url=request.base_url)
+    return await use_case.execute(data=data)
 
 
 @router.put(

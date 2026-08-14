@@ -260,9 +260,15 @@ async def handle_unauthorized_exception(
     error_type = "Unauthorized"
     log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
     response_logger.warning(log_msg)
+
+    headers = {}
+    if exc.www_authenticate:
+        headers["WWW-Authenticate"] = exc.www_authenticate
+
     return JSONResponse(
         status_code=401,
         content=format_error_response(error_type, exc.message),
+        headers=headers,
     )
 
 

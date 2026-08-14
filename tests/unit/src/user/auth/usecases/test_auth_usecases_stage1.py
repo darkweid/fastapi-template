@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 
 import jwt
 import pytest
-from starlette.datastructures import URL
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import (
@@ -177,7 +176,6 @@ async def test_register_usecase_creates_user_and_sends_email(
         phone_number="+1234567890",
         password="StrongPass1!",
     )
-    base_url = URL("http://testserver/")
 
     call_order: list[str] = []
     notifier.send_verification = AsyncMock(
@@ -185,7 +183,7 @@ async def test_register_usecase_creates_user_and_sends_email(
     )
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
-    result = await use_case.execute(data=data, request_base_url=base_url)
+    result = await use_case.execute(data=data)
 
     assert isinstance(result, UserProfileViewModel)
     created_data = users_repo.create.await_args.kwargs["data"]
@@ -198,7 +196,6 @@ async def test_register_usecase_creates_user_and_sends_email(
     assert notifier.send_verification.await_args.kwargs == {
         "uow": uow,
         "user": user,
-        "base_url": base_url,
     }
 
 
@@ -222,7 +219,7 @@ async def test_register_usecase_propagates_notifier_failure(
     )
 
     with pytest.raises(RuntimeError, match="outbox insert failed"):
-        await use_case.execute(data=data, request_base_url=URL("http://testserver/"))
+        await use_case.execute(data=data)
 
     notifier.send_verification.assert_awaited_once()
     uow.commit.assert_not_awaited()
@@ -239,7 +236,7 @@ async def test_resend_verification_returns_success_on_missing_user(
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     data = ResendVerificationModel(email="missing@example.com")
-    result = await use_case.execute(data=data, request_base_url=URL("http://x/"))
+    result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
     notifier.send_verification.assert_not_awaited()
@@ -255,7 +252,6 @@ async def test_resend_verification_success(
     uow = build_uow(fake_session, users_repo)
     notifier = FakeVerificationNotifier()
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
-    base_url = URL("http://x/")
 
     call_order: list[str] = []
     notifier.send_verification = AsyncMock(
@@ -263,14 +259,12 @@ async def test_resend_verification_success(
     )
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
-    result = await use_case.execute(
-        data=ResendVerificationModel(email=user.email), request_base_url=base_url
-    )
+    result = await use_case.execute(data=ResendVerificationModel(email=user.email))
 
     assert result == SuccessResponse(success=True)
     expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
     notifier.send_verification.assert_awaited_once_with(
-        uow=uow, user=user, base_url=base_url, throttle_key=expected_throttle_key
+        uow=uow, user=user, throttle_key=expected_throttle_key
     )
     uow.commit.assert_awaited_once()
     assert call_order == ["notify", "commit"]
@@ -288,7 +282,7 @@ async def test_resend_verification_skips_if_throttled(
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     data = ResendVerificationModel(email=user.email)
-    result = await use_case.execute(data=data, request_base_url=URL("http://x/"))
+    result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
     notifier.send_verification.assert_awaited_once()
@@ -310,7 +304,6 @@ async def test_resend_verification_releases_throttle_when_commit_fails(
     with pytest.raises(RuntimeError, match="commit failed"):
         await use_case.execute(
             data=ResendVerificationModel(email=user.email),
-            request_base_url=URL("http://x/"),
         )
 
     expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
@@ -328,7 +321,7 @@ async def test_resend_verification_user_already_verified(
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     data = ResendVerificationModel(email=user.email)
-    result = await use_case.execute(data=data, request_base_url=URL("http://x/"))
+    result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
     notifier.send_verification.assert_not_awaited()
@@ -344,7 +337,6 @@ async def test_reset_password_request_success(
     uow = build_uow(fake_session, users_repo)
     notifier = FakeResetPasswordNotifier()
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
-    base_url = URL("http://x/")
 
     call_order: list[str] = []
     notifier.send_password_reset_email = AsyncMock(
@@ -353,12 +345,12 @@ async def test_reset_password_request_success(
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
     data = SendResetPasswordRequestModel(email=user.email)
-    result = await use_case.execute(data=data, request_base_url=base_url)
+    result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
     expected_throttle_key = build_email_throttle_key("password-reset", user.email)
     notifier.send_password_reset_email.assert_awaited_once_with(
-        uow=uow, user=user, base_url=base_url, throttle_key=expected_throttle_key
+        uow=uow, user=user, throttle_key=expected_throttle_key
     )
     uow.commit.assert_awaited_once()
     assert call_order == ["notify", "commit"]
@@ -378,7 +370,6 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
     with pytest.raises(RuntimeError, match="commit failed"):
         await use_case.execute(
             data=SendResetPasswordRequestModel(email=user.email),
-            request_base_url=URL("http://x/"),
         )
 
     expected_throttle_key = build_email_throttle_key("password-reset", user.email)
@@ -395,7 +386,7 @@ async def test_reset_password_request_user_not_found(
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
 
     data = SendResetPasswordRequestModel(email="missing@example.com")
-    result = await use_case.execute(data=data, request_base_url=URL("http://x/"))
+    result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
     notifier.send_password_reset_email.assert_not_awaited()

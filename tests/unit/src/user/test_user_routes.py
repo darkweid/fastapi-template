@@ -5,9 +5,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.core.database.session import get_session
-from src.core.errors.exceptions import InstanceNotFoundException
+from src.core.errors.exceptions import (
+    AccessForbiddenException,
+    InstanceNotFoundException,
+    InstanceProcessingException,
+)
 from src.core.schemas import SuccessResponse
 from src.user.auth.dependencies import get_current_user
+from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
 from src.user.schemas import UserProfileViewModel
@@ -21,8 +26,12 @@ from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 
 
 class FakeUpdatePasswordUseCase:
-    def __init__(self, result: SuccessResponse) -> None:
-        self.execute = AsyncMock(return_value=result)
+    def __init__(
+        self,
+        result: SuccessResponse | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.execute = AsyncMock(return_value=result, side_effect=error)
 
 
 class FakeUpdateProfileUseCase:
@@ -127,11 +136,111 @@ async def test_update_user_password(
 
     response = await async_client.patch(
         "/v1/users/me/password",
-        json={"password": "StrongPass1!"},
+        json={"current_password": "OldPass1!", "password": "StrongPass1!"},
     )
 
     assert response.status_code == 200
     assert response.json() == {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_update_user_password_expires_the_auth_cookies(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    """
+    Every session is gone server-side, so leaving the browser holding a refresh
+    cookie only turns the next refresh into an unexplainable logout.
+    """
+    user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(get_token_transport, ProvideValue(TokenTransport.COOKIE))
+    dependency_overrides.set(
+        get_update_user_password_use_case,
+        ProvideValue(FakeUpdatePasswordUseCase(SuccessResponse(success=True))),
+    )
+
+    response = await async_client.patch(
+        "/v1/users/me/password",
+        json={"current_password": "OldPass1!", "password": "StrongPass1!"},
+    )
+
+    assert response.status_code == 200
+    expired = [
+        cookie
+        for cookie in response.headers.get_list("set-cookie")
+        if "Max-Age=0" in cookie
+    ]
+    assert len(expired) == 2
+
+
+@pytest.mark.asyncio
+async def test_update_user_password_rejects_reusing_the_current_password(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(
+        get_update_user_password_use_case,
+        ProvideValue(
+            FakeUpdatePasswordUseCase(
+                error=InstanceProcessingException(
+                    "New password must differ from the current one."
+                )
+            )
+        ),
+    )
+
+    response = await async_client.patch(
+        "/v1/users/me/password",
+        json={"current_password": "StrongPass1!", "password": "StrongPass1!"},
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_update_user_password_requires_current_password(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    use_case = FakeUpdatePasswordUseCase(SuccessResponse(success=True))
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(get_update_user_password_use_case, ProvideValue(use_case))
+
+    response = await async_client.patch(
+        "/v1/users/me/password",
+        json={"password": "StrongPass1!"},
+    )
+
+    assert response.status_code == 422
+    use_case.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_user_password_rejects_wrong_current_password(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(
+        get_update_user_password_use_case,
+        ProvideValue(
+            FakeUpdatePasswordUseCase(
+                error=AccessForbiddenException("Current password is incorrect.")
+            )
+        ),
+    )
+
+    response = await async_client.patch(
+        "/v1/users/me/password",
+        json={"current_password": "WrongPass1!", "password": "StrongPass1!"},
+    )
+
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

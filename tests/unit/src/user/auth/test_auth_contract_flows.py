@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 from fastapi import Request
 import pytest
-from starlette.datastructures import URL
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import SuccessResponse, TokenModel
@@ -114,9 +113,7 @@ class ResetPasswordRequestUseCaseFake:
         self._state = state
         self._token = token
 
-    async def execute(
-        self, data: SendResetPasswordRequestModel, request_base_url: URL
-    ) -> SuccessResponse:
+    async def execute(self, data: SendResetPasswordRequestModel) -> SuccessResponse:
         self._state.token = self._token
         return SuccessResponse(success=True)
 

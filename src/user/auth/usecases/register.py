@@ -1,7 +1,6 @@
 from typing import Annotated
 
 from fastapi import Depends
-from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
@@ -23,7 +22,6 @@ class RegisterUseCase:
 
     Inputs:
     - data: CreateUserModel containing user registration details.
-    - request_base_url: The base URL of the request for building verification links.
 
     Validations:
     - Email and username must be unique (handled by DB constraints/repository).
@@ -54,9 +52,7 @@ class RegisterUseCase:
         self.uow = uow
         self.notifier = notifier
 
-    async def execute(
-        self, data: CreateUserModel, request_base_url: URL
-    ) -> UserProfileViewModel:
+    async def execute(self, data: CreateUserModel) -> UserProfileViewModel:
         async with self.uow as uow:
             user_data = data.model_dump()
             raw_password = user_data.pop("password")
@@ -67,11 +63,7 @@ class RegisterUseCase:
             )
             # Outbox row rides the same transaction: a rollback cancels the
             # email, a broker outage no longer fails registration.
-            await self.notifier.send_verification(
-                uow=uow,
-                user=user,
-                base_url=request_base_url,
-            )
+            await self.notifier.send_verification(uow=uow, user=user)
             await uow.commit()
 
         logger.info("[Register User] User '%s' registered successfully.", data.username)

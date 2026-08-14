@@ -9,9 +9,14 @@ from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.errors.exceptions import (
+    AccessForbiddenException,
+    InstanceNotFoundException,
+    InstanceProcessingException,
+)
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import hash_password, mask_email
+from src.core.utils.security import hash_password, mask_email, verify_password
 from src.user.auth.schemas import UserNewPassword
 from src.user.auth.token_helpers import invalidate_all_user_sessions
 from src.user.cache_keys import user_cache_keys
@@ -23,19 +28,26 @@ class UpdateUserPasswordUseCase:
     """
     Update a user's password and invalidate all their active sessions.
 
+    This is the self-service change and it always proves knowledge of the
+    current password. An administrative reset of someone else's password, when
+    one is added, is a separate scenario and must not ask for it.
+
     Inputs:
-    - data: UserNewPassword containing the new password.
+    - data: UserNewPassword containing the current and the new password.
     - user_id: UUID of the user updating their password.
 
     Validations:
     - User must exist in the database.
+    - current_password must match the stored hash.
+    - The new password must differ from the current one.
 
     Workflow:
-    1) Hash and update user password in the database.
-    2) Flush pending DB changes.
-    3) Invalidate all active Redis sessions for the user.
-    4) Invalidate the user cache namespace.
-    5) Commit the transaction.
+    1) Load the user and verify the current password.
+    2) Hash and update user password in the database.
+    3) Flush pending DB changes.
+    4) Invalidate all active Redis sessions for the user.
+    5) Invalidate the user cache namespace.
+    6) Commit the transaction.
 
     Side effects:
     - Updates user record in database.
@@ -44,10 +56,12 @@ class UpdateUserPasswordUseCase:
     - Bumps the user:{id} cache namespace version.
 
     Errors:
-    - InstanceProcessingException: if update fails.
+    - InstanceNotFoundException: if the user does not exist.
+    - AccessForbiddenException: if current_password does not match.
+    - InstanceProcessingException: if the new password repeats the current one.
 
     Returns:
-    - SuccessResponse: success=True if updated, False if user not found.
+    - SuccessResponse: success=True.
     """
 
     def __init__(
@@ -62,11 +76,29 @@ class UpdateUserPasswordUseCase:
 
     async def execute(self, data: UserNewPassword, user_id: UUID) -> SuccessResponse:
         async with self.uow as uow:
+            user = await uow.users.get_single(uow.session, id=user_id)
+            if not user:
+                logger.info("[UpdateUserPassword] User not found.")
+                raise InstanceNotFoundException("User not found.")
+
+            if not await verify_password(data.current_password, user.password_hash):
+                logger.debug(
+                    "[UpdateUserPassword] Wrong current password for %s.",
+                    mask_email(user.email),
+                )
+                raise AccessForbiddenException("Current password is incorrect.")
+
+            if data.password == data.current_password:
+                # Not a no-op: going through with it would still sign every
+                # session out, so a mistyped form would look like a hijack.
+                raise InstanceProcessingException(
+                    "New password must differ from the current one."
+                )
+
             update_data = {"password_hash": hash_password(data.password)}
             updated_user = await uow.users.update(uow.session, update_data, id=user_id)
             if not updated_user:
-                logger.info("[UpdateUserPassword] User not found.")
-                return SuccessResponse(success=False)
+                raise InstanceNotFoundException("User not found.")
             await uow.flush()
             await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
             await self.cache.invalidate(user_cache_keys.namespace(updated_user.id))

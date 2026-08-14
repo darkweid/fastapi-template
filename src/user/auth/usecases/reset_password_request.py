@@ -1,7 +1,6 @@
 from typing import Annotated
 
 from fastapi import Depends
-from starlette.datastructures import URL
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
@@ -23,7 +22,6 @@ class ResetPasswordRequestUseCase:
 
     Inputs:
     - data: SendResetPasswordRequestModel containing user email.
-    - request_base_url: The base URL for the password reset link.
 
     Validations:
     - User must exist (if not, return success to prevent email enumeration).
@@ -56,9 +54,7 @@ class ResetPasswordRequestUseCase:
         self.uow = uow
         self.notifier = notifier
 
-    async def execute(
-        self, data: SendResetPasswordRequestModel, request_base_url: URL
-    ) -> SuccessResponse:
+    async def execute(self, data: SendResetPasswordRequestModel) -> SuccessResponse:
         async with self.uow as uow:
             user = await uow.users.get_single(uow.session, email=data.email)
             if not user:
@@ -72,7 +68,6 @@ class ResetPasswordRequestUseCase:
             await self.notifier.send_password_reset_email(
                 uow=uow,
                 user=user,
-                base_url=request_base_url,
                 throttle_key=throttle_key,
             )
             try:

@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from starlette.datastructures import URL
 
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.utils.security import build_email_throttle_key
@@ -21,9 +20,7 @@ async def test_verification_notifier_queues_task_with_expected_payload(
     notifier = VerificationNotifier(dispatcher=dispatcher, redis_client=fake_redis)
     user = build_user(email="user@example.com")
 
-    await notifier.send_verification(
-        uow=fake_uow, user=user, base_url=URL("http://testserver/")
-    )
+    await notifier.send_verification(uow=fake_uow, user=user)
 
     assert dispatcher.enqueue_transactional.await_args.args[:2] == (
         fake_uow,
@@ -32,10 +29,10 @@ async def test_verification_notifier_queues_task_with_expected_payload(
     assert dispatcher.enqueue_transactional.await_args.args[2:] == (
         user.email,
         user.full_name,
-        "http://testserver/",
-        "v1/users/auth/verify",
-        None,
     )
+    # throttle_key travels as a keyword: a positional slot is one silent
+    # mismatch away from binding the wrong value.
+    assert dispatcher.enqueue_transactional.await_args.kwargs == {"throttle_key": None}
 
 
 @pytest.mark.asyncio
@@ -52,7 +49,6 @@ async def test_verification_notifier_rejects_throttled_requests(
         await notifier.send_verification(
             uow=fake_uow,
             user=user,
-            base_url=URL("http://testserver/"),
             throttle_key=throttle_key,
         )
 
@@ -72,7 +68,6 @@ async def test_verification_notifier_cleans_throttle_key_when_queueing_fails(
         await notifier.send_verification(
             uow=fake_uow,
             user=user,
-            base_url=URL("http://testserver/"),
             throttle_key=throttle_key,
         )
 

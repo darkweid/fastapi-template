@@ -38,7 +38,16 @@ class FilteringError(CoreException):
 
 
 class UnauthorizedException(CoreException):
-    pass
+    def __init__(
+        self,
+        message: str | None = None,
+        www_authenticate: str | None = None,
+        additional_info: dict[str, Any] | None = None,
+    ):
+        super().__init__(message, additional_info)
+        # Set it only for schemes the client is expected to answer, such as the
+        # Basic challenge that makes a browser show a login prompt for the docs.
+        self.www_authenticate = www_authenticate
 
 
 class AccessForbiddenException(CoreException):
