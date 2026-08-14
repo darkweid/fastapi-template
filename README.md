@@ -85,10 +85,13 @@ A client should expect and can rely on:
   computed and stored on this call.
 
 `PATCH /v1/users/me` invalidates the cached summary for the updated user as part of
-the same transaction, so a `GET` that starts after the `PATCH` has returned never
-observes the pre-update body. One race is left open on purpose: a `GET` that missed
-the cache *before* the `PATCH` and is still computing writes its already-stale body
-after the invalidation, and that value then serves for up to its TTL.
+the same transaction, so a `GET` that starts after the `PATCH` has returned normally
+observes the new body. Two gaps are left open on purpose, both bounded by the TTL:
+a `GET` that missed the cache *before* the `PATCH` and is still computing writes its
+already-stale body after the invalidation; and if Redis is unreachable at that
+moment, the version bump is swallowed (the cache never fails a request) while the
+transaction commits, so a value cached before the outage keeps serving until it
+expires.
 
 That invalidation names one user. A write that touches many at once — a bulk
 import, a role migration — instead flushes them all through the tag every user key

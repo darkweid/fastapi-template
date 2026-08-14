@@ -266,6 +266,17 @@ its namespace (`cache.invalidate(namespace)`) and to every tag its key declares
 (`cache.invalidate_tags("users")`); each is one counter, so a tag flush costs one
 increment no matter how many entries carry the tag.
 
+**Fail-open, and what it costs:** a lost connection or a timeout is swallowed —
+reads report a miss, writes and version bumps are dropped — so a Redis outage
+degrades the API instead of breaking it. Everything else Redis can raise (a
+malformed command, a broken script) propagates, because that is a bug and hiding
+it would also burn the degradation reporter's cooldown and mute the report of a
+genuine outage. The price of failing open is on the write path: if the invalidation
+of a mutation is the call that gets swallowed, the transaction still commits and a
+value cached before the outage keeps serving until its TTL runs out. Route TTLs are
+the bound on that staleness; a project that needs a hard guarantee routes
+invalidation through the outbox instead.
+
 **Key hygiene:** a cache key's `suffix` (`CacheKey(namespace, suffix, tags)`) must
 never carry an email address, phone number, token, or other identifying value that
 isn't already the endpoint's own path parameter. The same rule binds tag names,

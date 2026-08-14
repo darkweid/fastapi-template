@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.cache.decorators import validate_declared_ttls
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.runtime import reset_cache, set_cache
 from src.core.cache.serializer import JsonSerializer
@@ -16,6 +17,10 @@ async def on_cache_startup(app: FastAPI) -> None:
         raise RuntimeError(
             "Redis client is not initialized. Start the cache after on_redis_startup."
         )
+
+    # Routers are imported by now, so every @cached / @cached_route ttl in the
+    # application is known and a bad one fails startup instead of every request.
+    validate_declared_ttls(config.cache.CACHE_VERSION_TTL)
 
     set_cache(
         RedisCache(

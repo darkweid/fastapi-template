@@ -86,6 +86,34 @@ async def test_tagged_value_key_composes_every_version(
     assert await fake_redis.ttl("cache:user:1:v0.0.0:summary") == 30
 
 
+async def test_write_pushes_every_counter_back_to_the_full_version_ttl(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    # A counter that expires while a value written under it is still alive resets
+    # the version to 0, and the next invalidation increments it back onto that
+    # value - so a write must leave every counter it read outliving the value.
+    await cache.invalidate(TAGGED_KEY.namespace)
+    await cache.invalidate_tags(*TAGGED_KEY.tags)
+    for counter in ("cache-ver:user:1", "cache-tag:users", "cache-tag:roles"):
+        await fake_redis.expire(counter, 10)
+
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+
+    assert await fake_redis.ttl("cache-ver:user:1") == 604800
+    assert await fake_redis.ttl("cache-tag:users") == 604800
+    assert await fake_redis.ttl("cache-tag:roles") == 604800
+
+
+async def test_write_does_not_create_a_counter_that_does_not_exist(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    # An absent counter reads as version 0; the refresh must not materialize it,
+    # or every untouched namespace would grow a key it never needed.
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+
+    assert await fake_redis.get("cache-ver:user:1") is None
+
+
 async def test_invalidate_tags_sets_version_ttl_on_every_counter(
     cache: RedisCache, fake_redis: InMemoryRedis
 ) -> None:

@@ -20,6 +20,25 @@ VARY_HEADER = "Vary"
 
 _serializer = JsonSerializer()
 
+# Every ttl a decorator hardcodes, collected at import time. A decorator's ttl is a
+# literal, so it cannot be checked against CACHE_VERSION_TTL where it is written -
+# the cache does not exist yet. Startup checks the collected ttls instead, because
+# the alternative is a ValueError raised on every cache miss, i.e. a route that
+# returns 500 under a configuration that looked valid.
+_declared_ttls: list[tuple[str, int]] = []
+
+
+def validate_declared_ttls(version_ttl: int) -> None:
+    offenders = [
+        f"{name} (ttl={ttl})" for name, ttl in _declared_ttls if ttl > version_ttl
+    ]
+    if offenders:
+        raise ValueError(
+            f"Cached callables declare a ttl above CACHE_VERSION_TTL "
+            f"({version_ttl}s): {', '.join(offenders)}. Values must die before "
+            "the version counters that address them."
+        )
+
 
 def _return_model(func: Callable[..., Any]) -> Any:
     # Not always a bare `type`: a return annotation like `list[Summary]` or
@@ -49,6 +68,7 @@ def cached(
 
     def wrapper(func: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
         model = _return_model(func)
+        _declared_ttls.append((func.__qualname__, ttl))
 
         @wraps(func)
         async def inner(*args: Any, **kwargs: Any) -> R:
@@ -135,6 +155,7 @@ def cached_route(
     def wrapper(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         request_param = _find_parameter(func, Request)
         response_param = _find_parameter(func, Response)
+        _declared_ttls.append((func.__qualname__, ttl))
 
         @wraps(func)
         async def inner(*args: Any, **kwargs: Any) -> Any:

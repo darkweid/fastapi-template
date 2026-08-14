@@ -91,6 +91,7 @@ class RedisCache(BaseCache):
                 key.suffix,
                 raw,
                 str(ttl),
+                str(self._version_ttl),
             )
         except TRANSPORT_ERRORS as error:
             self._on_transport_error("write", key, error)

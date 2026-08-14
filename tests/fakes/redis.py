@@ -220,6 +220,8 @@ class InMemoryRedis:
             _normalize_value(args[1]),
         )
         await self.setex(key, int(args[3]), _normalize_value(args[2]))
+        for counter in counters:
+            await self.expire(counter, int(args[4]))
         return 1
 
     async def _eval_cache_delete(self, counters: list[str], *args: Any) -> int:
