@@ -277,14 +277,23 @@ enforce, instead of every call site assembling its own key string.
   never satisfy a request from user B's browser or a shared proxy sitting between
   them. If the identity callback returns `None` for a given request (caller cannot
   be identified), the decorator bypasses the cache entirely for that call rather
-  than risk collapsing distinct callers onto one entry.
+  than risk collapsing distinct callers onto one entry. The identity is appended to
+  the cache key by the decorator itself, not by the key builder — a builder is free
+  to ignore who is asking, and a `PRIVATE` entry is still per-caller.
 - `PUBLIC` emits `Cache-Control: public, max-age=<ttl>`. Under RFC 9111 §3.5, a
   shared cache (a CDN, a corporate proxy, any intermediary between the client and
   this API) is normally forbidden from storing a response to a request that carried
   an `Authorization` header — unless the response explicitly says `public`. Setting
   `PUBLIC` on an authenticated endpoint is exactly that override: it tells every
   intermediary on the path that it is allowed to cache and replay this
-  authorization-gated response to other clients.
+  authorization-gated response to other clients. Every `PUBLIC` response therefore
+  also carries `Vary: Authorization`, so a shared cache must key its entry by the
+  credential that produced it and cannot serve a stored response to a request that
+  arrived with a different `Authorization` header, or with none at all.
+
+  `Vary` narrows the blast radius; it does not make `PUBLIC` safe by itself. It
+  says nothing about callers who share one token, and it does not apply to this
+  API's own Redis entry, which is shared by every permitted viewer by design.
 
   `GET /v1/users/{user_id}` (`src/user/routers.py`) does this deliberately: it
   requires the `VIEW_USERS` permission, but the response body is identical for

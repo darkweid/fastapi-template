@@ -16,6 +16,7 @@ CACHE_STATUS_HEADER = "X-Cache-Status"
 CACHE_CONTROL_HEADER = "Cache-Control"
 ETAG_HEADER = "ETag"
 IF_NONE_MATCH_HEADER = "If-None-Match"
+VARY_HEADER = "Vary"
 
 _serializer = JsonSerializer()
 
@@ -103,7 +104,7 @@ def _matches_if_none_match(header: str | None, etag: str) -> bool:
 
 def cached_route(
     *,
-    key_builder: Callable[[Request, str | None], CacheKey],
+    key_builder: Callable[[Request], CacheKey],
     ttl: int,
     scope: CacheScope,
     identity: Callable[[Request], Awaitable[str | None]] | None = None,
@@ -113,14 +114,20 @@ def cached_route(
 
     The endpoint declares request and response itself; PRIVATE scope requires an
     identity callback so that one user's response can never be served to another.
-    If that callback resolves to None for a given request, the cache is bypassed
-    entirely for that call rather than risk collapsing distinct, unidentifiable
-    callers onto one shared entry.
+    The identity is appended to the key by this decorator rather than by
+    key_builder, so a builder cannot forget it. If the callback resolves to None
+    for a given request, the cache is bypassed entirely for that call rather than
+    risk collapsing distinct, unidentifiable callers onto one shared entry.
 
-    Limitation: incompatible with `response_model_exclude_unset` /
-    `response_model_exclude_defaults` on the decorated route - the decorator has
-    no visibility into those flags, and the cached payload is always a full model
-    dump, so a value served from the cache reports every field as set.
+    Limitations:
+    - Incompatible with `response_model_exclude_unset` /
+      `response_model_exclude_defaults` on the decorated route - the decorator has
+      no visibility into those flags, and the cached payload is always a full model
+      dump, so a value served from the cache reports every field as set.
+    - Only the body is cached: a status code or a header the endpoint writes onto
+      `response` (an `X-Total-Count` on a paginated list, say) is produced on a
+      miss and lost on a hit. An endpoint whose metadata matters must set it
+      outside the cached function or not use this decorator.
     """
     if scope is CacheScope.PRIVATE and identity is None:
         raise ValueError("CacheScope.PRIVATE requires an identity callback.")
@@ -142,7 +149,13 @@ def cached_route(
                 return await func(*args, **kwargs)
 
             cache = get_cache_instance()
-            key = key_builder(request, identity_id)
+            key = key_builder(request)
+            if scope is CacheScope.PRIVATE:
+                # The identity belongs to the key, and this is the only place that
+                # can guarantee it is there: a key_builder that took the identity
+                # and ignored it would serve one caller's private body to every
+                # other caller, with a matching ETag, and nothing would raise.
+                key = CacheKey(key.namespace, f"{key.suffix}:{identity_id}")
 
             raw = await cache.get_raw(key)
             cache_status = "HIT"
@@ -158,6 +171,12 @@ def cached_route(
                 ETAG_HEADER: etag,
                 CACHE_STATUS_HEADER: cache_status,
             }
+            if scope is CacheScope.PUBLIC:
+                # A PUBLIC response of an authorization-gated route is still keyed
+                # by credentials for any shared cache on the path: without this a
+                # CDN may replay it to a caller who sent a different Authorization
+                # header, or none at all.
+                headers[VARY_HEADER] = "Authorization"
             response.headers.update(headers)
 
             if _matches_if_none_match(request.headers.get(IF_NONE_MATCH_HEADER), etag):

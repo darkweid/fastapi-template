@@ -28,10 +28,12 @@ class AliasedSummary(Base):
     full_name: str = Field(alias="fullName")
 
 
-def route_key(request: Request, identity_id: str | None) -> CacheKey:
-    user_id = request.path_params["user_id"]
-    suffix = "summary" if identity_id is None else f"summary:{identity_id}"
-    return CacheKey(namespace=f"user:{user_id}", suffix=suffix)
+def route_key(request: Request) -> CacheKey:
+    # Deliberately identity-blind, like the template's own builder: separating
+    # callers under PRIVATE is the decorator's job, not the builder's.
+    return CacheKey(
+        namespace=f"user:{request.path_params['user_id']}", suffix="summary"
+    )
 
 
 async def constant_identity(request: Request) -> str | None:
@@ -152,11 +154,47 @@ async def test_etag_is_stable_across_hits_and_304_matches_last_200() -> None:
     assert third.headers["X-Cache-Status"] == second.headers["X-Cache-Status"] == "HIT"
 
 
-async def test_public_scope_sets_public_cache_control() -> None:
+async def test_public_scope_sets_cache_control_and_varies_on_authorization() -> None:
     async with await _client(build_app([])) as client:
         response = await client.get("/users/1")
 
     assert response.headers["Cache-Control"] == "public, max-age=60"
+    # Without this a shared cache may replay an authorization-gated response to a
+    # caller who presented different credentials, or none.
+    assert response.headers["Vary"] == "Authorization"
+
+
+async def test_private_scope_does_not_advertise_a_vary_header() -> None:
+    app = build_identity_aware_app([], identity=constant_identity)
+    async with await _client(app) as client:
+        response = await client.get("/users/1", headers={"X-Test-User": "alice"})
+
+    assert response.headers["Cache-Control"] == "private, max-age=60"
+    assert "Vary" not in response.headers
+
+
+async def test_private_scope_keys_by_identity_when_the_builder_ignores_it() -> None:
+    counter: list[int] = []
+    app = build_identity_aware_app(counter, identity=constant_identity)
+    async with await _client(app) as client:
+        alice = await client.get("/users/1", headers={"X-Test-User": "alice"})
+        bob = await client.get("/users/1", headers={"X-Test-User": "bob"})
+        alice_again = await client.get("/users/1", headers={"X-Test-User": "alice"})
+        bob_replaying_alices_etag = await client.get(
+            "/users/1",
+            headers={"X-Test-User": "bob", "If-None-Match": alice.headers["ETag"]},
+        )
+
+    assert bob.headers["X-Cache-Status"] == "MISS"
+    assert bob.json() == {"name": "user-1-as-bob"}
+    assert bob.headers["ETag"] != alice.headers["ETag"]
+
+    assert alice_again.headers["X-Cache-Status"] == "HIT"
+    assert alice_again.json() == alice.json()
+    assert len(counter) == 2
+
+    assert bob_replaying_alices_etag.status_code == 200
+    assert bob_replaying_alices_etag.json() == {"name": "user-1-as-bob"}
 
 
 async def test_private_scope_separates_users_and_marks_response_private() -> None:

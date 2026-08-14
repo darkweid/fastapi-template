@@ -75,6 +75,9 @@ A client should expect and can rely on:
   store, because the body is identical for every permitted viewer; see
   `docs/readme/security.md` → *Cache Architecture* for what that implies if you put
   a CDN or shared proxy in front of the API.
+- `Vary: Authorization` — the response is tied to the credential that produced it,
+  so a shared cache must not replay it to a caller presenting different
+  credentials, or none.
 - `ETag` — a weak validator computed from the cached payload. Send it back as
   `If-None-Match` on the next request; a match returns `304 Not Modified` with no
   body.

@@ -22,5 +22,5 @@ class UserCacheKeys:
 user_cache_keys = UserCacheKeys()
 
 
-def user_summary_route_key(request: Request, identity_id: str | None) -> CacheKey:
+def user_summary_route_key(request: Request) -> CacheKey:
     return user_cache_keys.summary(request.path_params["user_id"])
