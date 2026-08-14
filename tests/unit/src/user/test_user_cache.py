@@ -10,7 +10,7 @@ import pytest
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.database.session import get_session, get_unit_of_work
 from src.user.auth.dependencies import get_current_user
-from src.user.cache_keys import user_cache_keys
+from src.user.cache_keys import USER_CACHE_TAG, user_cache_keys
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
 from src.user.models import User
@@ -46,6 +46,41 @@ async def test_summary_key_is_namespaced_per_user() -> None:
 
     assert key.namespace == f"user:{user_id}"
     assert key.suffix == "summary"
+    assert key.tags == (USER_CACHE_TAG,)
+
+
+async def test_tag_flush_drops_cached_summaries_of_every_user(
+    async_client: httpx2.AsyncClient,
+    dependency_overrides: DependencyOverrides,
+    fake_session: FakeAsyncSession,
+    cache: InMemoryCache,
+) -> None:
+    # The tag is what a bulk write reaches for: one call clears both users, where
+    # namespace invalidation would need one call per user id.
+    admin_user = build_user(role=UserRole.ADMIN)
+    first_user = build_user()
+    second_user = build_user()
+    users = {first_user.id: first_user, second_user.id: second_user}
+
+    async def get_by_id(session: FakeAsyncSession, **filters: Any) -> User:
+        return users[filters["id"]]
+
+    user_service = FakeUserService(first_user)
+    user_service.get_single_or_404 = AsyncMock(side_effect=get_by_id)
+    dependency_overrides.set(get_current_user, ProvideValue(admin_user))
+    dependency_overrides.set(get_user_service, ProvideValue(user_service))
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+
+    await async_client.get(f"/v1/users/{first_user.id}")
+    await async_client.get(f"/v1/users/{second_user.id}")
+
+    await cache.invalidate_tags(USER_CACHE_TAG)
+
+    first_after = await async_client.get(f"/v1/users/{first_user.id}")
+    second_after = await async_client.get(f"/v1/users/{second_user.id}")
+
+    assert first_after.headers["X-Cache-Status"] == "MISS"
+    assert second_after.headers["X-Cache-Status"] == "MISS"
 
 
 def test_namespace_collapses_non_canonical_uuid_spellings_to_one_key() -> None:

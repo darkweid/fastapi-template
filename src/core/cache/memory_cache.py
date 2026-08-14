@@ -1,9 +1,10 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from src.core.cache.base import BaseCache
 from src.core.cache.interface import CacheKey, Serializer
-from src.core.cache.keys import value_key, version_key
+from src.core.cache.keys import value_key
 from src.core.utils.datetime_utils import get_utc_now
 
 
@@ -28,16 +29,18 @@ class InMemoryCache(BaseCache):
     ) -> None:
         super().__init__(
             serializer,
+            prefix=prefix,
             default_ttl=default_ttl,
             version_ttl=version_ttl,
             enabled=enabled,
         )
-        self._prefix = prefix
         self._entries: dict[str, _Entry] = {}
         self._versions: dict[str, int] = {}
 
     def _current_key(self, key: CacheKey) -> str:
-        version = self._versions.get(version_key(self._prefix, key.namespace), 0)
+        version = ".".join(
+            str(self._versions.get(counter, 0)) for counter in self._counter_keys(key)
+        )
         return value_key(self._prefix, key.namespace, version, key.suffix)
 
     def ttl_of(self, key: CacheKey) -> int | None:
@@ -63,6 +66,6 @@ class InMemoryCache(BaseCache):
     async def _drop(self, key: CacheKey) -> None:
         self._entries.pop(self._current_key(key), None)
 
-    async def _bump_version(self, namespace: str) -> None:
-        counter = version_key(self._prefix, namespace)
-        self._versions[counter] = self._versions.get(counter, 0) + 1
+    async def _bump_versions(self, counters: Sequence[str]) -> None:
+        for counter in counters:
+            self._versions[counter] = self._versions.get(counter, 0) + 1

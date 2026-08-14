@@ -1,4 +1,7 @@
--- KEYS[1] = version counter key, ARGV[1] = version ttl
-local version = redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], ARGV[1])
-return version
+-- KEYS = version counters to bump, ARGV[1] = version ttl
+local versions = {}
+for index = 1, #KEYS do
+    versions[index] = redis.call('INCR', KEYS[index])
+    redis.call('EXPIRE', KEYS[index], ARGV[1])
+end
+return versions

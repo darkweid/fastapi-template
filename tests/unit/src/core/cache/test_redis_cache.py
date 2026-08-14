@@ -17,6 +17,7 @@ from src.core.cache.serializer import JsonSerializer
 from tests.fakes.redis import InMemoryRedis
 
 KEY = CacheKey(namespace="user:1", suffix="summary")
+TAGGED_KEY = CacheKey(namespace="user:1", suffix="summary", tags=("users", "roles"))
 
 
 @pytest.fixture
@@ -61,6 +62,46 @@ async def test_invalidate_sets_version_ttl(
     await cache.invalidate(KEY.namespace)
 
     assert await fake_redis.ttl("cache-ver:user:1") == 604800
+
+
+async def test_tagged_get_still_uses_a_single_round_trip(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    # Every tag adds a counter to resolve, but all of them are read inside the one
+    # script call - a tag must not cost a round trip.
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    fake_redis.cache_eval_calls = 0
+
+    await cache.get(TAGGED_KEY)
+
+    assert fake_redis.cache_eval_calls == 1
+
+
+async def test_tagged_value_key_composes_every_version(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    # Counters appear in the key's own sorted tag order, after the namespace one.
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=30)
+
+    assert await fake_redis.ttl("cache:user:1:v0.0.0:summary") == 30
+
+
+async def test_invalidate_tags_sets_version_ttl_on_every_counter(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    await cache.invalidate_tags("users", "roles")
+
+    assert await fake_redis.get("cache-tag:users") == "1"
+    assert await fake_redis.ttl("cache-tag:users") == 604800
+    assert await fake_redis.ttl("cache-tag:roles") == 604800
+
+
+async def test_invalidate_tags_swallows_connection_failure(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    fake_redis.fail_next_commands(1)
+
+    await cache.invalidate_tags("users")
 
 
 async def test_stored_value_carries_requested_ttl(

@@ -8,13 +8,31 @@ T = TypeVar("T")
 
 @dataclass(frozen=True, slots=True)
 class CacheKey:
-    """Address of a cached value: namespace is the invalidation unit, suffix is the entry."""
+    """
+    Address of a cached value.
+
+    The namespace is the entry's primary invalidation unit and the suffix names
+    the entry inside it. Tags are additional invalidation units the entry answers
+    to, and unlike the namespace they cut across namespaces: every entry tagged
+    `users` dies when that tag is bumped, whichever user namespace it lives in.
+
+    Tags travel inside the key rather than being passed to `set`, because a read
+    resolves the same tag versions a write did - a value stored with a tag its
+    reader does not declare would be unreachable forever.
+    """
 
     namespace: str
     suffix: str
+    tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Sorted and deduplicated so that two keys naming the same tags in
+        # different order address the same entry and compare equal.
+        object.__setattr__(self, "tags", tuple(sorted(set(self.tags))))
 
     def __str__(self) -> str:
-        return f"{self.namespace}/{self.suffix}"
+        tags = f"[{','.join(self.tags)}]" if self.tags else ""
+        return f"{self.namespace}/{self.suffix}{tags}"
 
 
 class CacheScope(str, Enum):
@@ -44,6 +62,8 @@ class Cache(Protocol):
     async def delete(self, key: CacheKey) -> None: ...
 
     async def invalidate(self, namespace: str) -> None: ...
+
+    async def invalidate_tags(self, *tags: str) -> None: ...
 
     async def get_or_set(
         self,

@@ -181,55 +181,65 @@ class InMemoryRedis:
         normalized = script.strip()
         if normalized == ROTATE_REFRESH_TOKEN_SCRIPT.strip():
             return await self._eval_rotate_refresh_token(numkeys, *keys_and_args)
+
+        # The cache scripts take a variable number of key arguments - one version
+        # counter for the namespace plus one per tag - so the split follows numkeys
+        # exactly as Redis does, not a fixed position.
+        counters = [_normalize_key(key) for key in keys_and_args[:numkeys]]
+        args = keys_and_args[numkeys:]
         if normalized == CACHE_GET_SCRIPT.strip():
-            return await self._eval_cache_get(*keys_and_args)
+            return await self._eval_cache_get(counters, *args)
         if normalized == CACHE_SET_SCRIPT.strip():
-            return await self._eval_cache_set(*keys_and_args)
+            return await self._eval_cache_set(counters, *args)
         if normalized == CACHE_DELETE_SCRIPT.strip():
-            return await self._eval_cache_delete(*keys_and_args)
+            return await self._eval_cache_delete(counters, *args)
         if normalized == CACHE_INVALIDATE_SCRIPT.strip():
-            return await self._eval_cache_invalidate(*keys_and_args)
+            return await self._eval_cache_invalidate(counters, *args)
         raise NotImplementedError("Script not supported in fake Redis.")
 
     async def _cache_value_key(
-        self, version_counter: str, prefix_ns: str, suffix: str
+        self, counters: list[str], prefix_ns: str, suffix: str
     ) -> str:
-        version = await self.get(version_counter) or "0"
-        return f"{prefix_ns}:v{version}:{suffix}"
+        versions = [await self.get(counter) or "0" for counter in counters]
+        return f"{prefix_ns}:v{'.'.join(versions)}:{suffix}"
 
-    async def _eval_cache_get(self, *args: Any) -> str | None:
+    async def _eval_cache_get(self, counters: list[str], *args: Any) -> str | None:
         self.cache_eval_calls += 1
         key = await self._cache_value_key(
-            _normalize_key(args[0]),
+            counters,
+            _normalize_value(args[0]),
             _normalize_value(args[1]),
-            _normalize_value(args[2]),
         )
         return await self.get(key)
 
-    async def _eval_cache_set(self, *args: Any) -> int:
+    async def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
         self.cache_eval_calls += 1
         key = await self._cache_value_key(
-            _normalize_key(args[0]),
+            counters,
+            _normalize_value(args[0]),
             _normalize_value(args[1]),
-            _normalize_value(args[2]),
         )
-        await self.setex(key, int(args[4]), _normalize_value(args[3]))
+        await self.setex(key, int(args[3]), _normalize_value(args[2]))
         return 1
 
-    async def _eval_cache_delete(self, *args: Any) -> int:
+    async def _eval_cache_delete(self, counters: list[str], *args: Any) -> int:
         key = await self._cache_value_key(
-            _normalize_key(args[0]),
+            counters,
+            _normalize_value(args[0]),
             _normalize_value(args[1]),
-            _normalize_value(args[2]),
         )
         return await self.delete(key)
 
-    async def _eval_cache_invalidate(self, *args: Any) -> int:
-        counter = _normalize_key(args[0])
-        version = int(await self.get(counter) or "0") + 1
-        await self.set(counter, str(version))
-        await self.expire(counter, int(args[1]))
-        return version
+    async def _eval_cache_invalidate(
+        self, counters: list[str], *args: Any
+    ) -> list[int]:
+        versions = []
+        for counter in counters:
+            version = int(await self.get(counter) or "0") + 1
+            await self.set(counter, str(version))
+            await self.expire(counter, int(args[0]))
+            versions.append(version)
+        return versions
 
     async def _eval_rotate_refresh_token(
         self,

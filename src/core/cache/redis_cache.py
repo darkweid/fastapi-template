@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any, cast
 
 from redis.asyncio import Redis
@@ -6,7 +7,6 @@ import redis.exceptions as redis_exc
 from loggers import get_logger
 from src.core.cache.base import BaseCache
 from src.core.cache.interface import CacheKey, Serializer
-from src.core.cache.keys import version_key
 from src.core.cache.redis_scripts import (
     CACHE_DELETE_SCRIPT,
     CACHE_GET_SCRIPT,
@@ -28,8 +28,9 @@ class RedisCache(BaseCache):
     """
     Redis-backed cache with namespace versioning.
 
-    Reads and writes go through Lua so that resolving the namespace version and
-    touching the value happen in a single round trip. Transport failures are
+    Reads and writes go through Lua so that resolving every version counter the
+    key composes from - the namespace and each of its tags - and touching the
+    value happen in a single round trip. Transport failures are
     swallowed (a cache outage must not fail a request); programmer errors -
     unserializable values, a ttl outside (0, version_ttl], a rejected command -
     are raised.
@@ -48,19 +49,19 @@ class RedisCache(BaseCache):
     ) -> None:
         super().__init__(
             serializer,
+            prefix=prefix,
             default_ttl=default_ttl,
             version_ttl=version_ttl,
             enabled=enabled,
         )
         self._redis = redis_client
-        self._prefix = prefix
         self._reporter = reporter or RedisDegradationReporter("Cache")
 
     def _namespace_prefix(self, namespace: str) -> str:
         return f"{self._prefix}:{namespace}"
 
-    async def _eval(self, script: str, *args: Any) -> Any:
-        result = await self._redis.eval(script, 1, *args)
+    async def _eval(self, script: str, counters: Sequence[str], *args: Any) -> Any:
+        result = await self._redis.eval(script, len(counters), *counters, *args)
         self._reporter.report_recovered()
         return result
 
@@ -68,7 +69,7 @@ class RedisCache(BaseCache):
         try:
             raw = await self._eval(
                 CACHE_GET_SCRIPT,
-                version_key(self._prefix, key.namespace),
+                self._counter_keys(key),
                 self._namespace_prefix(key.namespace),
                 key.suffix,
             )
@@ -85,7 +86,7 @@ class RedisCache(BaseCache):
         try:
             await self._eval(
                 CACHE_SET_SCRIPT,
-                version_key(self._prefix, key.namespace),
+                self._counter_keys(key),
                 self._namespace_prefix(key.namespace),
                 key.suffix,
                 raw,
@@ -98,24 +99,24 @@ class RedisCache(BaseCache):
         try:
             await self._eval(
                 CACHE_DELETE_SCRIPT,
-                version_key(self._prefix, key.namespace),
+                self._counter_keys(key),
                 self._namespace_prefix(key.namespace),
                 key.suffix,
             )
         except TRANSPORT_ERRORS as error:
             self._on_transport_error("delete", key, error)
 
-    async def _bump_version(self, namespace: str) -> None:
+    async def _bump_versions(self, counters: Sequence[str]) -> None:
         try:
-            version = await self._eval(
+            versions = await self._eval(
                 CACHE_INVALIDATE_SCRIPT,
-                version_key(self._prefix, namespace),
+                counters,
                 str(self._version_ttl),
             )
-            logger.debug("[Cache] namespace %s bumped to v%s", namespace, version)
+            logger.debug("[Cache] counters %s bumped to %s", list(counters), versions)
         except TRANSPORT_ERRORS as error:
             logger.warning(
-                "[Cache] invalidate failed for namespace %s: %s", namespace, error
+                "[Cache] invalidate failed for counters %s: %s", list(counters), error
             )
             self._reporter.report_degraded(error)
 

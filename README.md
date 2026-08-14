@@ -12,7 +12,7 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 ## Key Features
 - Async FastAPI with modular domain structure.
 - DB via SQLAlchemy async, repositories + Unit of Work for transactional work.
-- Caching: explicit cache layer (`src/core/cache/*`) - `Cache` protocol, per-domain key builders, namespace-version invalidation, and opt-in route caching with ETag/304 support.
+- Caching: explicit cache layer (`src/core/cache/*`) - `Cache` protocol, per-domain key builders, version-counter invalidation by namespace or by cross-namespace tag, and opt-in route caching with ETag/304 support.
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
 - Messaging: taskiq worker/scheduler over Redis Streams with a transactional outbox (atomic enqueue with the DB transaction, worker-side dedup, delayed retries). Background tasks are enqueued via `TaskDispatcher` (`enqueue` for fire-and-forget, `enqueue_transactional` to enqueue inside a UnitOfWork transaction).
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
@@ -89,6 +89,13 @@ the same transaction, so a `GET` that starts after the `PATCH` has returned neve
 observes the pre-update body. One race is left open on purpose: a `GET` that missed
 the cache *before* the `PATCH` and is still computing writes its already-stale body
 after the invalidation, and that value then serves for up to its TTL.
+
+That invalidation names one user. A write that touches many at once — a bulk
+import, a role migration — instead flushes them all through the tag every user key
+carries (`USER_CACHE_TAG`, `src/user/cache_keys.py`):
+`await cache.invalidate_tags(USER_CACHE_TAG)`. A tag is an extra invalidation unit
+declared on the key itself, so it cuts across namespaces, and clearing it costs one
+Redis increment however many entries carry it.
 
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)

@@ -43,15 +43,19 @@ or scheduler container holds the broker's — size `maxclients` from that count,
 not from one pool per process.
 
 - Under memory pressure, prefer `maxmemory-policy allkeys-lru` (or actively monitor
-  `INFO stats` → `evicted_keys`). Every namespace's version counter is itself a
-  Redis key; if the eviction policy reclaims a version key before the values it
-  guards, the next read falls back to the version-less default and can serve a
-  value that a prior `invalidate()` call was supposed to have retired.
+  `INFO stats` → `evicted_keys`). Every namespace and tag version counter is itself
+  a Redis key; if the eviction policy reclaims a counter before the values it
+  guards, the next read falls back to version `0` and can serve a value that a
+  prior `invalidate()` or `invalidate_tags()` call was supposed to have retired.
+  Counters are few and tiny — one per namespace, one per tag — so this is a
+  policy question, not a capacity one.
 - The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
   per invocation without hash tags, so as written they run correctly against a
   single Redis instance but not against a sharded Redis Cluster — a cluster
   deployment needs hash-tagged keys (or a separate non-clustered instance for the
-  cache) before this layer would work unmodified.
+  cache) before this layer would work unmodified. Tags widen this: a read of a
+  tagged entry resolves the namespace counter, every tag counter, and the value
+  key in one script, so all of them must hash to the same slot.
 
 ## Prerequisites
 - Python 3.13 (for local scripts/hooks)

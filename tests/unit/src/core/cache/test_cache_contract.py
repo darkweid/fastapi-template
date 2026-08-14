@@ -24,6 +24,8 @@ from tests.fakes.redis import InMemoryRedis
 
 KEY = CacheKey(namespace="user:1", suffix="summary")
 OTHER_KEY = CacheKey(namespace="user:1", suffix="contacts")
+TAGGED_KEY = CacheKey(namespace="user:1", suffix="summary", tags=("users",))
+OTHER_TAGGED_KEY = CacheKey(namespace="user:2", suffix="summary", tags=("users",))
 VERSION_TTL = 604800
 
 
@@ -96,6 +98,93 @@ async def test_value_written_after_invalidate_is_readable(cache: Cache) -> None:
     assert await cache.get(KEY) == {"name": "grace"}
 
 
+async def test_tag_invalidation_crosses_namespaces(cache: Cache) -> None:
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    await cache.set(OTHER_TAGGED_KEY, {"name": "grace"}, ttl=60)
+
+    await cache.invalidate_tags("users")
+
+    assert await cache.get(TAGGED_KEY) is None
+    assert await cache.get(OTHER_TAGGED_KEY) is None
+
+
+async def test_tag_invalidation_spares_untagged_entries(cache: Cache) -> None:
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    await cache.set(OTHER_KEY, {"phone": "1"}, ttl=60)
+
+    await cache.invalidate_tags("users")
+
+    assert await cache.get(OTHER_KEY) == {"phone": "1"}
+
+
+async def test_tag_invalidation_spares_entries_carrying_another_tag(
+    cache: Cache,
+) -> None:
+    other_tag_key = CacheKey(namespace="user:1", suffix="roles", tags=("roles",))
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    await cache.set(other_tag_key, {"role": "admin"}, ttl=60)
+
+    await cache.invalidate_tags("users")
+
+    assert await cache.get(TAGGED_KEY) is None
+    assert await cache.get(other_tag_key) == {"role": "admin"}
+
+
+async def test_namespace_invalidation_still_drops_a_tagged_entry(cache: Cache) -> None:
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    await cache.set(OTHER_TAGGED_KEY, {"name": "grace"}, ttl=60)
+
+    await cache.invalidate(TAGGED_KEY.namespace)
+
+    assert await cache.get(TAGGED_KEY) is None
+    assert await cache.get(OTHER_TAGGED_KEY) == {"name": "grace"}
+
+
+async def test_value_written_after_tag_invalidation_is_readable(cache: Cache) -> None:
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    await cache.invalidate_tags("users")
+
+    await cache.set(TAGGED_KEY, {"name": "grace"}, ttl=60)
+
+    assert await cache.get(TAGGED_KEY) == {"name": "grace"}
+
+
+async def test_multiple_tags_are_bumped_in_one_call(cache: Cache) -> None:
+    roles_key = CacheKey(namespace="user:1", suffix="roles", tags=("roles",))
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+    await cache.set(roles_key, {"role": "admin"}, ttl=60)
+
+    await cache.invalidate_tags("users", "roles")
+
+    assert await cache.get(TAGGED_KEY) is None
+    assert await cache.get(roles_key) is None
+
+
+async def test_an_entry_dies_when_any_of_its_tags_is_bumped(cache: Cache) -> None:
+    key = CacheKey(namespace="user:1", suffix="summary", tags=("users", "roles"))
+    await cache.set(key, {"name": "ada"}, ttl=60)
+
+    await cache.invalidate_tags("roles")
+
+    assert await cache.get(key) is None
+
+
+async def test_tag_order_does_not_change_the_address(cache: Cache) -> None:
+    written = CacheKey(namespace="user:1", suffix="summary", tags=("users", "roles"))
+    read = CacheKey(namespace="user:1", suffix="summary", tags=("roles", "users"))
+    await cache.set(written, {"name": "ada"}, ttl=60)
+
+    assert await cache.get(read) == {"name": "ada"}
+
+
+async def test_invalidate_tags_without_tags_changes_nothing(cache: Cache) -> None:
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+
+    await cache.invalidate_tags()
+
+    assert await cache.get(TAGGED_KEY) == {"name": "ada"}
+
+
 async def test_delete_removes_only_the_addressed_key(cache: Cache) -> None:
     await cache.set(KEY, {"name": "ada"}, ttl=60)
     await cache.set(OTHER_KEY, {"phone": "1"}, ttl=60)
@@ -161,10 +250,13 @@ async def test_disabled_cache_neither_deletes_nor_invalidates(
     # observe what a disabled delete/invalidate did: a separately constructed
     # disabled cache has nothing stored to leave alone in the first place.
     await cache.set(KEY, {"name": "ada"}, ttl=60)
+    await cache.set(TAGGED_KEY, {"name": "grace"}, ttl=60)
     monkeypatch.setattr(cache, "_enabled", False)
 
     await cache.delete(KEY)
     await cache.invalidate(KEY.namespace)
+    await cache.invalidate_tags("users")
 
     monkeypatch.setattr(cache, "_enabled", True)
     assert await cache.get(KEY) == {"name": "ada"}
+    assert await cache.get(TAGGED_KEY) == {"name": "grace"}
