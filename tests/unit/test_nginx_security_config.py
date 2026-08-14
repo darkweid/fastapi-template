@@ -14,7 +14,7 @@ def test_nginx_app_config_includes_security_headers_and_body_limit() -> None:
     app_conf = _read("app.conf")
 
     assert "server_tokens off;" in app_conf
-    assert "client_max_body_size 10m;" in app_conf
+    assert "client_max_body_size 20m;" in app_conf
     assert 'add_header X-Content-Type-Options "nosniff" always;' in app_conf
     assert 'add_header X-Frame-Options "DENY" always;' in app_conf
     assert "add_header Content-Security-Policy" not in app_conf

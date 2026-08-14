@@ -1,5 +1,9 @@
-from collections.abc import AsyncGenerator, Generator
+# ruff: noqa: E402 -- TESTING must be set before any src.* import triggers config load
 import os
+
+os.environ.setdefault("TESTING", "true")
+
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
@@ -28,7 +32,6 @@ from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 
 @pytest.fixture(scope="session")
 def settings() -> Config:
-    os.environ.setdefault("TESTING", "true")
     get_settings.cache_clear()
     return get_settings()
 

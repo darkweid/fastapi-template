@@ -1,10 +1,13 @@
 # Drop-in replacement for app.conf once the host has a certificate.
 #
 # 1. Put the certificate and key under infra/nginx/certs/ (git-ignored).
-# 2. In infra/docker-compose.yml, mount this file instead of app.conf and add
-#    the certs directory:
-#      - ./nginx/tls.conf.example:/etc/nginx/conf.d/app.conf:ro
+# 2. In infra/docker-compose.yml, mount this file OVER the app.conf mount - the
+#    same /etc/nginx/conf.d/default.conf target app.conf uses, otherwise the
+#    plain-http app.conf stays active alongside it - and add the certs plus the
+#    ACME webroot (a volume shared with certbot so it can write challenges):
+#      - ./nginx/tls.conf.example:/etc/nginx/conf.d/default.conf:ro
 #      - ./nginx/certs:/etc/nginx/certs:ro
+#      - certbot-webroot:/var/www/certbot:ro
 # 3. Replace api.example.com below with the real hostname.
 #
 # The proxy body lives in proxy.inc, the same file app.conf includes, so the two
@@ -35,7 +38,7 @@ server {
     http2 on;
     server_name api.example.com;
     server_tokens off;
-    client_max_body_size 10m;
+    client_max_body_size 20m;  # keep in sync with S3_MAX_UPLOAD_SIZE_BYTES (default 20MB)
 
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
