@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
+import pytest
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 from src.core.errors.exceptions import UnauthorizedException
@@ -10,6 +11,7 @@ from src.core.middleware import DOCS_CONTENT_SECURITY_POLICY
 from src.main.config import config
 from src.main.presentation import include_exceptions_handlers, include_routers
 from src.main.web import get_application
+from tests.helpers.limiter import noop_rate_limiter
 
 
 def test_include_routers_registers_expected_paths() -> None:
@@ -40,7 +42,11 @@ def test_get_application_registers_middlewares() -> None:
     assert isinstance(app.openapi(), dict)
 
 
-def test_docs_route_uses_docs_friendly_csp() -> None:
+def test_docs_route_uses_docs_friendly_csp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "src.core.limiter.depends.RateLimiter.__call__",
+        noop_rate_limiter,
+    )
     client = TestClient(get_application())
 
     response = client.get(

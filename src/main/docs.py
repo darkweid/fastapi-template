@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from src.core.errors.exceptions import UnauthorizedException
+from src.core.limiter.depends import RateLimiter
 from src.main.config import config
 from src.main.openapi import SWAGGER_UI_PARAMETERS
 
@@ -22,11 +23,18 @@ DOCS_URL = "/docs"
 REDOC_URL = "/redoc"
 OPENAPI_URL = "/openapi.json"
 
-_BASIC_CHALLENGE = 'Basic realm="API docs"'
+_BASIC_REALM = "API docs"
+_BASIC_CHALLENGE = f'Basic realm="{_BASIC_REALM}"'
 
 # auto_error=False so a missing header reaches verify_docs_access and gets the
-# project's own 401 body plus the challenge header, instead of Starlette's.
-docs_basic_auth = HTTPBasic(auto_error=False)
+# project's own 401 body plus the challenge header, instead of Starlette's. The
+# realm still has to be declared here: a malformed Authorization header is
+# rejected inside HTTPBasic itself, before our own check ever runs.
+docs_basic_auth = HTTPBasic(auto_error=False, realm=_BASIC_REALM)
+
+# Basic auth has no lockout of its own, and what sits behind it is the full map
+# of the API - so the only thing making the password expensive to guess is this.
+docs_rate_limiter = RateLimiter(times=10, minutes=15)
 
 
 def docs_credentials_are_configured() -> bool:
@@ -40,6 +48,15 @@ async def verify_docs_access(
     if credentials is None:
         raise UnauthorizedException(
             message="Docs require authentication.",
+            www_authenticate=_BASIC_CHALLENGE,
+        )
+
+    # Blank credentials never reach here through the normal path - the routes
+    # are only mounted once both are set. Re-checked anyway so that a config
+    # reloaded at runtime can never turn `Basic Og==` into a valid login.
+    if not docs_credentials_are_configured():
+        raise UnauthorizedException(
+            message="Docs are not published.",
             www_authenticate=_BASIC_CHALLENGE,
         )
 
@@ -94,12 +111,25 @@ def include_protected_docs(application: FastAPI) -> None:
     Called only when FastAPI was built with all three URLs set to None, so these
     routes are the single source of the docs rather than a second copy of them.
     """
+    guarded = [Depends(docs_rate_limiter)]
     application.add_api_route(
-        OPENAPI_URL, openapi_schema, include_in_schema=False, methods=["GET"]
+        OPENAPI_URL,
+        openapi_schema,
+        include_in_schema=False,
+        methods=["GET"],
+        dependencies=guarded,
     )
     application.add_api_route(
-        DOCS_URL, swagger_ui, include_in_schema=False, methods=["GET"]
+        DOCS_URL,
+        swagger_ui,
+        include_in_schema=False,
+        methods=["GET"],
+        dependencies=guarded,
     )
     application.add_api_route(
-        REDOC_URL, redoc_ui, include_in_schema=False, methods=["GET"]
+        REDOC_URL,
+        redoc_ui,
+        include_in_schema=False,
+        methods=["GET"],
+        dependencies=guarded,
     )

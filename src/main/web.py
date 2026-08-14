@@ -46,6 +46,12 @@ def get_application() -> FastAPI:
                 "DOCS_PASSWORD to serve them behind HTTP Basic."
             )
 
+    if not config.app.CORS_ALLOWED_ORIGINS:
+        logger.warning(
+            "CORS_ALLOWED_ORIGINS is empty: every browser call from another "
+            "origin will be blocked. List the front-end origins to allow them."
+        )
+
     if config.app.TRUST_PROXY_HEADERS:
         application.add_middleware(
             TrustedProxyHeadersMiddleware,

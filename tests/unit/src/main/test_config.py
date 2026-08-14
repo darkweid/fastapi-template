@@ -207,6 +207,102 @@ def test_app_config_rejects_public_base_url_without_scheme() -> None:
         AppConfig(**data)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("https://", id="scheme-only"),
+        pytest.param("https:///path", id="empty-host"),
+        pytest.param("//app.example.com", id="scheme-relative"),
+        pytest.param("javascript:alert(1)", id="javascript"),
+        pytest.param("http:// app.example.com", id="whitespace"),
+    ],
+)
+def test_app_config_rejects_unusable_public_base_url(url: str) -> None:
+    data = _base_app_config_data()
+    data["PUBLIC_BASE_URL"] = url
+
+    with pytest.raises(ValidationError):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_public_base_url_carrying_a_query() -> None:
+    """The token is appended as a query parameter, so a base with one is broken."""
+    data = _base_app_config_data()
+    data["PUBLIC_BASE_URL"] = "https://app.example.com?utm=email"
+
+    with pytest.raises(ValueError, match="without a query string"):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_null_origin_with_credentials() -> None:
+    """
+    `Origin: null` is what a sandboxed iframe or a data: document sends, and any
+    page can open one - allowing it with credentials is the wildcard hole again.
+    """
+    data = _base_app_config_data()
+    data["CORS_ALLOWED_ORIGINS"] = "null"
+
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS"):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_wildcard_proxy_trust() -> None:
+    data = _base_app_config_data()
+    data["TRUST_PROXY_HOSTS"] = "*"
+
+    with pytest.raises(ValueError, match="TRUST_PROXY_HOSTS"):
+        AppConfig(**data)
+
+
+def test_app_config_accepts_explicit_proxy_ranges() -> None:
+    data = _base_app_config_data()
+    data["TRUST_PROXY_HOSTS"] = "10.0.0.0/8,172.16.0.0/12"
+
+    app_config = AppConfig(**data)
+
+    assert app_config.TRUST_PROXY_HOSTS == ["10.0.0.0/8", "172.16.0.0/12"]
+
+
+def test_app_config_rejects_a_short_docs_password() -> None:
+    data = _base_app_config_data()
+    data["DOCS_USERNAME"] = "docs"
+    data["DOCS_PASSWORD"] = "admin"
+
+    with pytest.raises(ValueError, match="DOCS_PASSWORD"):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_a_non_ascii_docs_password() -> None:
+    """
+    HTTP Basic reaches FastAPI as ASCII, so a non-ASCII password would lock the
+    operator out with a plain 401 and no way to tell why.
+    """
+    data = _base_app_config_data()
+    data["DOCS_USERNAME"] = "docs"
+    data["DOCS_PASSWORD"] = "пароль-длиннее-тридцати-двух-символов"
+
+    with pytest.raises(ValueError, match="ASCII-only"):
+        AppConfig(**data)
+
+
+def test_app_config_rejects_half_configured_docs_credentials() -> None:
+    data = _base_app_config_data()
+    data["DOCS_PASSWORD"] = "docs-password-long-enough-to-pass"
+
+    with pytest.raises(ValueError, match="both be empty"):
+        AppConfig(**data)
+
+
+def test_app_config_accepts_full_docs_credentials() -> None:
+    data = _base_app_config_data()
+    data["DOCS_USERNAME"] = "docs"
+    data["DOCS_PASSWORD"] = "docs-password-long-enough-to-pass"
+
+    app_config = AppConfig(**data)
+
+    assert app_config.DOCS_USERNAME == "docs"
+
+
 def test_app_config_normalizes_public_base_url_and_paths() -> None:
     data = _base_app_config_data()
     data["PUBLIC_BASE_URL"] = "https://app.example.com/"

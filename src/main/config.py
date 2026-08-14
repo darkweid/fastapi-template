@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -295,10 +296,19 @@ class AppConfig(BaseModel):
     @classmethod
     def validate_public_base_url(cls, value: str) -> str:
         url = value.strip().rstrip("/")
-        if not url.startswith(("http://", "https://")):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ValueError(
                 "PUBLIC_BASE_URL must be an absolute http(s) URL, "
                 "for example https://app.example.com"
+            )
+        if any(char.isspace() for char in url):
+            raise ValueError("PUBLIC_BASE_URL must not contain whitespace")
+        if parsed.query or parsed.fragment:
+            raise ValueError(
+                "PUBLIC_BASE_URL must be an origin with an optional path, "
+                "without a query string or a fragment: the token is appended "
+                "to it as a query parameter"
             )
         return url
 
@@ -314,14 +324,65 @@ class AppConfig(BaseModel):
 
         Starlette answers a wildcard allowlist by echoing the request's own
         Origin back, so paired with allow_credentials any third-party page can
-        make credentialed cross-origin calls and read the responses.
+        make credentialed cross-origin calls and read the responses. "null" is
+        the same hole wearing a different hat: a sandboxed iframe or a data:
+        document sends `Origin: null`, and any page can open one.
         """
-        if "*" in self.CORS_ALLOWED_ORIGINS and self.CORS_ALLOWED_CREDENTIALS:
+        unsafe = {"*", "null"} & {
+            origin.strip().lower() for origin in self.CORS_ALLOWED_ORIGINS
+        }
+        if unsafe and self.CORS_ALLOWED_CREDENTIALS:
             raise ValueError(
-                "CORS_ALLOWED_ORIGINS=* cannot be combined with "
-                "CORS_ALLOWED_CREDENTIALS=true: list the front-end origins "
+                f"CORS_ALLOWED_ORIGINS={sorted(unsafe)[0]} cannot be combined "
+                "with CORS_ALLOWED_CREDENTIALS=true: list the front-end origins "
                 "explicitly, or turn credentials off."
             )
+        return self
+
+    @model_validator(mode="after")
+    def reject_wildcard_proxy_trust(self) -> "AppConfig":
+        """
+        Fail startup when every proxy hop is trusted.
+
+        With a wildcard nothing in the forwarded chain is attacker-free, so the
+        resolver has no honest end to start from and the rate limiter ends up
+        keyed by a value the caller writes. List the edge addresses or ranges
+        instead - for a CDN, the published ranges of that CDN.
+        """
+        if "*" in [host.strip() for host in self.TRUST_PROXY_HOSTS]:
+            raise ValueError(
+                "TRUST_PROXY_HOSTS=* would trust the whole X-Forwarded-For "
+                "chain, which lets any caller pick their own rate-limit "
+                "identity: list the proxy addresses or CIDR ranges instead."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_docs_credentials(self) -> "AppConfig":
+        """
+        Keep the docs password brute-force resistant, or absent.
+
+        Both blank means the docs are simply not published, which is a valid
+        choice. Once they are published, the password is the only thing in
+        front of a full map of the API, so it answers to the same minimum as
+        every other secret. HTTP Basic transports credentials as base64 of a
+        latin-1 string and FastAPI decodes them as ASCII, so a non-ASCII
+        password would lock the operator out with no way to tell why.
+        """
+        if not (self.DOCS_USERNAME or self.DOCS_PASSWORD):
+            return self
+
+        if not (self.DOCS_USERNAME and self.DOCS_PASSWORD):
+            raise ValueError(
+                "DOCS_USERNAME and DOCS_PASSWORD must both be set to publish "
+                "the docs, or both be empty to keep them unpublished."
+            )
+        if len(self.DOCS_PASSWORD) < SECRET_MIN_LENGTH:
+            raise ValueError(
+                f"DOCS_PASSWORD must be at least {SECRET_MIN_LENGTH} characters"
+            )
+        if not (self.DOCS_USERNAME.isascii() and self.DOCS_PASSWORD.isascii()):
+            raise ValueError("DOCS_USERNAME and DOCS_PASSWORD must be ASCII-only")
         return self
 
 
