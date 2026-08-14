@@ -2,8 +2,11 @@ from pathlib import Path
 import re
 
 # Keys carrying credentials. A value here that still equals the one in
-# .env.example is a secret published in the repository.
-SECRET_KEY_PATTERN = re.compile(r"PASSWORD|SECRET|_KEY$|TOKEN|DSN")
+# .env.example is a secret published in the repository. Anchored at the end on
+# purpose: an unanchored "TOKEN" or "PASSWORD" also matches
+# ACCESS_TOKEN_EXPIRE_MINUTES and RESET_PASSWORD_TOKEN_EXPIRE_MINUTES, whose
+# values are supposed to equal the example.
+SECRET_KEY_PATTERN = re.compile(r"(PASSWORD|SECRET|TOKEN|DSN|KEY|KEY_ID)$")
 
 # Placeholder suffix .env.example uses, checked separately so an edited
 # .env.example cannot quietly turn the comparison above into a no-op.

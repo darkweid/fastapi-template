@@ -8,6 +8,7 @@ EXAMPLE = {
     "COOKIE_SECURE": "true",
     "POSTGRES_PASSWORD": "secure_password",
     "JWT_USER_SECRET_KEY": "example-jwt-user-secret-key-not-real",
+    "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
     "EMAIL_USER": "user@example.com",
 }
 
@@ -19,6 +20,7 @@ def _deployable_env() -> dict[str, str]:
         "COOKIE_SECURE": "true",
         "POSTGRES_PASSWORD": "a-real-database-password",
         "JWT_USER_SECRET_KEY": "a-real-jwt-user-signing-secret-key",
+        "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
         "EMAIL_USER": "user@example.com",
     }
 
@@ -56,6 +58,14 @@ def test_placeholder_marker_is_reported_even_when_example_changed() -> None:
     assert problems == [
         "JWT_USER_SECRET_KEY still holds the placeholder value from .env.example"
     ]
+
+
+def test_expiry_setting_named_after_a_token_is_not_a_secret() -> None:
+    """ACCESS_TOKEN_EXPIRE_MINUTES is meant to keep the example value."""
+    actual = _deployable_env()
+    actual["ACCESS_TOKEN_EXPIRE_MINUTES"] = EXAMPLE["ACCESS_TOKEN_EXPIRE_MINUTES"]
+
+    assert collect_problems(EXAMPLE, actual) == []
 
 
 def test_non_secret_value_matching_example_is_allowed() -> None:

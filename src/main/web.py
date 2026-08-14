@@ -12,7 +12,7 @@ from src.main.docs import (
     DOCS_URL,
     OPENAPI_URL,
     REDOC_URL,
-    docs_are_protected,
+    docs_credentials_are_configured,
     include_protected_docs,
 )
 from src.main.lifespan import lifespan
@@ -38,7 +38,7 @@ def get_application() -> FastAPI:
     )
 
     if not docs_are_public:
-        if docs_are_protected():
+        if docs_credentials_are_configured():
             include_protected_docs(application)
         else:
             logger.warning(

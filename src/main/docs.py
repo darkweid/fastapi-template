@@ -29,15 +29,13 @@ _BASIC_CHALLENGE = 'Basic realm="API docs"'
 docs_basic_auth = HTTPBasic(auto_error=False)
 
 
-def docs_are_protected() -> bool:
+def docs_credentials_are_configured() -> bool:
     """Whether the credentials needed to publish protected docs are configured."""
     return bool(config.app.DOCS_USERNAME and config.app.DOCS_PASSWORD)
 
 
 async def verify_docs_access(
-    credentials: Annotated[
-        HTTPBasicCredentials | None, Depends(docs_basic_auth)
-    ] = None,
+    credentials: Annotated[HTTPBasicCredentials | None, Depends(docs_basic_auth)],
 ) -> None:
     if credentials is None:
         raise UnauthorizedException(
