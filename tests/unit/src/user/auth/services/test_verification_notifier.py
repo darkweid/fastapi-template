@@ -29,8 +29,10 @@ async def test_verification_notifier_queues_task_with_expected_payload(
     assert dispatcher.enqueue_transactional.await_args.args[2:] == (
         user.email,
         user.full_name,
-        None,
     )
+    # throttle_key travels as a keyword: a positional slot is one silent
+    # mismatch away from binding the wrong value.
+    assert dispatcher.enqueue_transactional.await_args.kwargs == {"throttle_key": None}
 
 
 @pytest.mark.asyncio

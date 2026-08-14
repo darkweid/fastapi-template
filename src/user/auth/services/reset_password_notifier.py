@@ -68,7 +68,7 @@ class ResetPasswordNotifier:
                 send_reset_password_email_task,
                 user.email,
                 user.full_name,
-                throttle_key,
+                throttle_key=throttle_key,
             )
         except Exception:
             # The outbox insert failed with the transaction still open: release

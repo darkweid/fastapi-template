@@ -29,8 +29,8 @@ logger = get_logger(__name__)
 async def send_verification_email_task(
     email: str,
     full_name: str,
-    throttle_key: str | None = None,
     *,
+    throttle_key: str | None = None,
     redis_client: Annotated[Redis, TaskiqDepends(get_tasks_redis_client)],
 ) -> None:
     email_service = EmailService(get_mailer())
@@ -74,8 +74,8 @@ async def send_verification_email_task(
 async def send_reset_password_email_task(
     email: str,
     full_name: str,
-    throttle_key: str | None = None,
     *,
+    throttle_key: str | None = None,
     redis_client: Annotated[Redis, TaskiqDepends(get_tasks_redis_client)],
 ) -> None:
     email_service = EmailService(get_mailer())

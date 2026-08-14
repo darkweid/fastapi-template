@@ -37,6 +37,14 @@ Three settings govern the link (`src/main/config.py`, `AppConfig`):
 Those pages read the token out of the query string and call the API themselves:
 `GET /v1/users/auth/verify?token=...` and `PUT /v1/users/auth/password/reset/confirm`.
 
+`scripts/check_env.py` (run by the deploy workflow) rejects a `PUBLIC_BASE_URL`
+pointing at localhost, so the example value cannot reach a deploy unnoticed.
+
+Upgrading an existing fork: the email tasks no longer take `base_url` and the
+path as arguments, so any message already sitting in the outbox or the broker
+carries a payload the new signature cannot bind. Drain the queue before rolling
+out, or expect those specific emails to fail their retries and be dropped.
+
 ## Auth Cookie & CSRF Configuration
 The refresh token is delivered as an httponly cookie by default, with a stateless
 signed double-submit CSRF check on the refresh route; native clients that want the
@@ -172,7 +180,9 @@ for `app.conf` once the certificate is in place.
 - API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only).
   `/docs`, `/redoc` and `/openapi.json` are open only while `DEBUG=true`. Otherwise they
   are served behind HTTP Basic using `DOCS_USERNAME` / `DOCS_PASSWORD`, and are not
-  published at all while either of the two is blank.
+  published at all while either of the two is blank. The password takes the same
+  32-character minimum as the other secrets, must be ASCII, and the three routes are
+  rate limited — Basic auth has no lockout of its own.
 - Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
 
 ## Useful Make Targets

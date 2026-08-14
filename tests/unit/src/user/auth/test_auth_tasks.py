@@ -23,7 +23,7 @@ async def test_send_verification_email_creates_token_and_sends_email(
     await send_verification_email_task(
         "user@example.com",
         "John Doe",
-        None,
+        throttle_key=None,
         redis_client=fake_redis,
     )
 
@@ -60,7 +60,7 @@ async def test_send_verification_email_cleans_up_token_and_throttle_on_failure(
         await send_verification_email_task(
             "user@example.com",
             "John Doe",
-            "throttle:key",
+            throttle_key="throttle:key",
             redis_client=fake_redis,
         )
 
@@ -84,7 +84,7 @@ async def test_send_reset_password_email_creates_token_and_sends_email(
     await send_reset_password_email_task(
         "user@example.com",
         "John Doe",
-        None,
+        throttle_key=None,
         redis_client=fake_redis,
     )
 
@@ -121,7 +121,7 @@ async def test_send_reset_password_email_cleans_up_token_and_throttle_on_failure
         await send_reset_password_email_task(
             "user@example.com",
             "John Doe",
-            "throttle:key",
+            throttle_key="throttle:key",
             redis_client=fake_redis,
         )
 

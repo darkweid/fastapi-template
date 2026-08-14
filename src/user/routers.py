@@ -14,6 +14,7 @@ from src.core.cache.interface import CacheScope
 from src.core.database.session import get_session
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse
+from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
 from src.user.auth.dependencies import (
     get_current_user,
     get_user_id_from_token,
@@ -22,6 +23,7 @@ from src.user.auth.permissions.checker import require_permission
 from src.user.auth.permissions.enum import Permission
 from src.user.auth.routers import router as auth_router
 from src.user.auth.schemas import UserNewPassword
+from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.cache_keys import user_summary_route_key
 from src.user.dependencies import get_user_service
 from src.user.models import User
@@ -105,8 +107,11 @@ async def update_user_profile(
     ],
 )
 async def update_user_password(
+    response: Response,
     user_form_data: UserNewPassword,
     current_user: Annotated[User, Depends(get_current_user)],
+    transport: Annotated[TokenTransport, Depends(get_token_transport)],
+    responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[
         UpdateUserPasswordUseCase, Depends(get_update_user_password_use_case)
     ],
@@ -114,5 +119,11 @@ async def update_user_password(
     """
     Updates the user password. Requires the current password and signs out every
     active session, including this one.
+
+    The auth cookies are expired along with the server-side sessions: leaving the
+    browser holding a refresh cookie that no longer resolves would show up as a
+    silent, unexplainable logout on its next refresh.
     """
-    return await use_case.execute(data=user_form_data, user_id=current_user.id)
+    result = await use_case.execute(data=user_form_data, user_id=current_user.id)
+    responder.clear(response, transport)
+    return result

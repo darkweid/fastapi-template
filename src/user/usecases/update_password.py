@@ -12,6 +12,7 @@ from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import (
     AccessForbiddenException,
     InstanceNotFoundException,
+    InstanceProcessingException,
 )
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
@@ -38,6 +39,7 @@ class UpdateUserPasswordUseCase:
     Validations:
     - User must exist in the database.
     - current_password must match the stored hash.
+    - The new password must differ from the current one.
 
     Workflow:
     1) Load the user and verify the current password.
@@ -56,6 +58,7 @@ class UpdateUserPasswordUseCase:
     Errors:
     - InstanceNotFoundException: if the user does not exist.
     - AccessForbiddenException: if current_password does not match.
+    - InstanceProcessingException: if the new password repeats the current one.
 
     Returns:
     - SuccessResponse: success=True.
@@ -84,6 +87,13 @@ class UpdateUserPasswordUseCase:
                     mask_email(user.email),
                 )
                 raise AccessForbiddenException("Current password is incorrect.")
+
+            if data.password == data.current_password:
+                # Not a no-op: going through with it would still sign every
+                # session out, so a mistyped form would look like a hijack.
+                raise InstanceProcessingException(
+                    "New password must differ from the current one."
+                )
 
             update_data = {"password_hash": hash_password(data.password)}
             updated_user = await uow.users.update(uow.session, update_data, id=user_id)

@@ -8,6 +8,7 @@ from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import (
     AccessForbiddenException,
     InstanceNotFoundException,
+    InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
 from src.user.auth.schemas import UserNewPassword
@@ -86,6 +87,67 @@ async def test_update_password_rejects_wrong_current_password(
 
     assert user.password_hash == original_hash
     users_repo.update.assert_not_awaited()
+    invalidate_mock.assert_not_awaited()
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_password_rejects_reusing_the_current_password(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
+) -> None:
+    """
+    Going through with it would still sign every session out, so a mistyped form
+    would look exactly like a hijack to the user.
+    """
+    user = build_user(password=CURRENT_PASSWORD)
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+
+    with pytest.raises(InstanceProcessingException):
+        await use_case.execute(
+            data=UserNewPassword(
+                current_password=CURRENT_PASSWORD, password=CURRENT_PASSWORD
+            ),
+            user_id=user.id,
+        )
+
+    users_repo.update.assert_not_awaited()
+    invalidate_mock.assert_not_awaited()
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_password_missing_row_on_update_is_reported(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
+) -> None:
+    """The row can vanish between the read and the write; that is a 404, not a 500."""
+    user = build_user(password=CURRENT_PASSWORD)
+    users_repo = FakeUsersRepository(user=user, updated_user=None)
+    uow = build_uow(fake_session, users_repo)
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+
+    with pytest.raises(InstanceNotFoundException):
+        await use_case.execute(data=change_password_data(), user_id=user.id)
+
     invalidate_mock.assert_not_awaited()
     uow.commit.assert_not_awaited()
 
