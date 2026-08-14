@@ -28,7 +28,10 @@
 - Notifications: Telegram with status, duration, pipeline link.
 
 ### Release (`.github/workflows/release.yml`)
-- Pushing a `vX.Y.Z` tag builds the image again, pushes it as `vX.Y.Z` only — the `sha-` tag CI published stays immutable — and opens a GitHub Release with generated notes.
+- Pushing a `vX.Y.Z` tag publishes the image under that tag and opens a GitHub Release with generated notes, the image digest and where the image came from.
+- Build once, promote many: the release does **not** rebuild. `docker buildx imagetools create` copies the `sha-<12>` image CI already built for that commit onto the `vX.Y.Z` tag, by digest and inside the registry, so `vX.Y.Z` is bit-for-bit the artifact CI tested and CD deployed. A rebuild would run the same code on whatever base layers exist today.
+- Because the digest is preserved, the version lives in the tag and the release, not in an image label — rewriting a label would change the config blob and therefore the digest.
+- Tag a commit on `main` that passed CI. A tag off a branch (or predating the build job) has no `sha-` image; the workflow then falls back to building from source and says so in the release notes. It never re-pushes `sha-<12>`, which CI owns.
 - Releases publish images only. Deployment still follows `main`; to run a release image, deploy it explicitly with `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:vX.Y.Z`.
 
 ### Pre-commit Autoupdate (`.github/workflows/pre-commit-autoupdate.yml`)
