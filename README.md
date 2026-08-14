@@ -12,7 +12,7 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 ## Key Features
 - Async FastAPI with modular domain structure.
 - DB via SQLAlchemy async, repositories + Unit of Work for transactional work.
-- Caching: Redis cache layer (`src/core/redis/*`) with tags, decorators, lifecycle helpers, and deterministic ETag support for route responses.
+- Caching: explicit cache layer (`src/core/cache/*`) - `Cache` protocol, per-domain key builders, namespace-version invalidation, and opt-in route caching with ETag/304 support.
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
 - Messaging: taskiq worker/scheduler over Redis Streams with a transactional outbox (atomic enqueue with the DB transaction, worker-side dedup, delayed retries). Background tasks are enqueued via `TaskDispatcher` (`enqueue` for fire-and-forget, `enqueue_transactional` to enqueue inside a UnitOfWork transaction).
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
@@ -66,6 +66,24 @@ body instead. Both sources carry the same token; either one is echoed back in th
 - If Redis is temporarily unavailable, the limiter falls back to an in-memory per-process window so protection still works in degraded mode.
 - Be careful in multi-instance deployments: this fallback is not distributed, so each instance enforces its own local counter and the effective global limit becomes higher than the configured value.
 - Even with that limitation, the fallback is still useful because requests remain best-effort rate-limited instead of becoming completely unlimited during a Redis outage.
+
+## Response Caching
+`GET /v1/users/{user_id}` (requires the `VIEW_USERS` permission) is the template's
+one live example of route caching (`@cached_route`, `src/core/cache/decorators.py`).
+A client should expect and can rely on:
+- `Cache-Control: public, max-age=60` — the response is safe for a shared cache to
+  store, because the body is identical for every permitted viewer; see
+  `docs/readme/security.md` → *Cache Architecture* for what that implies if you put
+  a CDN or shared proxy in front of the API.
+- `ETag` — a weak validator computed from the cached payload. Send it back as
+  `If-None-Match` on the next request; a match returns `304 Not Modified` with no
+  body.
+- `X-Cache-Status: HIT` or `MISS` — whether the response came from the cache or was
+  computed and stored on this call.
+
+`PATCH /v1/users/me` invalidates the cached summary for the updated user as part of
+the same transaction, so a subsequent `GET` never observes stale data past that
+point.
 
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)

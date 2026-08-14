@@ -29,6 +29,23 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 - **Nginx:** Reverse proxy to app with template security headers.
 - **Redis:** Cache backend with password; also the taskiq broker (Streams), the retry schedule source for delayed retries, and storage for `IdempotencyReceiver` dedup markers — no task result backend.
 
+## Cache Operations
+The cache layer (`src/core/cache/`) has no dedicated Redis connection — it runs on
+the same shared client used by rate limiting and taskiq (`get_cache`,
+`src/core/cache/dependencies.py`). There is no separate service or port to
+provision.
+
+- Under memory pressure, prefer `maxmemory-policy allkeys-lru` (or actively monitor
+  `INFO stats` → `evicted_keys`). Every namespace's version counter is itself a
+  Redis key; if the eviction policy reclaims a version key before the values it
+  guards, the next read falls back to the version-less default and can serve a
+  value that a prior `invalidate()` call was supposed to have retired.
+- The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
+  per invocation without hash tags, so as written they run correctly against a
+  single Redis instance but not against a sharded Redis Cluster — a cluster
+  deployment needs hash-tagged keys (or a separate non-clustered instance for the
+  cache) before this layer would work unmodified.
+
 ## Prerequisites
 - Python 3.13 (for local scripts/hooks)
 - Docker

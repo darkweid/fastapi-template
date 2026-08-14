@@ -252,15 +252,60 @@ public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 
 ## Cache Architecture
 
-`src/core/redis/cache/coder/`
+`src/core/cache/`
 
-Two coder implementations:
-- **JsonCoder** — safe for any data, no code execution risk.
-- **PickleCoder** — faster serialization for internal-only cache data. Appropriate only when Redis access is restricted to the application.
+Every cached value is serialized as JSON and decoded through a `TypeAdapter` built
+from the caller's declared type (`src/core/cache/serializer.py`) — there is no
+pickle path anywhere in this layer. A compromised or untrusted Redis instance can
+hand back malformed JSON, which fails to decode, but it cannot make the process
+execute arbitrary code the way a pickle payload could.
 
-Tag-based invalidation (`CacheTags` enum) allows selective cache purging by resource type without full cache flushes.
+Invalidation is a namespace-version bump over Lua (`cache.invalidate(namespace)`),
+not a key scan or a tag registry — there is no `CacheTags` enum, no `KEYS`/`SCAN`
+call, and no per-entry deletion.
 
-**Why it matters:** Pickle deserialization can execute arbitrary code. The coder choice should match the trust level of the Redis environment. Tag-based invalidation prevents stale data from being served after mutations.
+**Key hygiene:** a cache key's `suffix` (`CacheKey(namespace, suffix)`) must never
+carry an email address, phone number, token, or other identifying value that isn't
+already the endpoint's own path parameter. Key builders live per domain
+(`src/user/cache_keys.py` is the reference) precisely so this rule has one place to
+enforce, instead of every call site assembling its own key string.
+
+**`CacheScope.PRIVATE` vs `CacheScope.PUBLIC`:** `@cached_route` requires an explicit
+`scope`, and the two are not interchangeable safety-wise.
+- `PRIVATE` requires an `identity` callback and emits `Cache-Control: private`. Use
+  it whenever the response body differs by caller — the response for user A must
+  never satisfy a request from user B's browser or a shared proxy sitting between
+  them. If the identity callback returns `None` for a given request (caller cannot
+  be identified), the decorator bypasses the cache entirely for that call rather
+  than risk collapsing distinct callers onto one entry.
+- `PUBLIC` emits `Cache-Control: public, max-age=<ttl>`. Under RFC 9111 §3.5, a
+  shared cache (a CDN, a corporate proxy, any intermediary between the client and
+  this API) is normally forbidden from storing a response to a request that carried
+  an `Authorization` header — unless the response explicitly says `public`. Setting
+  `PUBLIC` on an authenticated endpoint is exactly that override: it tells every
+  intermediary on the path that it is allowed to cache and replay this
+  authorization-gated response to other clients.
+
+  `GET /v1/users/{user_id}` (`src/user/routers.py`) does this deliberately: it
+  requires the `VIEW_USERS` permission, but the response body is identical for
+  every caller who holds that permission — there is nothing in it that varies by
+  who is asking, so one shared cache entry per `user_id` is the intended behavior,
+  not a leak. The template ships no CDN or shared caching proxy in front of the
+  API, so today `PUBLIC` only affects `RedisCache`, which nothing outside this
+  process can reach. **If a project adds a CDN or a shared caching proxy in front
+  of the API, any endpoint using `PUBLIC` must be re-evaluated first** — a response
+  that looks caller-independent today can stop being so after a future change to
+  the endpoint (e.g. adding a per-viewer field), and at that point `PUBLIC` would
+  let the shared cache serve one caller's data to another. When the response does
+  vary by caller, or when in doubt, use `PRIVATE` with an `identity` callback
+  instead.
+
+**Why it matters:** JSON-only serialization removes a remote-code-execution vector
+that pickle-based caches carry. Namespace versioning removes an entire class of
+invalidation bugs (partial tag purges, forgotten tags) at the cost of coarser
+granularity. The `PUBLIC`/`PRIVATE` distinction is what stands between "one cache
+entry serves every permitted viewer" and "one user's cached response leaks to
+another" once a shared cache sits on the request path.
 
 ## Taskiq Task Security
 
