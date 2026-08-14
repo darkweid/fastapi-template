@@ -109,6 +109,10 @@ make clean            # remove stack + volumes/images/orphans
 - If migrations fail, check Postgres health first.
 
 ## Deployment Notes
+- `infra/deploy/deploy.sh` is the single deploy path, run on the box: it validates `.env`, brings up Postgres and Redis, applies migrations, then rolls `app`, `worker`, `scheduler` and restarts nginx. Migrations run before any new code serves traffic, and a failed one aborts the deploy with the previous containers still up.
+- Two modes. `BUILD=1` (the default, `make deploy-prod`) builds the image on the box — the bootstrap path, before any registry exists. `BUILD=0` with `APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` (`make deploy-image APP_IMAGE=…`) pulls the image CI already built; this is what CD uses, so the production box never compiles.
+- `APP_IMAGE` is the only knob: unset, every service falls back to the locally built `template-app-image:latest`, so `make run` and `make run-dev` behave exactly as before.
+- The box needs `docker login ghcr.io` credentials for a private package (`GHCR_USER` / `GHCR_PULL_TOKEN` in the CD workflow). Postgres stays a box-local build — CD ships application code, never the database image.
 - `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `worker`, or `scheduler`.
 - It also publishes **only** the Nginx port to the host; Postgres/Redis/app stay internal to `app-network`. If you genuinely need a backing port on the host in production, bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
 - Source bind mounts remain only in `infra/docker-compose.override.yml` for local development.

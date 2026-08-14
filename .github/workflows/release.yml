@@ -1,0 +1,83 @@
+name: Release
+
+# Tagging vX.Y.Z publishes a versioned image next to the sha- and latest- tags
+# CI pushes, and opens a GitHub Release with generated notes. Nothing deploys
+# from here: CD still follows main.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish image and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Compute image and tags
+        id: meta
+        run: |
+          image_lower="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(echo "${{ github.sha }}" | cut -c1-12)"
+          {
+            echo "image=${image_lower}"
+            echo "version=${{ github.ref_name }}"
+            echo "sha_tag=sha-${short_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The sha tag is pushed again on purpose: a tag may point at a commit CI
+      # never built (a tag on a branch, a re-tag), and the release must not
+      # depend on that image already existing.
+      - name: Build and push the release image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$VERSION" --jq .body)"
+          # shellcheck disable=SC2016  # the backticks are markdown, not a subshell
+          printf '%s\n\nImage: `%s:%s`\n' "$notes" "$IMAGE" "$VERSION" > release-notes.md
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --verify-tag \
+            --notes-file release-notes.md

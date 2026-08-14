@@ -168,6 +168,8 @@ for `app.conf` once the certificate is in place.
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report
+- `make deploy-prod` — deploy on the box, building the image there
+- `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (what CD runs)
 
 ## Pre-commit Hooks
 - Install dev deps: `make req-sync-dev`
