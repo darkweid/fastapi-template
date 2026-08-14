@@ -21,6 +21,7 @@ from src.core.errors.exceptions import (
     NotAcceptableException,
     PayloadTooLargeException,
     PermissionDeniedException,
+    ServiceUnavailableException,
     TooManyRequestsException,
     UnauthorizedException,
 )
@@ -121,6 +122,22 @@ async def handle_infrastructure_exception(
     sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=500,
+        content=format_error_response(error_type, exc.message),
+    )
+
+
+# Deliberately no Sentry capture: readiness probes poll every few seconds, so a
+# minute of downtime would file dozens of identical events for a state the
+# orchestrator already sees through the 503.
+async def handle_service_unavailable_exception(
+    request: Request,
+    exc: ServiceUnavailableException,
+) -> JSONResponse:
+    error_type = "Service unavailable"
+    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
+    response_logger.error(log_msg)
+    return JSONResponse(
+        status_code=503,
         content=format_error_response(error_type, exc.message),
     )
 

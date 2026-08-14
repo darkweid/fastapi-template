@@ -20,6 +20,8 @@ def test_include_routers_registers_expected_paths() -> None:
     assert "/v1/users/auth/login" in paths
     assert "/v1/users/auth/register" in paths
     assert "/health/" in paths
+    assert "/live/" in paths
+    assert "/ready/" in paths
 
 
 def test_include_exceptions_handlers_registers_handlers() -> None:

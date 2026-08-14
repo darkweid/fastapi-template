@@ -15,6 +15,7 @@ from src.core.errors.exceptions import (
     NotAcceptableException,
     PayloadTooLargeException,
     PermissionDeniedException,
+    ServiceUnavailableException,
     TooManyRequestsException,
     UnauthorizedException,
 )
@@ -31,6 +32,7 @@ from src.core.errors.handlers import (
     handle_payload_too_large_exception,
     handle_permission_denied_exception,
     handle_request_validation_exception,
+    handle_service_unavailable_exception,
     handle_too_many_requests_exception,
     handle_unauthorized_exception,
     handle_validation_error,
@@ -44,6 +46,10 @@ EXCEPTION_HANDLERS: tuple[tuple[type[Exception], HandlerCallable], ...] = (
     (
         InfrastructureException,
         cast(HandlerCallable, handle_infrastructure_exception),
+    ),
+    (
+        ServiceUnavailableException,
+        cast(HandlerCallable, handle_service_unavailable_exception),
     ),
     (
         RequestValidationError,

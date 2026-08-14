@@ -13,6 +13,10 @@ class InfrastructureException(CoreException):
     pass
 
 
+class ServiceUnavailableException(CoreException):
+    """A dependency the caller needs right now is unreachable (HTTP 503)."""
+
+
 class InstanceNotFoundException(CoreException):
     pass
 
