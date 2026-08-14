@@ -6,6 +6,8 @@ import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql.compiler import Compiled
+from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
@@ -29,7 +31,7 @@ class QueryModel(SQLAlchemyBase):
 SEARCHABLE = ("name", "email")
 
 
-def compile_clauses(clauses: list[object]) -> postgresql.dialect:
+def compile_clauses(clauses: list[ColumnElement[bool]]) -> Compiled:
     statement = select(QueryModel)
     for clause in clauses:
         statement = statement.where(clause)
@@ -131,3 +133,68 @@ def test_build_where_clauses_ignores_empty_filter_conditions() -> None:
     query = ListQuery(conditions=FilterCondition())
 
     assert query.build_where_clauses(QueryModel, SEARCHABLE) == []
+
+
+def order_by_strings(
+    query: ListQuery,
+    sortable: tuple[str, ...] = ("created_at", "name"),
+    default: str | None = "created_at",
+) -> list[str]:
+    return [
+        str(clause) for clause in query.build_order_by(QueryModel, sortable, default)
+    ]
+
+
+def test_build_order_by_uses_requested_column_and_direction() -> None:
+    clauses = order_by_strings(ListQuery(order_by="name", order="asc"))
+
+    assert clauses[0] == "query_models.name ASC NULLS LAST"
+
+
+def test_build_order_by_appends_primary_key_tiebreaker() -> None:
+    clauses = order_by_strings(ListQuery(order_by="name", order="asc"))
+
+    assert clauses[1] == "query_models.id ASC NULLS LAST"
+
+
+def test_build_order_by_does_not_duplicate_primary_key() -> None:
+    clauses = order_by_strings(ListQuery(order_by="id"), sortable=("id",))
+
+    assert clauses == ["query_models.id DESC NULLS LAST"]
+
+
+def test_build_order_by_rejects_field_outside_allowlist() -> None:
+    with pytest.raises(FilteringError):
+        ListQuery(order_by="email").build_order_by(
+            QueryModel, ("created_at", "name"), "created_at"
+        )
+
+
+def test_build_order_by_rejects_any_field_when_sorting_disabled() -> None:
+    with pytest.raises(FilteringError):
+        ListQuery(order_by="name").build_order_by(QueryModel, (), None)
+
+
+def test_build_order_by_falls_back_to_default_column() -> None:
+    clauses = order_by_strings(ListQuery())
+
+    assert clauses[0] == "query_models.created_at DESC NULLS LAST"
+
+
+def test_build_order_by_falls_back_to_created_at_without_default() -> None:
+    clauses = order_by_strings(ListQuery(), default=None)
+
+    assert clauses[0] == "query_models.created_at DESC NULLS LAST"
+
+
+def test_build_order_by_falls_back_to_primary_key_without_created_at() -> None:
+    class OrderlessModel(SQLAlchemyBase):
+        __tablename__ = "orderless_models"
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    clauses = [
+        str(clause) for clause in ListQuery().build_order_by(OrderlessModel, (), None)
+    ]
+
+    assert clauses == ["orderless_models.id DESC NULLS LAST"]

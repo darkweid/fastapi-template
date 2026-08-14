@@ -1,11 +1,11 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal, cast
 
-from sqlalchemy import or_
+from sqlalchemy import inspect, or_
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.elements import ColumnElement, UnaryExpression
 
 from src.core.database.filters import FilterCondition
 from src.core.errors.exceptions import FilteringError
@@ -104,3 +104,61 @@ class ListQuery:
                 for field in searchable_fields
             )
         )
+
+    def build_order_by(
+        self,
+        model: type[DeclarativeBase],
+        sortable_fields: Sequence[str],
+        default_order_by: str | None,
+    ) -> list[UnaryExpression[Any]]:
+        """
+        Build the ORDER BY clauses, always ending with the primary key.
+
+        The primary key tiebreaker is not optional: limit/offset pagination over
+        a non-unique sort column silently duplicates and skips rows between pages.
+        """
+        column = self._resolve_order_column(model, sortable_fields, default_order_by)
+        clauses: list[UnaryExpression[Any]] = []
+        if column is not None:
+            clauses.append(self._directed(column))
+
+        # `getattr(model, name)` yields an `InstrumentedAttribute`; `.expression`
+        # normalizes it to a `Column`-like object comparable with the raw `Column`
+        # objects from `inspect(model).primary_key`. The two are never the same
+        # Python object (the ORM wraps the mapped column in an annotated proxy),
+        # so identity comparison always fails; `==` would build a SQL expression
+        # instead of a boolean. Comparing the plain `.name` attribute is a normal
+        # string comparison and avoids both traps.
+        chosen = column.expression if column is not None else None
+        for primary_key_column in inspect(model).primary_key:
+            if chosen is not None and primary_key_column.name == chosen.name:
+                continue
+            clauses.append(self._directed(primary_key_column))
+
+        return clauses
+
+    def _resolve_order_column(
+        self,
+        model: type[DeclarativeBase],
+        sortable_fields: Sequence[str],
+        default_order_by: str | None,
+    ) -> Any:
+        if self.order_by is not None:
+            if self.order_by not in sortable_fields:
+                raise FilteringError("Ordering by the requested field is not supported")
+            return getattr(model, self.order_by)
+
+        for candidate in (default_order_by, "created_at"):
+            if candidate is None:
+                continue
+            column = getattr(model, candidate, None)
+            if column is not None:
+                return column
+        return None
+
+    def _directed(self, column: Any) -> UnaryExpression[Any]:
+        ordered = column.asc() if self.order == "asc" else column.desc()
+        # SQLAlchemy's operator mixins type `.nulls_last()` as `ColumnOperators`,
+        # the loosest common return type across all its column-like inputs; the
+        # concrete runtime type is always a `UnaryExpression`.
+        return cast(UnaryExpression[Any], ordered.nulls_last())
