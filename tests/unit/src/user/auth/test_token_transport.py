@@ -8,7 +8,9 @@ import pytest
 from src.core.database.session import get_session
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
+from src.system import routers as system_routers
 from src.user import routers as user_routers
+from src.user.auth import routers as user_auth_routers
 from src.user.auth.cookies import (
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
@@ -336,9 +338,13 @@ def test_cached_route_decorator_order_is_preserved(app: FastAPI) -> None:
     # registered route endpoint. Invert the order and @router.get registers the
     # undecorated function while @cached_route's marked wrapper only reaches the
     # module attribute - this walk catches exactly that mismatch.
+    # Scans every module that defines a router, not just src.user.routers, so an
+    # inversion introduced in a future router module cannot pass silently.
+    router_modules = (user_routers, user_auth_routers, system_routers)
     marked_endpoints = [
         obj
-        for obj in vars(user_routers).values()
+        for module in router_modules
+        for obj in vars(module).values()
         if callable(obj) and getattr(obj, "__cached_route__", False)
     ]
     assert marked_endpoints, "expected at least one @cached_route-decorated endpoint"

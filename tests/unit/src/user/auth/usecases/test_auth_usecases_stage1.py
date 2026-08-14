@@ -29,6 +29,7 @@ from src.user.auth.usecases.resend_verification import SendVerificationUseCase
 from src.user.auth.usecases.reset_password_confirm import ResetPasswordConfirmUseCase
 from src.user.auth.usecases.reset_password_request import ResetPasswordRequestUseCase
 from src.user.auth.usecases.verify_email import VerifyEmailUseCase
+from src.user.cache_keys import user_cache_keys
 from src.user.models import User
 from src.user.schemas import UserProfileViewModel
 from tests.factories.token_factory import (
@@ -468,6 +469,8 @@ async def test_reset_password_confirm_success(
         {"email": user.email},
         fake_redis,
     )
+    cache_key = user_cache_keys.summary(user.id)
+    await cache.set(cache_key, {"name": "stale"}, ttl=60)
 
     use_case = ResetPasswordConfirmUseCase(
         uow=uow, redis_client=fake_redis, cache=cache
@@ -480,6 +483,7 @@ async def test_reset_password_confirm_success(
     invalidate_mock.assert_awaited_once()
     uow.commit.assert_awaited_once()
     uow.flush.assert_awaited_once()
+    assert await cache.get(cache_key) is None
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("reset_password", user.email)
@@ -696,6 +700,8 @@ async def test_verify_email_usecase_success(
     users_repo = FakeUsersRepository(user=user, updated_user=user)
     uow = build_uow(fake_session, users_repo)
     use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+    cache_key = user_cache_keys.summary(user.id)
+    await cache.set(cache_key, {"name": "stale"}, ttl=60)
 
     token = await build_verification_token({"email": user.email}, fake_redis)
 
@@ -710,6 +716,7 @@ async def test_verify_email_usecase_success(
         )
         == 0
     )
+    assert await cache.get(cache_key) is None
 
 
 @pytest.mark.asyncio

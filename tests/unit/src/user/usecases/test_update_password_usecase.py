@@ -7,6 +7,7 @@ import pytest
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.schemas import SuccessResponse
 from src.user.auth.schemas import UserNewPassword
+from src.user.cache_keys import user_cache_keys
 from src.user.usecases.update_password import UpdateUserPasswordUseCase
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
@@ -58,6 +59,8 @@ async def test_update_password_success(
         "src.user.usecases.update_password.invalidate_all_user_sessions",
         invalidate_mock,
     )
+    cache_key = user_cache_keys.summary(user.id)
+    await cache.set(cache_key, {"name": "stale"}, ttl=60)
 
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
@@ -69,6 +72,7 @@ async def test_update_password_success(
     uow.commit.assert_awaited_once()
     uow.flush.assert_awaited_once()
     invalidate_mock.assert_awaited_once_with(str(user.id), fake_redis)
+    assert await cache.get(cache_key) is None
 
 
 @pytest.mark.asyncio

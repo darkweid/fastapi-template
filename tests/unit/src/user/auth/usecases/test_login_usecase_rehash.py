@@ -11,6 +11,7 @@ from src.user.auth.usecases.login import (
     INVALID_CREDENTIALS_PASSWORD_HASH,
     LoginUserUseCase,
 )
+from src.user.cache_keys import user_cache_keys
 from src.user.models import User
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
@@ -56,6 +57,8 @@ async def test_login_rehashes_password_when_needed(
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
     monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
+    cache_key = user_cache_keys.summary(user.id)
+    await cache.set(cache_key, {"name": "stale"}, ttl=60)
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
@@ -74,6 +77,7 @@ async def test_login_rehashes_password_when_needed(
     )
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
+    assert await cache.get(cache_key) is None
 
 
 @pytest.mark.asyncio
@@ -95,6 +99,8 @@ async def test_login_does_not_rehash_when_not_needed(
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
     monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
+    cache_key = user_cache_keys.summary(user.id)
+    await cache.set(cache_key, {"name": "stale"}, ttl=60)
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
@@ -108,6 +114,9 @@ async def test_login_does_not_rehash_when_not_needed(
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
+    # Login invalidates unconditionally, even on the no-rehash path where the row
+    # is not written - see LoginUserUseCase's docstring for why.
+    assert await cache.get(cache_key) is None
 
 
 @pytest.mark.asyncio

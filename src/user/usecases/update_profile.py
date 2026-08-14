@@ -20,7 +20,13 @@ class UpdateUserProfileUseCase:
     Update the current user's profile fields.
 
     Inputs:
-    - data: UserProfileUpdateModel with the fields to change.
+    - data: UserProfileUpdateModel with the fields to change. A field left unset
+      is skipped rather than cleared; an explicit `null` is likewise skipped, not
+      rejected, since the schema has no way to tell "omitted" from "set to null"
+      apart from Pydantic's own unset-tracking, which this UseCase does not use.
+      An entirely empty body is a no-op write: it still updates zero columns,
+      still flushes, and still bumps the cache namespace. Both are the safe
+      direction - a spurious bump costs a cold cache, not a stale read.
     - user_id: UUID of the user being updated.
 
     Validations:

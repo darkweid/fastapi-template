@@ -48,6 +48,16 @@ async def test_summary_key_is_namespaced_per_user() -> None:
     assert key.suffix == "summary"
 
 
+def test_namespace_collapses_non_canonical_uuid_spellings_to_one_key() -> None:
+    user_id = uuid4()
+    canonical = user_cache_keys.namespace(user_id)
+
+    assert user_cache_keys.namespace(str(user_id).upper()) == canonical
+    assert user_cache_keys.namespace(str(user_id).replace("-", "")) == canonical
+    assert user_cache_keys.namespace(f"{{{user_id}}}") == canonical
+    assert user_cache_keys.namespace(f"urn:uuid:{user_id}") == canonical
+
+
 async def test_get_user_by_id_serves_second_request_from_cache(
     async_client: httpx2.AsyncClient,
     dependency_overrides: DependencyOverrides,
@@ -105,5 +115,52 @@ async def test_profile_update_invalidates_cached_summary(
     after = await async_client.get(f"/v1/users/{user.id}")
 
     assert patch_response.status_code == 200
+    assert after.headers["X-Cache-Status"] == "MISS"
+    assert after.json()["first_name"] == "Grace"
+
+
+async def test_cache_invalidation_ignores_uuid_spelling_in_the_url(
+    async_client: httpx2.AsyncClient,
+    dependency_overrides: DependencyOverrides,
+    fake_session: FakeAsyncSession,
+    cache: InMemoryCache,
+) -> None:
+    # Regression for F1: the route key builder used to namespace by the raw path
+    # text, so an uppercase spelling of the same id cached under a distinct
+    # namespace that PATCH /me's canonical-UUID invalidation never touched.
+    user = build_user(role=UserRole.ADMIN)
+    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(get_user_service, ProvideValue(FakeUserService(user)))
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+
+    async def apply_update(
+        session: FakeAsyncSession, data: dict[str, Any], **filters: object
+    ) -> User:
+        for field, value in data.items():
+            setattr(user, field, value)
+        return user
+
+    users_repo = FakeUsersRepository(updated_user=user)
+    users_repo.update = AsyncMock(side_effect=apply_update)
+    uow = FakeUnitOfWork(session=fake_session, repositories={"users": users_repo})
+    dependency_overrides.set(get_unit_of_work, ProvideAsyncValue(uow))
+
+    non_canonical_id = str(user.id).upper()
+    assert non_canonical_id != str(user.id)
+
+    first = await async_client.get(f"/v1/users/{non_canonical_id}")
+    assert first.headers["X-Cache-Status"] == "MISS"
+
+    patch_response = await async_client.patch(
+        "/v1/users/me", json={"first_name": "Grace"}
+    )
+    assert patch_response.status_code == 200
+
+    # Re-query with the exact same non-canonical spelling: if the route key
+    # builder namespaced by raw URL text instead of a canonical UUID, this would
+    # still be a HIT serving the pre-PATCH name from a namespace PATCH's
+    # canonical-UUID invalidation never reached.
+    after = await async_client.get(f"/v1/users/{non_canonical_id}")
+
     assert after.headers["X-Cache-Status"] == "MISS"
     assert after.json()["first_name"] == "Grace"

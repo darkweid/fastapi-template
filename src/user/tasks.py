@@ -25,7 +25,16 @@ async def cleanup_unverified_users(
     *,
     session: Annotated[AsyncSession, TaskiqDepends(get_tasks_session)],
 ) -> str:
-    """Soft-delete users that never verified their account within the max age."""
+    """
+    Soft-delete users that never verified their account within the max age.
+
+    Does not bump the user:{id} cache namespace: `batch_soft_delete` returns only
+    an affected-row count, not the deleted ids, so there is nothing to key an
+    invalidation on without an extra query this bulk path is not worth paying for.
+    A cached summary for one of these (already-unverified, inactive) accounts can
+    therefore serve a deleted user for up to its TTL - a bounded staleness window,
+    not a silent violation of the "every user-row write bumps the namespace" rule.
+    """
     cutoff = get_utc_now() - UNVERIFIED_USER_MAX_AGE
     uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
     try:
