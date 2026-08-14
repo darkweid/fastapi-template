@@ -7,6 +7,7 @@ from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.middleware import DOCS_CONTENT_SECURITY_POLICY
+from src.main.config import config
 from src.main.presentation import include_exceptions_handlers, include_routers
 from src.main.web import get_application
 
@@ -42,7 +43,9 @@ def test_get_application_registers_middlewares() -> None:
 def test_docs_route_uses_docs_friendly_csp() -> None:
     client = TestClient(get_application())
 
-    response = client.get("/docs")
+    response = client.get(
+        "/docs", auth=(config.app.DOCS_USERNAME, config.app.DOCS_PASSWORD)
+    )
 
     assert response.status_code == 200
     assert response.headers["Content-Security-Policy"] == DOCS_CONTENT_SECURITY_POLICY

@@ -14,7 +14,7 @@ from src.user.auth.cookies import (
 from src.user.auth.csrf import build_csrf_token
 from src.user.auth.token_transport import TokenTransport
 
-SECRET = "unit-test-csrf-secret"
+SECRET = "unit-test-csrf-secret-key-value-32"
 
 
 @pytest.fixture

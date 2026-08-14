@@ -312,7 +312,7 @@ def test_no_credentials_returns_none() -> None:
     assert read_refresh_credentials(_request()) is None
 
 
-CSRF_SECRET = "unit-test-csrf-secret"
+CSRF_SECRET = "unit-test-csrf-secret-key-value-32"
 
 
 def _refresh_responder() -> TokenCookieResponder:

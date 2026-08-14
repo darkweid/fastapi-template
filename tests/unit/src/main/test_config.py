@@ -1,10 +1,30 @@
 import logging
 from pathlib import Path
 
+from pydantic import ValidationError
 import pytest
 
 from src.main import config as config_module
-from src.main.config import AppConfig, CacheConfig, find_project_root_robust
+from src.main.config import (
+    AppConfig,
+    CacheConfig,
+    JWTConfig,
+    find_project_root_robust,
+)
+
+
+def _base_jwt_config_data() -> dict[str, object]:
+    return {
+        "JWT_USER_SECRET_KEY": "unit-test-user-secret-key-long-enough",
+        "JWT_VERIFY_SECRET_KEY": "unit-test-verify-secret-key-long-enough",
+        "JWT_ADMIN_SECRET_KEY": "unit-test-admin-secret-key-long-enough",
+        "JWT_RESET_PASSWORD_SECRET_KEY": "unit-test-reset-secret-key-long-enough",
+        "ALGORITHM": "HS256",
+        "ACCESS_TOKEN_EXPIRE_MINUTES": 15,
+        "REFRESH_TOKEN_EXPIRE_MINUTES": 129_600,
+        "VERIFICATION_TOKEN_EXPIRE_MINUTES": 180,
+        "RESET_PASSWORD_TOKEN_EXPIRE_MINUTES": 180,
+    }
 
 
 def _base_app_config_data() -> dict[str, object]:
@@ -21,7 +41,7 @@ def _base_app_config_data() -> dict[str, object]:
         "CORS_EXPOSE_HEADERS": "*",
         "TRUST_PROXY_HEADERS": "true",
         "PROJECT_NAME": "app",
-        "PROJECT_SECRET_KEY": "secret",
+        "PROJECT_SECRET_KEY": "unit-test-project-secret-key-long-enough",
         "PING_INTERVAL": 10,
         "CONNECTION_TTL": 10,
     }
@@ -136,6 +156,38 @@ def test_cache_config_defaults() -> None:
 def test_cache_config_rejects_default_ttl_above_version_ttl() -> None:
     with pytest.raises(ValueError, match="CACHE_VERSION_TTL"):
         CacheConfig(CACHE_DEFAULT_TTL=100, CACHE_VERSION_TTL=50)
+
+
+def test_jwt_config_rejects_short_secret() -> None:
+    with pytest.raises(ValidationError):
+        JWTConfig(**{**_base_jwt_config_data(), "JWT_USER_SECRET_KEY": "too-short"})
+
+
+def test_jwt_config_rejects_unknown_algorithm() -> None:
+    with pytest.raises(ValidationError):
+        JWTConfig(**{**_base_jwt_config_data(), "ALGORITHM": "none"})
+
+
+@pytest.mark.parametrize("algorithm", ["HS256", "HS384", "HS512"])
+def test_jwt_config_accepts_allowlisted_algorithms(algorithm: str) -> None:
+    jwt_config = JWTConfig(**{**_base_jwt_config_data(), "ALGORITHM": algorithm})
+
+    assert jwt_config.ALGORITHM == algorithm
+
+
+def test_app_config_rejects_short_project_secret() -> None:
+    data = _base_app_config_data()
+    data["PROJECT_SECRET_KEY"] = "short"
+
+    with pytest.raises(ValidationError):
+        AppConfig(**data)
+
+
+def test_app_config_ships_no_docs_credentials_by_default() -> None:
+    app_config = AppConfig(**_base_app_config_data())
+
+    assert app_config.DOCS_USERNAME == ""
+    assert app_config.DOCS_PASSWORD == ""
 
 
 def test_find_project_root_robust_returns_start_when_missing(

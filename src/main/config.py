@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 logger = logging.getLogger(__name__)
 
+# Shortest secret the app accepts anywhere. Matches the HMAC-SHA256 block size,
+# which is the weakest signature the JWT algorithm allowlist permits.
+SECRET_MIN_LENGTH = 32
+
 
 class S3Config(BaseModel):
     S3_BUCKET_NAME: str
@@ -138,7 +142,7 @@ class CookieConfig(BaseModel):
     COOKIE_SECURE: bool = True
     COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
     COOKIE_DOMAIN: str | None = None
-    CSRF_SECRET_KEY: str
+    CSRF_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -169,12 +173,14 @@ class CookieConfig(BaseModel):
 
 
 class JWTConfig(BaseModel):
-    JWT_USER_SECRET_KEY: str
-    JWT_VERIFY_SECRET_KEY: str
-    JWT_ADMIN_SECRET_KEY: str
-    JWT_RESET_PASSWORD_SECRET_KEY: str
+    # A signing key shorter than the HMAC block size weakens HS256 and is almost
+    # always a placeholder left over from .env.example.
+    JWT_USER_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_VERIFY_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_ADMIN_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_RESET_PASSWORD_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
-    ALGORITHM: str
+    ALGORITHM: Literal["HS256", "HS384", "HS512"]
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
@@ -244,7 +250,12 @@ class AppConfig(BaseModel):
     )
 
     PROJECT_NAME: str
-    PROJECT_SECRET_KEY: str
+    PROJECT_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+
+    # Interactive docs stay open in DEBUG. Outside it they are served only when
+    # both credentials are set; unset means the app publishes no docs at all.
+    DOCS_USERNAME: str = ""
+    DOCS_PASSWORD: str = ""
 
     PING_INTERVAL: int
     CONNECTION_TTL: int

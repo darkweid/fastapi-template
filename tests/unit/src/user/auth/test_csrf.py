@@ -1,6 +1,6 @@
 from src.user.auth.csrf import build_csrf_token, verify_csrf_token
 
-SECRET = "unit-test-csrf-secret"
+SECRET = "unit-test-csrf-secret-key-value-32"
 REFRESH_TOKEN = "header.payload.signature"
 
 

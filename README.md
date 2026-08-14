@@ -155,7 +155,10 @@ TLS terminates at Nginx — `infra/nginx/tls.conf.example` is a drop-in replacem
 for `app.conf` once the certificate is in place.
 
 ## Common Services
-- API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only)
+- API docs: http://localhost:8000/docs (direct app http://localhost:8001/docs — dev only).
+  `/docs`, `/redoc` and `/openapi.json` are open only while `DEBUG=true`. Otherwise they
+  are served behind HTTP Basic using `DOCS_USERNAME` / `DOCS_PASSWORD`, and are not
+  published at all while either of the two is blank.
 - Health: http://localhost:8000/health/ (direct app http://localhost:8001/health/ — dev only)
 
 ## Useful Make Targets

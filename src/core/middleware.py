@@ -161,6 +161,12 @@ def handle_postgresql_error(
 ) -> PostgresqlErrorHandlingResult:
     """
     Build a structured handling result for PostgreSQL IntegrityError with HTTP response, Sentry flag, and log severity.
+
+    A unique violation answers 409 with the conflicting value, which on
+    registration tells a caller that an address is already taken. That is a
+    deliberate trade: account enumeration through this route is cheap anyway
+    (login timing, password reset), while a client that cannot distinguish
+    "already registered" from a generic failure sends the user in circles.
     """
     orig_error = error.orig
     sqlstate = getattr(orig_error, "sqlstate", None)

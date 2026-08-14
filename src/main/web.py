@@ -8,6 +8,13 @@ from loggers import get_logger
 from src.core.middleware import register_middlewares
 from src.core.proxy_headers import TrustedProxyHeadersMiddleware
 from src.main.config import config
+from src.main.docs import (
+    DOCS_URL,
+    OPENAPI_URL,
+    REDOC_URL,
+    docs_are_protected,
+    include_protected_docs,
+)
 from src.main.lifespan import lifespan
 from src.main.openapi import SWAGGER_UI_PARAMETERS
 from src.main.presentation import include_exceptions_handlers, include_routers
@@ -18,13 +25,26 @@ logger = get_logger(__name__)
 
 
 def get_application() -> FastAPI:
+    docs_are_public = config.app.DEBUG
     application = FastAPI(
         title=config.app.PROJECT_NAME,
         debug=config.app.DEBUG,
         version=config.app.VERSION,
         lifespan=lifespan,
         swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
+        docs_url=DOCS_URL if docs_are_public else None,
+        redoc_url=REDOC_URL if docs_are_public else None,
+        openapi_url=OPENAPI_URL if docs_are_public else None,
     )
+
+    if not docs_are_public:
+        if docs_are_protected():
+            include_protected_docs(application)
+        else:
+            logger.warning(
+                "Interactive docs are not published: set DOCS_USERNAME and "
+                "DOCS_PASSWORD to serve them behind HTTP Basic."
+            )
 
     if config.app.TRUST_PROXY_HEADERS:
         application.add_middleware(
