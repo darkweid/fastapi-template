@@ -12,10 +12,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
+from src.core.database.query import ListQuery
 from src.core.database.repositories import (
     BaseRepository,
     SoftDeleteRepository,
 )
+from src.core.errors.exceptions import FilteringError
 
 
 class RepositoryModel(SQLAlchemyBase):
@@ -231,40 +233,6 @@ async def test_base_repository_apply_default_ordering_supports_ascending_order()
 
 
 @pytest.mark.asyncio
-async def test_base_repository_apply_search_filter_escapes_like_wildcards() -> None:
-    repo = RepositoryModelRepository()
-
-    query = repo._apply_search_filter(
-        select(RepositoryModel),
-        search=r"100%_match\value",
-        fields=["name"],
-    )
-
-    compiled = query.compile(dialect=postgresql.dialect())
-
-    assert "ILIKE" in compiled.string
-    assert r"ESCAPE '\\'" in compiled.string
-    assert compiled.params["name_1"] == r"%100\%\_match\\value%"
-
-
-@pytest.mark.asyncio
-async def test_base_repository_apply_search_filter_supports_literal_column_objects() -> (
-    None
-):
-    repo = RepositoryModelRepository()
-
-    query = repo._apply_search_filter(
-        select(RepositoryModel),
-        search="user_100%",
-        fields=[RepositoryModel.name],
-    )
-
-    compiled = query.compile(dialect=postgresql.dialect())
-
-    assert compiled.params["name_1"] == r"%user\_100\%%"
-
-
-@pytest.mark.asyncio
 async def test_base_repository_get_list_applies_for_update_scope() -> None:
     repo = RepositoryModelRepository()
     session = RepositorySession()
@@ -319,8 +287,119 @@ async def test_base_repository_get_paginated_list_applies_default_created_at_ord
     await repo.get_paginated_list(session=session, page=1, size=10)
 
     query = session.execute.await_args_list[0].args[0]
-    order_by_clause = list(query._order_by_clauses)[0]
-    assert str(order_by_clause) == "repository_models.created_at DESC"
+    order_by_clauses = [str(clause) for clause in query._order_by_clauses]
+    assert order_by_clauses == [
+        "repository_models.created_at DESC NULLS LAST",
+        "repository_models.id DESC NULLS LAST",
+    ]
+
+
+class SearchableRepository(BaseRepository[RepositoryModel]):
+    model = RepositoryModel
+    searchable_fields = ("name",)
+    sortable_fields = ("created_at", "name")
+    default_order_by = "created_at"
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_applies_search_to_items_and_count() -> (
+    None
+):
+    repo = SearchableRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+
+    await repo.get_paginated_list(
+        session=session, page=1, size=10, query=ListQuery(search="alpha")
+    )
+
+    items_query, count_query = (
+        call.args[0] for call in session.execute.await_args_list
+    )
+    items_sql = str(items_query.compile(dialect=postgresql.dialect()))
+    count_sql = str(count_query.compile(dialect=postgresql.dialect()))
+    assert "ILIKE" in items_sql
+    assert "ILIKE" in count_sql
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_keeps_exact_filters_with_query() -> (
+    None
+):
+    repo = SearchableRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+
+    await repo.get_paginated_list(
+        session=session,
+        page=1,
+        size=10,
+        query=ListQuery(conditions=FilterCondition(gte={"id": 5})),
+        name="alpha",
+    )
+
+    count_query = session.execute.await_args_list[1].args[0]
+    count_sql = str(count_query.compile(dialect=postgresql.dialect()))
+    assert "name =" in count_sql
+    assert "id >=" in count_sql
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_rejects_unlisted_order_field() -> (
+    None
+):
+    repo = SearchableRepository()
+    session = RepositorySession()
+
+    with pytest.raises(FilteringError):
+        await repo.get_paginated_list(
+            session=session, page=1, size=10, query=ListQuery(order_by="deleted_at")
+        )
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_paginated_list_does_not_eager_load_count_query() -> (
+    None
+):
+    repo = SearchableRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+
+    await repo.get_paginated_list(session=session, page=1, size=10)
+
+    count_query = session.execute.await_args_list[1].args[0]
+    assert count_query._with_options == ()
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_get_paginated_list_keeps_is_deleted_filter() -> (
+    None
+):
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.side_effect = [
+        FakeResult(items=[]),
+        FakeResult(scalar=0),
+    ]
+
+    await repo.get_paginated_list(
+        session=session, page=1, size=10, query=ListQuery(order_by=None)
+    )
+
+    items_query = session.execute.await_args_list[0].args[0]
+    items_sql = str(items_query.compile(dialect=postgresql.dialect()))
+    assert "is_deleted =" in items_sql
 
 
 @pytest.mark.asyncio
@@ -566,6 +645,15 @@ def test_base_repository_rejects_unknown_sortable_field() -> None:
     class BrokenRepository(BaseRepository[ListingModel]):
         model = ListingModel
         sortable_fields = ("published_at",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
+def test_base_repository_rejects_non_column_sortable_field() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        sortable_fields = ("__tablename__",)
 
     with pytest.raises(TypeError):
         BrokenRepository()

@@ -1,8 +1,6 @@
-from collections.abc import Sequence
-from datetime import datetime
 from typing import Any, Generic, Literal, TypeVar, cast
 
-from sqlalchemy import Enum as SAEnum, String, func, or_, select, update
+from sqlalchemy import Enum as SAEnum, String, func, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -10,6 +8,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
+from src.core.database.query import ListQuery
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
@@ -48,7 +47,9 @@ class BaseRepository(Generic[T]):
             *((self.default_order_by,) if self.default_order_by else ()),
         )
         for field in orderable_fields:
-            if not hasattr(self.model, field):
+            attribute = getattr(self.model, field, None)
+            column_type = getattr(getattr(attribute, "expression", None), "type", None)
+            if column_type is None:
                 raise TypeError(
                     f"{self.model.__name__} has no orderable attribute '{field}'"
                 )
@@ -169,6 +170,7 @@ class BaseRepository(Generic[T]):
         page: int,
         size: int,
         eager: EagerLoadSequence | None = None,
+        query: ListQuery | None = None,
         **filters: Any,
     ) -> tuple[list[T], int]:
         """Retrieve a paginated list of records using limit/offset pagination."""
@@ -177,20 +179,34 @@ class BaseRepository(Generic[T]):
         if size < 1:
             raise ValueError("size must be greater than or equal to 1")
 
-        query = select(self.model).filter_by(**filters)
+        list_query = query if query is not None else ListQuery()
+        where_clauses = list_query.build_where_clauses(
+            self.model, self.searchable_fields
+        )
+        order_by = list_query.build_order_by(
+            self.model, self.sortable_fields, self.default_order_by
+        )
+
+        statement = select(self.model).filter_by(**filters)
+        for clause in where_clauses:
+            statement = statement.where(clause)
         if eager:
-            query = query.options(*eager)
-        query = self._apply_default_ordering(query)
+            statement = statement.options(*eager)
+        statement = statement.order_by(*order_by)
+        statement = statement.offset((page - 1) * size).limit(size)
 
-        offset = (page - 1) * size
-        query = query.offset(offset).limit(size)
-
-        result = await session.execute(query)
+        result = await session.execute(statement)
         items = list(result.unique().scalars().all())
 
-        count_query = select(func.count()).select_from(self.model).filter_by(**filters)
-        total_result = await session.execute(count_query)
-        total = int(total_result.scalar_one())
+        # The count must carry the same predicates as the selection, or `total`
+        # and `items` describe different result sets. Eager options are left out:
+        # they add joins a count does not need.
+        count_statement = (
+            select(func.count()).select_from(self.model).filter_by(**filters)
+        )
+        for clause in where_clauses:
+            count_statement = count_statement.where(clause)
+        total = int((await session.execute(count_statement)).scalar_one())
 
         return items, total
 
@@ -269,75 +285,6 @@ class BaseRepository(Generic[T]):
                 await session.rollback()
             raise
 
-    def _apply_search_filter(
-        self,
-        query: Any,
-        search: str | None = None,
-        fields: Sequence[str | Any] | None = None,
-    ) -> Any:
-        """Apply literal substring search without treating user input as LIKE syntax."""
-        if not search or not fields:
-            return query
-
-        escaped_search = self._escape_like_literal(search)
-        search_query_list = []
-
-        for field in fields:
-            if isinstance(field, str) and hasattr(self.model, field):
-                search_query_list.append(
-                    getattr(self.model, field).ilike(
-                        f"%{escaped_search}%",
-                        escape="\\",
-                    )
-                )
-            elif hasattr(field, "ilike"):
-                search_query_list.append(
-                    field.ilike(
-                        f"%{escaped_search}%",
-                        escape="\\",
-                    )
-                )
-
-        if search_query_list:
-            query = query.where(or_(*search_query_list))
-
-        return query
-
-    def _apply_date_filter(
-        self,
-        query: Any,
-        from_date: datetime | None = None,
-        to_date: datetime | None = None,
-        field: str = "created_at",
-    ) -> Any:
-        """
-        Apply an inclusive date filter on a datetime column.
-        - If only from_date is provided: col >= from_date
-        - If only to_date is provided:   col <= to_date
-        - If both are provided:          from_date <= col <= to_date
-        Notes:
-          * If from_date > to_date, the bounds are swapped.
-          * If the model does not have `field`, the query is returned unchanged.
-        """
-        if not hasattr(self.model, field):
-            return query
-
-        if from_date is None and to_date is None:
-            return query
-
-        col = getattr(self.model, field)
-
-        if from_date is not None and to_date is not None:
-            if from_date > to_date:
-                from_date, to_date = to_date, from_date
-            return query.where(col >= from_date).where(col <= to_date)
-
-        if from_date is not None:
-            return query.where(col >= from_date)
-
-        # only to_date is not None
-        return query.where(col <= to_date)
-
     @staticmethod
     def _ensure_filters_present(filters: dict[str, Any]) -> None:
         if not filters:
@@ -367,14 +314,6 @@ class BaseRepository(Generic[T]):
         if order == "asc":
             return query.order_by(order_by.asc())
         return query.order_by(order_by.desc())
-
-    @staticmethod
-    def _escape_like_literal(value: str, escape_char: str = "\\") -> str:
-        return (
-            value.replace(escape_char, escape_char * 2)
-            .replace("%", f"{escape_char}%")
-            .replace("_", f"{escape_char}_")
-        )
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):
@@ -422,13 +361,14 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         page: int,
         size: int,
         eager: EagerLoadSequence | None = None,
+        query: ListQuery | None = None,
         **filters: Any,
     ) -> tuple[list[T], int]:
         """Retrieve a list of records where is_deleted flag is False, using the filters,
         with pagination."""
         filters.setdefault("is_deleted", False)
         return await super().get_paginated_list(
-            session, page=page, size=size, eager=eager, **filters
+            session, page=page, size=size, eager=eager, query=query, **filters
         )
 
     async def count(
