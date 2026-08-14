@@ -20,6 +20,7 @@
 - On a push to `main` (never on a pull request) the `build-and-push` job builds `infra/docker/Dockerfile` and pushes it to GHCR as `sha-<12>` plus `latest`, with buildx layer caching and an `org.opencontainers.image.revision` label. The image is built here so a broken Dockerfile fails in CI, not halfway through a production deploy.
 
 ### CD (`.github/workflows/deploy.yml`)
+- Off until you opt in: the job is gated on the repository **variable** `DEPLOY_ENABLED=true` (a variable, not a secret — `secrets` cannot be read in a job-level `if`). Without it a fresh fork would fail a deploy against unset SSH secrets on every merge to `main`.
 - Runs after CI succeeds on a push to `main`, and pulls the exact `sha-` image that run produced — the box never builds.
 - On the server it checks out the deployed commit and runs `infra/deploy/deploy.sh` with `BUILD=0`: validate `.env`, pull the image, start Postgres/Redis, apply migrations, then roll `app`, `worker`, `scheduler` and restart nginx. A failed migration aborts the deploy with the previous containers still serving.
 - `concurrency: deploy` with `cancel-in-progress: false` — two merges never run two migrations at once.
@@ -40,6 +41,9 @@
 - If posting a "superseded" comment fails, the workflow still proceeds to close the superseded PR.
 
 ### Required Secrets
+CI and Release need none of these: both authenticate to GHCR with the automatic `GITHUB_TOKEN`. Everything below belongs to the CD path, and CD stays skipped until `DEPLOY_ENABLED` is set.
+
+- DEPLOY_ENABLED — repository *variable* (`Settings -> Secrets and variables -> Actions -> Variables`), set to `true` to arm CD.
 - SSH_PRIVATE_KEY, SERVER_IP, SSH_USER — server access.
 - SSH_KNOWN_HOSTS — output of `ssh-keyscan <server-ip>`, generated once by hand and verified against the host's own key.
 - GHCR_USER, GHCR_PULL_TOKEN — the server's pull credentials for GHCR (a classic PAT with `read:packages`). The package is private by default; make it public only if the application image may be world-readable.

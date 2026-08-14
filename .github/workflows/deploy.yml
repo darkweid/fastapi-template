@@ -15,8 +15,14 @@ env:
 jobs:
   deploy:
     name: Deploy
+    # DEPLOY_ENABLED is a repository variable, not a secret: the `secrets`
+    # context is unavailable in a job-level `if`. It is off by default so a
+    # fresh fork - and this template itself - does not fail a deploy against
+    # unset SSH secrets on every merge to main. Set it to `true` once the
+    # server secrets below are filled in.
     if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
+      ${{ vars.DEPLOY_ENABLED == 'true' &&
+          github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.event == 'push' &&
           github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
