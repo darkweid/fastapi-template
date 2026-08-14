@@ -16,9 +16,15 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 BUILD="${BUILD:-1}"
+APP_IMAGE_WAS_GIVEN="${APP_IMAGE:+yes}"
 # Consumed by infra/docker-compose.yml for app, worker, scheduler and the builder.
 APP_IMAGE="${APP_IMAGE:-template-app-image:latest}"
 export APP_IMAGE
+
+if [ "$BUILD" = "0" ] && [ -z "$APP_IMAGE_WAS_GIVEN" ]; then
+  echo "[deploy] BUILD=0 requires APP_IMAGE - the local fallback tag exists in no registry"
+  exit 1
+fi
 
 COMPOSE=(docker compose --env-file .env -f infra/docker-compose.yml)
 
@@ -27,6 +33,12 @@ test -f .env || {
   exit 1
 }
 python3 scripts/check_env.py
+
+# The database image stays box-local in both modes - CD ships application code,
+# never the database. It is rebuilt every deploy because `up` reuses an existing
+# tag, so a change to infra/postgres/ would otherwise never reach the server.
+echo "[deploy] building the postgres image"
+"${COMPOSE[@]}" build postgres
 
 if [ "$BUILD" = "1" ]; then
   echo "[deploy] building ${APP_IMAGE} on the box"
@@ -51,8 +63,12 @@ echo "[deploy] rolling the application containers"
 # leaves it serving 502 until it restarts.
 "${COMPOSE[@]}" restart nginx
 
-echo "[deploy] pruning superseded images"
-docker image prune -f
+# Every BUILD=0 deploy leaves a tagged sha- image behind, and plain
+# `image prune` only touches dangling ones, so the disk grows until a pull
+# fails. A week keeps enough recent tags to roll back to.
+echo "[deploy] pruning images and build cache unused for a week"
+docker image prune -af --filter "until=168h"
+docker builder prune -f --filter "until=168h"
 
 echo "[deploy] done"
 "${COMPOSE[@]}" ps

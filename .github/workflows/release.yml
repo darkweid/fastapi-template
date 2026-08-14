@@ -30,11 +30,9 @@ jobs:
         id: meta
         run: |
           image_lower="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
-          short_sha="$(echo "${{ github.sha }}" | cut -c1-12)"
           {
             echo "image=${image_lower}"
             echo "version=${{ github.ref_name }}"
-            echo "sha_tag=sha-${short_sha}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
@@ -47,9 +45,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The sha tag is pushed again on purpose: a tag may point at a commit CI
-      # never built (a tag on a branch, a re-tag), and the release must not
-      # depend on that image already existing.
+      # Only the version tag is pushed. Re-pushing sha-<12> would move a tag CI
+      # already published and CD may have deployed, so the same tag would stop
+      # meaning the same image. The revision label keeps the commit traceable.
       - name: Build and push the release image
         uses: docker/build-push-action@v7
         with:
@@ -57,9 +55,7 @@ jobs:
           file: infra/docker/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}

@@ -53,7 +53,7 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
           chmod 600 ~/.ssh/id_deploy_key
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" | tr -d '\r' > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Deploy over SSH
@@ -71,6 +71,9 @@ jobs:
           git fetch --quiet origin main
           git checkout --quiet ${{ github.event.workflow_run.head_sha }}
           echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
+          # The token would otherwise sit base64-encoded in ~/.docker/config.json
+          # on the box until the next deploy overwrites it.
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
           BUILD=0 APP_IMAGE="${IMAGE}:${TAG}" bash infra/deploy/deploy.sh
           EOF
 
@@ -78,7 +81,8 @@ jobs:
       - name: Telegram notification
         if: always()
         run: |
-          set -euo pipefail
+          # No `set -e` here: this step must still reach curl when an earlier
+          # step failed, which is the case the alert exists for.
           sanitize_html() {
             echo "$1" \
               | sed 's/&/\&amp;/g' \
@@ -95,7 +99,7 @@ jobs:
           fi
 
           END_TS=$(date +%s)
-          DURATION=$((END_TS - JOB_START_TS))
+          DURATION=$((END_TS - ${JOB_START_TS:-END_TS}))
 
           if [ "$DURATION" -gt 60 ]; then
             DURATION_HUMAN="$((DURATION / 60)) min $((DURATION % 60)) sec"
@@ -103,8 +107,8 @@ jobs:
             DURATION_HUMAN="${DURATION} sec"
           fi
 
-          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
-          AUTHOR=$(git log -1 --pretty=format:'%an')
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s' 2>/dev/null || echo 'unknown')
+          AUTHOR=$(git log -1 --pretty=format:'%an' 2>/dev/null || echo 'unknown')
           PROJECT=$(sanitize_html "${{ github.repository }}")
           PIPELINE_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 

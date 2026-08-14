@@ -27,7 +27,7 @@
 - Notifications: Telegram with status, duration, pipeline link.
 
 ### Release (`.github/workflows/release.yml`)
-- Pushing a `vX.Y.Z` tag builds the image again, pushes it as `vX.Y.Z` (plus its `sha-` tag) and opens a GitHub Release with generated notes.
+- Pushing a `vX.Y.Z` tag builds the image again, pushes it as `vX.Y.Z` only — the `sha-` tag CI published stays immutable — and opens a GitHub Release with generated notes.
 - Releases publish images only. Deployment still follows `main`; to run a release image, deploy it explicitly with `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:vX.Y.Z`.
 
 ### Pre-commit Autoupdate (`.github/workflows/pre-commit-autoupdate.yml`)
