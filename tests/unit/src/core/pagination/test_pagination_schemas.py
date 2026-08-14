@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Annotated, Any
 
+from fastapi import FastAPI, Query
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 
@@ -105,3 +108,62 @@ def test_list_query_params_reject_overlong_search() -> None:
 def test_list_query_params_reject_unknown_order_direction() -> None:
     with pytest.raises(ValidationError):
         ListQueryParams(order="sideways")
+
+
+def test_list_query_params_normalizes_blank_order_by_to_none() -> None:
+    # A front end that serialises its whole filter form emits `order_by=`
+    # when nothing is selected; `ListQuery` treats `None` as "use the
+    # default", so a blank string must not reach it as a literal `""`.
+    assert ListQueryParams(order_by="   ").to_list_query().order_by is None
+
+
+def test_list_query_params_normalizes_blank_search_to_none() -> None:
+    assert ListQueryParams(search="   ").to_list_query().search is None
+
+
+def test_list_query_params_binds_from_query_string() -> None:
+    # This is the documented router pattern (`architecture.md`):
+    # `Annotated[ListQueryParams, Query()]`. It is the one integration point
+    # where a Pydantic-model-as-query-params regression in a FastAPI bump
+    # would land silently, so it is worth pinning with a real `TestClient`
+    # instead of only constructing `ListQueryParams` directly.
+    app = FastAPI()
+
+    @app.get("/items")
+    def list_items(params: Annotated[ListQueryParams, Query()]) -> dict[str, Any]:
+        return params.model_dump(mode="json")
+
+    client = TestClient(app)
+
+    response = client.get(
+        "/items",
+        params={
+            "page": 2,
+            "size": 10,
+            "search": "anne",
+            "order_by": "name",
+            "order": "asc",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["page"] == 2
+    assert body["size"] == 10
+    assert body["search"] == "anne"
+    assert body["order_by"] == "name"
+    assert body["order"] == "asc"
+
+
+def test_list_query_params_rejects_unknown_query_parameter() -> None:
+    app = FastAPI()
+
+    @app.get("/items")
+    def list_items(params: Annotated[ListQueryParams, Query()]) -> dict[str, Any]:
+        return params.model_dump(mode="json")
+
+    client = TestClient(app)
+
+    response = client.get("/items", params={"utm_source": "newsletter"})
+
+    assert response.status_code == 422

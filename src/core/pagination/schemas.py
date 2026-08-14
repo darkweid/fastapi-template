@@ -3,7 +3,7 @@ from datetime import datetime
 from math import ceil
 from typing import Any, Generic, TypeVar, overload
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from src.core.database.filters import FilterCondition
 from src.core.database.query import ListQuery, SortOrder
@@ -40,6 +40,22 @@ class ListQueryParams(PaginationParams):
     order: SortOrder = "desc"
     date_from: datetime | None = None
     date_to: datetime | None = None
+
+    @field_validator("search", "order_by", mode="after")
+    @classmethod
+    def _blank_to_none(cls, value: str | None) -> str | None:
+        """Normalise a blank/whitespace-only value to `None`.
+
+        `ListQuery` treats `None` as "use the default" for both fields; a
+        client that serialises its whole filter form on every request emits
+        `search=` and `order_by=` when nothing is selected, and those must
+        not reach `ListQuery` as literal empty strings (`order_by=""` fails
+        the sortable-fields allowlist and 400s).
+        """
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
     def to_list_query(
         self,
