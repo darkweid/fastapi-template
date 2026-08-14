@@ -7,6 +7,12 @@ from typing import Any
 
 import redis.exceptions as redis_exc
 
+from src.core.cache.redis_scripts import (
+    CACHE_DELETE_SCRIPT,
+    CACHE_GET_SCRIPT,
+    CACHE_INVALIDATE_SCRIPT,
+    CACHE_SET_SCRIPT,
+)
 from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 
@@ -37,12 +43,17 @@ class InMemoryRedis:
         # request actually consumed.
         self.evalsha_keys: list[str] = []
         self.closed = False
+        self.cache_eval_calls = 0
+        self._failures = 0
 
     def set_evalsha_result(self, key: str, result: int) -> None:
         self._evalsha_overrides[key] = result
 
     def clear_evalsha_overrides(self) -> None:
         self._evalsha_overrides.clear()
+
+    def fail_next_commands(self, count: int = 1) -> None:
+        self._failures = count
 
     def _purge_expired(self, key: str) -> None:
         expires_at = self._expires.get(key)
@@ -110,7 +121,9 @@ class InMemoryRedis:
         expires_at = self._expires.get(key_norm)
         if expires_at is None:
             return -1
-        return max(0, int(expires_at - _now()))
+        # round(), not int(): truncation would report one second short whenever
+        # a fraction of a millisecond elapses between set() and this call.
+        return max(0, round(expires_at - _now()))
 
     async def scan(
         self,
@@ -156,10 +169,63 @@ class InMemoryRedis:
         script: str,
         numkeys: int,
         *keys_and_args: Any,
-    ) -> str:
-        if script.strip() == ROTATE_REFRESH_TOKEN_SCRIPT.strip():
+    ) -> Any:
+        if self._failures > 0:
+            self._failures -= 1
+            raise redis_exc.ConnectionError("fake redis down")
+
+        normalized = script.strip()
+        if normalized == ROTATE_REFRESH_TOKEN_SCRIPT.strip():
             return await self._eval_rotate_refresh_token(numkeys, *keys_and_args)
+        if normalized == CACHE_GET_SCRIPT.strip():
+            return await self._eval_cache_get(*keys_and_args)
+        if normalized == CACHE_SET_SCRIPT.strip():
+            return await self._eval_cache_set(*keys_and_args)
+        if normalized == CACHE_DELETE_SCRIPT.strip():
+            return await self._eval_cache_delete(*keys_and_args)
+        if normalized == CACHE_INVALIDATE_SCRIPT.strip():
+            return await self._eval_cache_invalidate(*keys_and_args)
         raise NotImplementedError("Script not supported in fake Redis.")
+
+    async def _cache_value_key(
+        self, version_counter: str, prefix_ns: str, suffix: str
+    ) -> str:
+        version = await self.get(version_counter) or "0"
+        return f"{prefix_ns}:v{version}:{suffix}"
+
+    async def _eval_cache_get(self, *args: Any) -> str | None:
+        self.cache_eval_calls += 1
+        key = await self._cache_value_key(
+            _normalize_key(args[0]),
+            _normalize_value(args[1]),
+            _normalize_value(args[2]),
+        )
+        return await self.get(key)
+
+    async def _eval_cache_set(self, *args: Any) -> int:
+        self.cache_eval_calls += 1
+        key = await self._cache_value_key(
+            _normalize_key(args[0]),
+            _normalize_value(args[1]),
+            _normalize_value(args[2]),
+        )
+        await self.setex(key, int(args[4]), _normalize_value(args[3]))
+        return 1
+
+    async def _eval_cache_delete(self, *args: Any) -> int:
+        key = await self._cache_value_key(
+            _normalize_key(args[0]),
+            _normalize_value(args[1]),
+            _normalize_value(args[2]),
+        )
+        return await self.delete(key)
+
+    async def _eval_cache_invalidate(self, *args: Any) -> int:
+        counter = _normalize_key(args[0])
+        version = int(await self.get(counter) or "0") + 1
+        await self.set(counter, str(version))
+        await self.expire(counter, int(args[1]))
+        return version
 
     async def _eval_rotate_refresh_token(
         self,
