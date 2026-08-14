@@ -4,10 +4,6 @@ import time
 
 import sentry_sdk
 
-from loggers import get_logger
-
-logger = get_logger(__name__)
-
 DEFAULT_COOLDOWN_MS = 5 * 60_000
 
 

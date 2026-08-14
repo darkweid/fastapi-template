@@ -52,4 +52,14 @@ class Cache(Protocol):
         *,
         ttl: int | None = None,
         model: type[T] | None = None,
-    ) -> T: ...
+    ) -> T:
+        """
+        Return the cached value, or run factory and store its result.
+
+        A stored `None` is indistinguishable from a miss here: a factory that
+        legitimately returns `None` (a lookup annotated `-> X | None` that found
+        nothing) runs on every call and rewrites `null` each time. Cache such a
+        lookup only if that repeated call is acceptable, or have it return a
+        sentinel value of its own instead of `None`.
+        """
+        ...

@@ -45,6 +45,7 @@ class InMemoryRedis:
         self.closed = False
         self.cache_eval_calls = 0
         self._failures = 0
+        self._failure_error: Exception = redis_exc.ConnectionError("fake redis down")
 
     def set_evalsha_result(self, key: str, result: int) -> None:
         self._evalsha_overrides[key] = result
@@ -52,8 +53,11 @@ class InMemoryRedis:
     def clear_evalsha_overrides(self) -> None:
         self._evalsha_overrides.clear()
 
-    def fail_next_commands(self, count: int = 1) -> None:
+    def fail_next_commands(
+        self, count: int = 1, *, error: Exception | None = None
+    ) -> None:
         self._failures = count
+        self._failure_error = error or redis_exc.ConnectionError("fake redis down")
 
     def _purge_expired(self, key: str) -> None:
         expires_at = self._expires.get(key)
@@ -172,7 +176,7 @@ class InMemoryRedis:
     ) -> Any:
         if self._failures > 0:
             self._failures -= 1
-            raise redis_exc.ConnectionError("fake redis down")
+            raise self._failure_error
 
         normalized = script.strip()
         if normalized == ROTATE_REFRESH_TOKEN_SCRIPT.strip():
