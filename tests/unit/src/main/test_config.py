@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from src.main import config as config_module
-from src.main.config import AppConfig, find_project_root_robust
+from src.main.config import AppConfig, CacheConfig, find_project_root_robust
 
 
 def _base_app_config_data() -> dict[str, object]:
@@ -83,6 +83,20 @@ def test_find_project_root_robust_finds_marker(
 
     assert result == root
     assert any("Project root found" in m for m in collected_logs)
+
+
+def test_cache_config_defaults() -> None:
+    cache_config = CacheConfig()
+
+    assert cache_config.CACHE_ENABLED is True
+    assert cache_config.CACHE_DEFAULT_TTL == 60
+    assert cache_config.CACHE_VERSION_TTL == 604800
+    assert cache_config.CACHE_KEY_PREFIX == "cache"
+
+
+def test_cache_config_rejects_default_ttl_above_version_ttl() -> None:
+    with pytest.raises(ValueError, match="CACHE_VERSION_TTL"):
+        CacheConfig(CACHE_DEFAULT_TTL=100, CACHE_VERSION_TTL=50)
 
 
 def test_find_project_root_robust_returns_start_when_missing(

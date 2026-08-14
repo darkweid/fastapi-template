@@ -107,6 +107,23 @@ class RedisConfig(BaseModel):
         )
 
 
+class CacheConfig(BaseModel):
+    CACHE_ENABLED: bool = True
+    CACHE_DEFAULT_TTL: int = Field(60, gt=0)
+    CACHE_VERSION_TTL: int = Field(604800, gt=0)
+    CACHE_KEY_PREFIX: str = "cache"
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_ttl_bounds(self) -> "CacheConfig":
+        # Values must die before their namespace version counter, otherwise an
+        # expired counter resets the version to 0 and resurrects stale values.
+        if self.CACHE_DEFAULT_TTL > self.CACHE_VERSION_TTL:
+            raise ValueError("CACHE_DEFAULT_TTL must not exceed CACHE_VERSION_TTL")
+        return self
+
+
 class SentryConfig(BaseModel):
     SENTRY_DSN: str | None = None
     SENTRY_ENV: str = "development"
@@ -264,6 +281,7 @@ class Config(BaseModel):
     s3: S3Config
     jwt: JWTConfig
     redis: RedisConfig
+    cache: CacheConfig
     sentry: SentryConfig
     cookie: CookieConfig
     postgres: PostgresConfig
@@ -296,6 +314,7 @@ def get_settings() -> Config:
         s3=S3Config(**merged_env),
         jwt=JWTConfig(**merged_env),
         redis=RedisConfig(**merged_env),
+        cache=CacheConfig(**merged_env),
         sentry=SentryConfig(**merged_env),
         cookie=CookieConfig(**merged_env),
         postgres=PostgresConfig(**merged_env),
