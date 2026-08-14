@@ -7,10 +7,10 @@ from typing import Annotated, ClassVar
 from fastapi import Request, Response
 from pydantic import Field
 import redis.exceptions as redisExc
-import sentry_sdk
 
 from loggers import get_logger
 from src.core.limiter import FastAPILimiter
+from src.core.redis.degradation import RedisDegradationReporter
 
 logger = get_logger(__name__)
 
@@ -33,13 +33,12 @@ class RateLimiter:
 
     _fallback_windows: ClassVar[dict[str, _InMemoryRateLimitWindow]] = {}
     _fallback_lock: ClassVar[Lock] = Lock()
-    _fallback_state_lock: ClassVar[Lock] = Lock()
-    _fallback_sentry_cooldown_ms: ClassVar[int] = 5 * 60_000
     _fallback_max_entries: ClassVar[int] = (
         100_000  # Around 20-25 MB max for a fallback state
     )
-    _redis_degraded_since_ms: ClassVar[int | None] = None
-    _last_redis_degraded_report_ms: ClassVar[int | None] = None
+    _degradation_reporter: ClassVar[RedisDegradationReporter] = (
+        RedisDegradationReporter("RateLimiter")
+    )
 
     def __init__(
         self,
@@ -114,59 +113,6 @@ class RateLimiter:
             return int(result)
 
     @classmethod
-    def _mark_redis_degraded(cls, now_ms: int) -> bool:
-        with cls._fallback_state_lock:
-            if cls._redis_degraded_since_ms is None:
-                cls._redis_degraded_since_ms = now_ms
-                cls._last_redis_degraded_report_ms = now_ms
-                return True
-
-            last_report_ms = cls._last_redis_degraded_report_ms
-            if (
-                last_report_ms is None
-                or now_ms - last_report_ms >= cls._fallback_sentry_cooldown_ms
-            ):
-                cls._last_redis_degraded_report_ms = now_ms
-                return True
-
-            return False
-
-    @classmethod
-    def _mark_redis_recovered(cls, now_ms: int) -> int | None:
-        with cls._fallback_state_lock:
-            degraded_since_ms = cls._redis_degraded_since_ms
-            if degraded_since_ms is None:
-                return None
-
-            cls._redis_degraded_since_ms = None
-            cls._last_redis_degraded_report_ms = None
-            return now_ms - degraded_since_ms
-
-    def _report_redis_fallback_to_sentry(
-        self, redis_error: redisExc.RedisError
-    ) -> None:
-        now_ms = _current_time_ms()
-        if not self._mark_redis_degraded(now_ms):
-            return
-
-        sentry_sdk.capture_message(
-            "[RateLimiter] Redis is unavailable. In-memory fallback limiter is active. "
-            f"Error: {type(redis_error).__name__}: {redis_error}",
-            level="error",
-        )
-
-    def _report_redis_recovery_to_sentry(self) -> None:
-        recovered_after_ms = self._mark_redis_recovered(_current_time_ms())
-        if recovered_after_ms is None:
-            return
-
-        sentry_sdk.capture_message(
-            "[RateLimiter] Redis limiter recovered. "
-            f"In-memory fallback limiter is no longer active. Downtime: {recovered_after_ms}ms.",
-            level="info",
-        )
-
-    @classmethod
     def _prune_expired_fallback_windows(cls, now_ms: int) -> None:
         expired_keys = [
             key
@@ -223,7 +169,7 @@ class RateLimiter:
             key,
             redis_error,
         )
-        self._report_redis_fallback_to_sentry(redis_error)
+        self._degradation_reporter.report_degraded(redis_error)
         try:
             return self._check_limit_in_memory(key)
         except Exception:
@@ -237,7 +183,7 @@ class RateLimiter:
     async def _check_limit(self, key: str) -> int:
         try:
             result = await self._eval_redis_limit(key)
-            self._report_redis_recovery_to_sentry()
+            self._degradation_reporter.report_recovered()
             return result
         except (redisExc.ConnectionError, redisExc.RedisError) as exc:
             return self._check_limit_with_fallback(key, exc)
