@@ -85,8 +85,10 @@ A client should expect and can rely on:
   computed and stored on this call.
 
 `PATCH /v1/users/me` invalidates the cached summary for the updated user as part of
-the same transaction, so a subsequent `GET` never observes stale data past that
-point.
+the same transaction, so a `GET` that starts after the `PATCH` has returned never
+observes the pre-update body. One race is left open on purpose: a `GET` that missed
+the cache *before* the `PATCH` and is still computing writes its already-stale body
+after the invalidation, and that value then serves for up to its TTL.
 
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)
