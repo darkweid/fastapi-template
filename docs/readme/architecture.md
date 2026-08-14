@@ -64,8 +64,8 @@ class ArticleRepository(SoftDeleteRepository[Article]):
     default_order_by = "created_at"
 ```
 
-- **Construction-time validation:** `BaseRepository.__init__` runs `_assert_list_query_fields()`, which checks that every declared column exists on `model` and that `searchable_fields` are text columns (`String`, not `Enum`). A misdeclared column raises when the repository is constructed, not when a request supplies a bad field — a developer-time error, not a client-triggered one.
-- **HTTP side:** endpoints declare `Annotated[ListQueryParams, Query()]` (`src/core/pagination/schemas.py`) and translate it with `params.to_list_query(date_field=..., conditions=...)` into a `ListQuery`. Both `date_field` and `conditions` are chosen by the server — the client only supplies `search`, `order_by`, `order`, `date_from`, `date_to`.
+- **Construction-time validation:** `BaseRepository.__init__` runs `_assert_list_query_fields()`, which checks that every declared `sortable_fields` / `default_order_by` attribute resolves to a real column (not a hybrid property or a relationship — neither is orderable, and both would otherwise pass and crash at query time instead) and that `searchable_fields` are text columns (`String`, not `Enum`). A misdeclared column raises when the repository is constructed, not when a request supplies a bad field — a developer-time error, not a client-triggered one.
+- **HTTP side:** endpoints declare `Annotated[ListQueryParams, Query()]` (`src/core/pagination/schemas.py`) and translate it with `params.to_list_query(date_field=..., conditions=...)` into a `ListQuery`. Both `date_field` and `conditions` are chosen by the server — the client only supplies `search`, `order_by`, `order`, `date_from`, `date_to`. `ListQueryParams` inherits `extra="forbid"`, so an unlisted query parameter (an analytics tag, a cache-buster, an ad-hoc filter) is rejected with 422 rather than silently ignored; a route that needs extra filters subclasses `ListQueryParams` instead of declaring them alongside it.
 
 ```python
 @router.get("/articles")
@@ -79,7 +79,7 @@ async def list_articles(
 The use case passes the resulting `ListQuery` straight to `get_paginated_list(session, page, size, query=list_query)`, which builds the `WHERE`/`ORDER BY` clauses and runs a matching `COUNT` for `total`.
 
 - **Errors:** a field outside the allowlist, `date_from` after `date_to`, a period requested against a column the model doesn't have, or a `search` term against a repository with no `searchable_fields`, all raise `FilteringError`, mapped to HTTP 400.
-- **Ordering:** `ListQuery.build_order_by` always appends the primary key after the requested sort column. Without that tiebreaker, limit/offset pagination over a non-unique sort column silently duplicates and skips rows between pages. Every ORDER BY clause — including the primary-key tiebreaker — is built with `nulls_last()`, so NULLs always sort last regardless of `asc`/`desc`, overriding PostgreSQL's own default.
+- **Ordering:** `ListQuery.build_order_by` always appends the primary key after the requested sort column. Without that tiebreaker, limit/offset pagination over a non-unique sort column silently duplicates and skips rows between pages. The requested/default sort column is built with `nulls_last()`, so NULLs always sort last regardless of `asc`/`desc`, overriding PostgreSQL's own default — this matters because that column may be nullable. The primary-key tiebreaker clause deliberately omits `nulls_last()`: a primary key is `NOT NULL`, so the modifier would only force a `Sort` node instead of letting a plain btree index serve deep-offset pages.
 - **Search performance:** `search` compiles to `ILIKE '%...%'`, which cannot use a plain btree index. On a large table, back it with `pg_trgm` (`CREATE EXTENSION pg_trgm` plus a GIN index with `gin_trgm_ops` on the searched columns) or full-text search.
 
 ### Advisory Transaction Locks
