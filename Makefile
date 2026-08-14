@@ -52,11 +52,13 @@ shell: ## Open a bash shell inside the app container
 ##@ Deploy
 
 .PHONY: deploy-prod
-deploy-prod: ## Build, swap the containers and migrate
-	$(MAKE) build
-	$(MAKE) down
-	$(MAKE) up
-	$(MAKE) migrate
+deploy-prod: ## Deploy on the box, building the image locally
+	bash infra/deploy/deploy.sh
+
+.PHONY: deploy-image
+deploy-image: ## Deploy a registry image: make deploy-image APP_IMAGE=ghcr.io/owner/repo:sha-abc123
+	@test -n "$(APP_IMAGE)" || { echo "APP_IMAGE is required"; exit 1; }
+	BUILD=0 APP_IMAGE=$(APP_IMAGE) bash infra/deploy/deploy.sh
 
 ##@ Cleanup
 

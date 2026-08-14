@@ -1,0 +1,117 @@
+name: Release
+
+# Tagging vX.Y.Z publishes a versioned image next to the sha- and latest- tags
+# CI pushes, and opens a GitHub Release with generated notes. Nothing deploys
+# from here: CD still follows main.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish image and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Compute image and tags
+        id: meta
+        run: |
+          image_lower="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(echo "${{ github.sha }}" | cut -c1-12)"
+          {
+            echo "image=${image_lower}"
+            echo "version=${{ github.ref_name }}"
+            echo "sha_tag=sha-${short_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Look for the image CI built for this commit
+        id: source
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          if docker buildx imagetools inspect "${IMAGE}:${SHA_TAG}" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No ${SHA_TAG} image - the tagged commit never went through CI on main. Building from source instead."
+          fi
+
+      # Build once, promote many: the release tag points at the exact image CI
+      # built and CD deployed. A rebuild would run the same code on newer base
+      # layers, so v1.2.0 would not be the artifact that was tested.
+      # `imagetools create` copies the manifest by digest inside the registry,
+      # so no layer is pulled or pushed. The version therefore lives in the tag
+      # and the release, not in an image label - changing a label would change
+      # the config blob, and with it the digest.
+      - name: Promote the CI-built image to the release tag
+        if: steps.source.outputs.found == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools create -t "${IMAGE}:${VERSION}" "${IMAGE}:${SHA_TAG}"
+
+      # Fallback only: a tag off main, or on a commit whose CI run predates the
+      # build job. Never re-pushes sha-<12>, which CI owns.
+      - name: Build the release image from source
+        if: steps.source.outputs.found != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PROMOTED: ${{ steps.source.outputs.found }}
+        run: |
+          set -euo pipefail
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          if [ "$PROMOTED" = "true" ]; then
+            origin="promoted from the image CI built for this commit"
+          else
+            origin="built from source: no CI image existed for this commit"
+          fi
+          notes="$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$VERSION" --jq .body)"
+          # shellcheck disable=SC2016  # the backticks are markdown, not a subshell
+          printf '%s\n\nImage: `%s:%s`\nDigest: `%s` (%s)\n' \
+            "$notes" "$IMAGE" "$VERSION" "$digest" "$origin" > release-notes.md
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --verify-tag \
+            --notes-file release-notes.md

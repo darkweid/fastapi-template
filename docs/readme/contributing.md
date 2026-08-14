@@ -17,10 +17,22 @@
 - `gitleaks` keeps history scanning enabled and relies on a narrow repo allowlist only for known example/test placeholders.
 - Security jobs are expected to fail on real findings, so dependency bumps should keep lockfiles current.
 
+- On a push to `main` (never on a pull request) the `build-and-push` job builds `infra/docker/Dockerfile` and pushes it to GHCR as `sha-<12>` plus `latest`, with buildx layer caching and an `org.opencontainers.image.revision` label. The image is built here so a broken Dockerfile fails in CI, not halfway through a production deploy.
+
 ### CD (`.github/workflows/deploy.yml`)
-- Deploys from `main` after successful CI.
-- Runs `check_env.py`, deploys via `make deploy-prod`, cleans resources, restarts nginx.
+- Off until you opt in: the job is gated on the repository **variable** `DEPLOY_ENABLED=true` (a variable, not a secret — `secrets` cannot be read in a job-level `if`). Without it a fresh fork would fail a deploy against unset SSH secrets on every merge to `main`.
+- Runs after CI succeeds on a push to `main`, and pulls the exact `sha-` image that run produced — the box never builds.
+- On the server it checks out the deployed commit and runs `infra/deploy/deploy.sh` with `BUILD=0`: validate `.env`, pull the image, start Postgres/Redis, apply migrations, then roll `app`, `worker`, `scheduler` and restart nginx. A failed migration aborts the deploy with the previous containers still serving.
+- `concurrency: deploy` with `cancel-in-progress: false` — two merges never run two migrations at once.
+- SSH host keys come from the `SSH_KNOWN_HOSTS` secret; the pipeline does not keyscan at runtime and does not disable host key checking.
 - Notifications: Telegram with status, duration, pipeline link.
+
+### Release (`.github/workflows/release.yml`)
+- Pushing a `vX.Y.Z` tag publishes the image under that tag and opens a GitHub Release with generated notes, the image digest and where the image came from.
+- Build once, promote many: the release does **not** rebuild. `docker buildx imagetools create` copies the `sha-<12>` image CI already built for that commit onto the `vX.Y.Z` tag, by digest and inside the registry, so `vX.Y.Z` is bit-for-bit the artifact CI tested and CD deployed. A rebuild would run the same code on whatever base layers exist today.
+- Because the digest is preserved, the version lives in the tag and the release, not in an image label — rewriting a label would change the config blob and therefore the digest.
+- Tag a commit on `main` that passed CI. A tag off a branch (or predating the build job) has no `sha-` image; the workflow then falls back to building from source and says so in the release notes. It never re-pushes `sha-<12>`, which CI owns.
+- Releases publish images only. Deployment still follows `main`; to run a release image, deploy it explicitly with `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:vX.Y.Z`.
 
 ### Pre-commit Autoupdate (`.github/workflows/pre-commit-autoupdate.yml`)
 - Runs weekly (Monday, `06:20 UTC`) and can be triggered manually (`workflow_dispatch`).
@@ -32,7 +44,12 @@
 - If posting a "superseded" comment fails, the workflow still proceeds to close the superseded PR.
 
 ### Required Secrets
+CI and Release need none of these: both authenticate to GHCR with the automatic `GITHUB_TOKEN`. Everything below belongs to the CD path, and CD stays skipped until `DEPLOY_ENABLED` is set.
+
+- DEPLOY_ENABLED — repository *variable* (`Settings -> Secrets and variables -> Actions -> Variables`), set to `true` to arm CD.
 - SSH_PRIVATE_KEY, SERVER_IP, SSH_USER — server access.
+- SSH_KNOWN_HOSTS — output of `ssh-keyscan <server-ip>`, generated once by hand and verified against the host's own key.
+- GHCR_USER, GHCR_PULL_TOKEN — the server's pull credentials for GHCR (a classic PAT with `read:packages`). The package is private by default; make it public only if the application image may be world-readable.
 - ALERT_BOT_TOKEN, ALERT_CHAT_ID — Telegram notifications.
 - PRECOMMIT_BOT_TOKEN (optional but recommended) — token for creating autoupdate PRs so downstream workflows can run reliably.
 - Production `.env` must exist on the target server.

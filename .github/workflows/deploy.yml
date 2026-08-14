@@ -1,12 +1,12 @@
 name: CD
 
-# This workflow is triggered after the CI workflow completes successfully
+# Runs after CI succeeds on main, then deploys the image CI already built and
+# pushed to GHCR - the box never builds on the CD path.
 on:
   workflow_run:
-    workflows: [ "CI" ]
+    workflows: ["CI"]
     types:
       - completed
-
 
 env:
   # Deployment directory on the target server - adjust as needed for your environment
@@ -14,53 +14,81 @@ env:
 
 jobs:
   deploy:
-    name: Build & Deploy
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    name: Deploy
+    # DEPLOY_ENABLED is a repository variable, not a secret: the `secrets`
+    # context is unavailable in a job-level `if`. It is off by default so a
+    # fresh fork - and this template itself - does not fail a deploy against
+    # unset SSH secrets on every merge to main. Set it to `true` once the
+    # server secrets below are filled in.
+    if: >-
+      ${{ vars.DEPLOY_ENABLED == 'true' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Never cancelled and never parallel: two merges must not run two migrations
+    # against the same database at once.
     concurrency:
       group: deploy
       cancel-in-progress: false
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v7
+      - name: Capture job start time
+        run: echo "JOB_START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
-      # Set up SSH for secure connection to the deployment server
-      - name: Set up SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
-          chmod 600 ~/.ssh/id_deploy_key
-          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
-
-      # Deploy the application to the target server
-      - name: SSH deploy
-        id: deploy
-        run: |
-          ssh -i ~/.ssh/id_deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} "\
-              cd $APP_DIR && \
-              git pull origin main && \
-              python3 scripts/check_env.py || { echo '❌ Environment file validation failed!'; exit 1; } && \
-              make deploy-prod && \
-              make clean-resources"
-
-      - name: Restart Nginx
-        if: steps.deploy.outcome == 'success'
-        run: |
-          ssh -i ~/.ssh/id_deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} "docker restart template-nginx"
-
-      # Check out the exact commit that triggered this workflow
-      - name: Checkout correct commit
+      # The exact commit CI built, so the notification and the image agree.
+      - name: Checkout the deployed commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_commit.id }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Compute image and tag
+        id: meta
+        run: |
+          image_lower="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-12)"
+          echo "image=${image_lower}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      # known_hosts comes from a secret (`ssh-keyscan <host>` once, by hand):
+      # keyscanning inside the job would trust whatever answers, which is the
+      # same hole as StrictHostKeyChecking=no.
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
+          chmod 600 ~/.ssh/id_deploy_key
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        id: deploy
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          # shellcheck disable=SC2087  # the heredoc expands here on purpose: the
+          # image tag and the secrets come from this runner, not from the server.
+          ssh -i ~/.ssh/id_deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" bash -s <<EOF
+          set -euo pipefail
+          cd "${{ env.APP_DIR }}"
+          git fetch --quiet origin main
+          git checkout --quiet ${{ github.event.workflow_run.head_sha }}
+          echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
+          # The token would otherwise sit base64-encoded in ~/.docker/config.json
+          # on the box until the next deploy overwrites it.
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          BUILD=0 APP_IMAGE="${IMAGE}:${TAG}" bash infra/deploy/deploy.sh
+          EOF
 
       # Send deployment status notification to Telegram
       - name: Telegram notification
         if: always()
         run: |
+          # No `set -e` here: this step must still reach curl when an earlier
+          # step failed, which is the case the alert exists for.
           sanitize_html() {
             echo "$1" \
               | sed 's/&/\&amp;/g' \
@@ -76,26 +104,26 @@ jobs:
             STATUS="❌ <b>FAILED</b>"
           fi
 
-          START_TS=$(git log -1 --pretty=format:'%ct')
           END_TS=$(date +%s)
-          DURATION=$((END_TS - START_TS))
+          DURATION=$((END_TS - ${JOB_START_TS:-END_TS}))
 
           if [ "$DURATION" -gt 60 ]; then
-            DURATION_HUMAN="$(($DURATION / 60)) min $(($DURATION % 60)) sec"
+            DURATION_HUMAN="$((DURATION / 60)) min $((DURATION % 60)) sec"
           else
             DURATION_HUMAN="${DURATION} sec"
           fi
 
-          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
-          AUTHOR=$(git log -1 --pretty=format:'%an')
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s' 2>/dev/null || echo 'unknown')
+          AUTHOR=$(git log -1 --pretty=format:'%an' 2>/dev/null || echo 'unknown')
           PROJECT=$(sanitize_html "${{ github.repository }}")
           PIPELINE_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           MESSAGE="${STATUS}
           🚀 <b>Project</b>: ${PROJECT}
-          🔖 <b>Version</b>: <code>${{ github.sha }}</code>
+          🔖 <b>Version</b>: <code>${{ github.event.workflow_run.head_sha }}</code>
           👤 <b>Author</b>: ${AUTHOR}
           ⏱️ <b>Duration</b>: ${DURATION_HUMAN}
+          ♻️ <b>Attempt</b>: ${GITHUB_RUN_ATTEMPT}
           🔗 <b>Pipeline</b>: <a href=\"${PIPELINE_URL}\">Open</a>
           📝 <b>Commit</b>: ${COMMIT_MSG}"
 

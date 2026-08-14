@@ -3,12 +3,15 @@
 
 name: fastapi-template
 services:
+  # APP_IMAGE lets a deploy run the image CI pushed to the registry instead of
+  # building on the box (infra/deploy/deploy.sh, BUILD=0). Unset, every service
+  # falls back to the locally built tag, so the plain `make run` path is unchanged.
   app-builder:
     container_name: template-app-builder
     build:
       context: ..
       dockerfile: infra/docker/Dockerfile
-    image: template-app-image:latest
+    image: ${APP_IMAGE:-template-app-image:latest}
     networks:
       - app-network
 
@@ -44,7 +47,7 @@ services:
 
   app:
     container_name: template-app
-    image: template-app-image:latest
+    image: ${APP_IMAGE:-template-app-image:latest}
     env_file: ../.env
     command: gunicorn -k uvicorn_worker.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
     restart: unless-stopped
@@ -71,7 +74,7 @@ services:
 
   worker:
     container_name: template-worker
-    image: template-app-image:latest
+    image: ${APP_IMAGE:-template-app-image:latest}
     env_file: ../.env
     # --max-async-tasks 20 is mirrored by tasks_engine pool_size+max_overflow
     # in src/core/database/engine.py - change both together.
@@ -105,7 +108,7 @@ services:
   # N schedulers fire every cron N times.
   scheduler:
     container_name: template-scheduler
-    image: template-app-image:latest
+    image: ${APP_IMAGE:-template-app-image:latest}
     env_file: ../.env
     command: taskiq scheduler taskiq_worker.scheduler:scheduler
     restart: unless-stopped
