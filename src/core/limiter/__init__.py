@@ -7,7 +7,6 @@ import redis.asyncio as aredis
 from loggers import get_logger
 from src.core.errors.exceptions import TooManyRequestsException
 from src.core.limiter.script import lua_script
-from src.main.config import config
 
 logger = get_logger(__name__)
 
@@ -15,15 +14,13 @@ logger = get_logger(__name__)
 async def default_identifier(request: Request) -> str:
     """
     Creates a rate-limiting key based on the IP address and request path.
+
+    Reads the peer address only. `TrustedProxyHeadersMiddleware` has already
+    resolved `X-Forwarded-For` against `TRUST_PROXY_HOSTS`; reading the header
+    here again would take the attacker-controlled left edge of the chain and
+    hand out a fresh limit bucket per request.
     """
-    if config.app.TRUST_PROXY_HEADERS:
-        x_forwarded_for = request.headers.get("X-Forwarded-For")
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(",")[0].strip()
-        else:
-            ip = request.client.host if request.client else "unknown"
-    else:
-        ip = request.client.host if request.client else "unknown"
+    ip = request.client.host if request.client else "unknown"
 
     return f"{ip}:{request.scope['path']}"
 

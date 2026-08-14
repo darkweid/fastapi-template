@@ -56,6 +56,14 @@ def _is_trusted_host(
     return any(ip in network for network in networks)
 
 
+def _is_ip_address(value: str) -> bool:
+    try:
+        ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _get_header_value(
     headers: Sequence[tuple[bytes, bytes]], name: bytes
 ) -> str | None:
@@ -66,6 +74,14 @@ def _get_header_value(
 
 
 class TrustedProxyHeadersMiddleware:
+    """
+    Single source of truth for what the client address and scheme really are.
+
+    Everything downstream — the rate limiter above all — reads `scope["client"]`
+    and trusts it, so the forwarded chain is resolved exactly once, here, and
+    only for a request that arrived from a proxy listed in `TRUST_PROXY_HOSTS`.
+    """
+
     def __init__(self, app: ASGIApp, trusted_hosts: list[str]) -> None:
         self.app = app
         self._trust_all, self._trusted_networks, self._trusted_literals = (
@@ -77,14 +93,8 @@ class TrustedProxyHeadersMiddleware:
             await self.app(scope, receive, send)
             return
 
-        client = scope.get("client")
-        client_host = client[0] if client else None
-        if client_host and _is_trusted_host(
-            client_host,
-            trust_all=self._trust_all,
-            networks=self._trusted_networks,
-            literals=self._trusted_literals,
-        ):
+        client: tuple[str, int] | None = scope.get("client")
+        if client and self._is_trusted(client[0]):
             headers = scope.get("headers") or []
             forwarded_proto = _get_header_value(headers, b"x-forwarded-proto")
             if forwarded_proto:
@@ -92,4 +102,42 @@ class TrustedProxyHeadersMiddleware:
                 if scheme:
                     scope["scheme"] = scheme
 
+            forwarded_for = _get_header_value(headers, b"x-forwarded-for")
+            if forwarded_for:
+                resolved = self._resolve_client_host(forwarded_for)
+                if resolved:
+                    scope["client"] = (resolved, client[1])
+
         await self.app(scope, receive, send)
+
+    def _is_trusted(self, host: str) -> bool:
+        return _is_trusted_host(
+            host,
+            trust_all=self._trust_all,
+            networks=self._trusted_networks,
+            literals=self._trusted_literals,
+        )
+
+    def _resolve_client_host(self, forwarded_for: str) -> str | None:
+        """
+        Walk the forwarded chain right to left, dropping trusted hops.
+
+        The rightmost entry is the one our own proxy appended, so it is the only
+        end of the chain a client cannot write. Anything left of the first
+        untrusted hop is attacker-controlled and must never be read. Returns
+        None when the chain yields no usable address, which leaves the direct
+        peer in place — a shared bucket is a safe failure, a forged one is not.
+        """
+        hops = [hop.strip() for hop in forwarded_for.split(",")]
+        hops = [hop for hop in hops if hop]
+        if not hops:
+            return None
+
+        for hop in reversed(hops):
+            if self._is_trusted(hop):
+                continue
+            return hop if _is_ip_address(hop) else None
+
+        # Every hop is trusted: the client itself sits inside the trusted range.
+        leftmost = hops[0]
+        return leftmost if _is_ip_address(leftmost) else None
