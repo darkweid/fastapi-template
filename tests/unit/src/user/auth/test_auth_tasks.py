@@ -134,6 +134,33 @@ async def test_send_reset_password_email_cleans_up_token_and_throttle_on_failure
     assert await fake_redis.exists("throttle:key") == 0
 
 
+@pytest.mark.asyncio
+async def test_send_verification_email_releases_throttle_when_token_creation_fails(
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Token issuance failing (e.g. transient Redis error) must release the
+    throttle key exactly like a send failure, or resends stay locked out."""
+    mock_mailer = MockMailer()
+    monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mock_mailer))
+    monkeypatch.setattr(
+        "src.user.auth.tasks.create_verification_token",
+        AsyncMock(side_effect=RuntimeError("token issuance failed")),
+    )
+    await fake_redis.set("throttle:key", "1", ex=60)
+
+    with pytest.raises(RuntimeError, match="token issuance failed"):
+        await send_verification_email_task(
+            "user@example.com",
+            "John Doe",
+            throttle_key="throttle:key",
+            redis_client=fake_redis,
+        )
+
+    assert await fake_redis.exists("throttle:key") == 0
+    assert len(mock_mailer.sent_template_emails) == 0
+
+
 def test_auth_task_registration() -> None:
     assert send_verification_email_task.task_name == "send_verification_email"
     assert send_verification_email_task.labels["retry_on_error"] is True
