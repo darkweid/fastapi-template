@@ -20,8 +20,8 @@ from src.user.auth.dependencies import (
     get_current_user,
     get_user_id_from_token,
 )
-from src.user.auth.permissions.checker import require_permission
 from src.user.auth.permissions.enum import Permission
+from src.user.auth.permissions.ownership import require_self_or_permission
 from src.user.auth.routers import router as auth_router
 from src.user.auth.schemas import UserNewPassword
 from src.user.auth.token_transport import TokenTransport, get_token_transport
@@ -73,11 +73,10 @@ async def get_user_info_by_id(
     user_id: UUID,
     request: Request,
     response: Response,
-    # Permission check: this dependency ensures the caller has the VIEW_USERS permission.
-    # In most real-world cases you'll also want a domain-specific checker - for example,
-    # verifying that the requested user belongs to the same company/group as the requester.
-    # Implement such logic as a separate dependency (custom checker) and compose it here.
-    current_user: Annotated[User, Depends(require_permission(Permission.VIEW_USERS))],
+    current_user: Annotated[
+        User,
+        Depends(require_self_or_permission("user_id", Permission.VIEW_USERS)),
+    ],
     user_service: Annotated[UserService, Depends(get_user_service)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserSummaryViewModel:
