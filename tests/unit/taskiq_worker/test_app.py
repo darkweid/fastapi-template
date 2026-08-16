@@ -43,7 +43,11 @@ def test_app_registers_every_task() -> None:
     )
     assert result.returncode == 0, result.stderr
 
-    registered_tasks = set(json.loads(result.stdout))
+    # loggers.get_logger writes to stdout by design (containers own log
+    # shipping), so any import-time log line lands ahead of the JSON payload;
+    # the payload is always the script's last printed line.
+    json_line = result.stdout.strip().splitlines()[-1]
+    registered_tasks = set(json.loads(json_line))
     assert EXPECTED_TASKS <= registered_tasks
 
 

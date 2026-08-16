@@ -86,9 +86,10 @@ class ResetPasswordConfirmUseCase:
                     expected_mode="reset_password_token",
                 )
 
+                new_password_hash = await hash_password(data.password)
                 user = await uow.users.update(
                     uow.session,
-                    {"password_hash": hash_password(data.password)},
+                    {"password_hash": new_password_hash},
                     email=normalized_email,
                 )
                 if not user:

@@ -1,9 +1,9 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-import logging
 
 from fastapi import FastAPI
 
+from loggers import get_logger
 from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
 from src.core.limiter.lifecycle import on_limiter_shutdown, on_limiter_startup
 from src.core.redis.lifecycle import on_redis_shutdown, on_redis_startup
@@ -11,7 +11,7 @@ from src.main.config import config
 from src.main.sentry import init_sentry
 from taskiq_worker.broker import broker
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
