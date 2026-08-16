@@ -375,6 +375,28 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
 
 
 @pytest.mark.asyncio
+async def test_reset_password_request_skips_if_throttled(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user()
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    notifier = FakeResetPasswordNotifier()
+    notifier.send_password_reset_email.side_effect = InstanceProcessingException(
+        "throttled"
+    )
+    use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
+
+    data = SendResetPasswordRequestModel(email=user.email)
+    result = await use_case.execute(data=data)
+
+    assert result == SuccessResponse(success=True)
+    notifier.send_password_reset_email.assert_awaited_once()
+    assert notifier.send_password_reset_email.await_args.kwargs["uow"] is uow
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_reset_password_request_user_not_found(
     fake_session: FakeAsyncSession,
 ) -> None:

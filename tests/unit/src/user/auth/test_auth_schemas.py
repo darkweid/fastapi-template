@@ -1,7 +1,40 @@
 from pydantic import ValidationError
 import pytest
 
-from src.user.auth.schemas import UserNewPassword
+from src.user.auth.schemas import CreateUserModel, UserNewPassword
+from src.user.schemas import UserProfileUpdateModel
+
+VALID_USER_KWARGS = dict(
+    email="user@example.com",
+    username="john.doe",
+    phone_number="+12025550179",
+    password="Str0ng!Passw0rd",
+)
+
+
+@pytest.mark.parametrize("name", ["John", "Anne-Marie", "O'Brien", "John Smith"])
+def test_create_user_accepts_real_names(name: str) -> None:
+    model = CreateUserModel(first_name=name, last_name=name, **VALID_USER_KWARGS)
+    assert model.first_name == name
+
+
+@pytest.mark.parametrize(
+    "name", ["Ivan42", "-John", "John--Smith", "John  Smith", "J", "John "]
+)
+def test_create_user_rejects_malformed_names(name: str) -> None:
+    with pytest.raises(ValidationError):
+        CreateUserModel(first_name=name, last_name="Doe", **VALID_USER_KWARGS)
+
+
+@pytest.mark.parametrize("name", ["Anne-Marie", "O'Brien"])
+def test_profile_update_accepts_real_names(name: str) -> None:
+    assert UserProfileUpdateModel(first_name=name).first_name == name
+
+
+@pytest.mark.parametrize("name", ["Ivan42", "John--Smith"])
+def test_profile_update_rejects_malformed_names(name: str) -> None:
+    with pytest.raises(ValidationError):
+        UserProfileUpdateModel(first_name=name)
 
 
 def test_user_new_password_allows_printable_ascii_symbols_outside_old_whitelist() -> (

@@ -14,8 +14,8 @@ from src.core.validations import (
 
 
 class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Base):
-    first_name: str
-    last_name: str
+    first_name: str = Field(min_length=2, max_length=30)
+    last_name: str = Field(min_length=2, max_length=30)
     email: EmailStr
     username: str
     phone_number: str = Field(min_length=PHONE_NUMBER_MIN_LENGTH)
@@ -25,14 +25,20 @@ class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Ba
     @classmethod
     def validate_first_name(cls, value: str) -> str:
         if not FULL_NAME_PATTERN.match(value):
-            raise ValueError("First name must contain latin letters and spaces only")
+            raise ValueError(
+                "First name must contain latin letters, with single spaces, "
+                "hyphens or apostrophes between parts"
+            )
         return value
 
     @field_validator("last_name")
     @classmethod
     def validate_last_name(cls, value: str) -> str:
         if not FULL_NAME_PATTERN.match(value):
-            raise ValueError("Last name must contain latin letters and spaces only")
+            raise ValueError(
+                "Last name must contain latin letters, with single spaces, "
+                "hyphens or apostrophes between parts"
+            )
         return value
 
     @field_validator("phone_number")
