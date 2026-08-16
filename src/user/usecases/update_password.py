@@ -8,7 +8,7 @@ from loggers import get_logger
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
@@ -66,7 +66,7 @@ class UpdateUserPasswordUseCase:
 
     def __init__(
         self,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         redis_client: Redis,
         cache: Cache,
     ) -> None:
@@ -116,9 +116,7 @@ class UpdateUserPasswordUseCase:
 
 
 def get_update_user_password_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
     cache: Annotated[Cache, Depends(get_cache)],
 ) -> UpdateUserPasswordUseCase:

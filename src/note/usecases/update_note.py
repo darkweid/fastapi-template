@@ -5,7 +5,7 @@ from fastapi import Depends
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceNotFoundException
 from src.note.policies import ensure_note_access
 from src.note.schemas import NoteUpdateModel, NoteViewModel
@@ -50,7 +50,7 @@ class UpdateNoteUseCase:
     - NoteViewModel: the updated note.
     """
 
-    def __init__(self, uow: ApplicationUnitOfWork[RepositoryProtocol]) -> None:
+    def __init__(self, uow: ApplicationUnitOfWork) -> None:
         self.uow = uow
 
     async def execute(
@@ -85,8 +85,6 @@ class UpdateNoteUseCase:
 
 
 def get_update_note_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
 ) -> UpdateNoteUseCase:
     return UpdateNoteUseCase(uow=uow)

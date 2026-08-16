@@ -5,7 +5,7 @@ from fastapi import Depends
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.note.schemas import NoteCreateModel, NoteViewModel
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ class CreateNoteUseCase:
     - NoteViewModel: the created note.
     """
 
-    def __init__(self, uow: ApplicationUnitOfWork[RepositoryProtocol]) -> None:
+    def __init__(self, uow: ApplicationUnitOfWork) -> None:
         self.uow = uow
 
     async def execute(self, data: NoteCreateModel, owner_id: UUID) -> NoteViewModel:
@@ -53,8 +53,6 @@ class CreateNoteUseCase:
 
 
 def get_create_note_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
 ) -> CreateNoteUseCase:
     return CreateNoteUseCase(uow=uow)

@@ -8,7 +8,7 @@ from loggers import get_logger
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
@@ -64,7 +64,7 @@ class ResetPasswordConfirmUseCase:
 
     def __init__(
         self,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         redis_client: Redis,
         cache: Cache,
     ) -> None:
@@ -133,9 +133,7 @@ class ResetPasswordConfirmUseCase:
 
 
 def get_reset_password_confirm_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
     cache: Annotated[Cache, Depends(get_cache)],
 ) -> ResetPasswordConfirmUseCase:

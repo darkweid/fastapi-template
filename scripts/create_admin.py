@@ -16,7 +16,7 @@ from pydantic import EmailStr, ValidationError
 
 from loggers import get_logger
 from src.core.database.session import tasks_async_session
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.schemas import (
     Base,
     EmailNormalizationMixin,
@@ -52,7 +52,7 @@ class _AdminCredentialsModel(
 
 
 async def ensure_admin(
-    uow: ApplicationUnitOfWork[RepositoryProtocol],
+    uow: ApplicationUnitOfWork,
     *,
     email: str,
     password: str,
@@ -145,7 +145,7 @@ async def main() -> None:
     phone_number = os.environ.get("ADMIN_PHONE") or DEFAULT_PHONE_NUMBER
 
     async with tasks_async_session() as session:
-        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
         try:
             await ensure_admin(
                 uow,

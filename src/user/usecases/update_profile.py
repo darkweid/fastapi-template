@@ -7,7 +7,7 @@ from loggers import get_logger
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceNotFoundException
 from src.user.cache_keys import user_cache_keys
 from src.user.schemas import UserProfileUpdateModel, UserProfileViewModel
@@ -51,7 +51,7 @@ class UpdateUserProfileUseCase:
 
     def __init__(
         self,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         cache: Cache,
     ) -> None:
         self.uow = uow
@@ -76,9 +76,7 @@ class UpdateUserProfileUseCase:
 
 
 def get_update_user_profile_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
     cache: Annotated[Cache, Depends(get_cache)],
 ) -> UpdateUserProfileUseCase:
     return UpdateUserProfileUseCase(uow=uow, cache=cache)

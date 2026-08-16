@@ -5,7 +5,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database.engine import engine, tasks_engine
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol, get_uow
+from src.core.database.uow import ApplicationUnitOfWork, get_uow
 
 async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 tasks_async_session = async_sessionmaker(bind=tasks_engine, expire_on_commit=False)
@@ -18,7 +18,7 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
 
 async def get_unit_of_work(
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> AsyncGenerator[ApplicationUnitOfWork[RepositoryProtocol]]:
+) -> AsyncGenerator[ApplicationUnitOfWork]:
     """
     Dependency injection function that provides a Unit of Work instance.
 

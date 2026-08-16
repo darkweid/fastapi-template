@@ -7,7 +7,6 @@ and the commit are actually tied together.
 """
 
 from collections.abc import AsyncGenerator
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -17,7 +16,6 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from taskiq import InMemoryBroker
 
-from src.core.database.uow.abstract import RepositoryProtocol
 from src.core.database.uow.application import ApplicationUnitOfWork
 from src.core.outbox.dispatcher import TaskDispatcher
 from src.core.outbox.enums import OutboxMessageStatus
@@ -80,7 +78,7 @@ async def read_message(engine: AsyncEngine, message_id: UUID) -> OutboxMessage |
         return await OutboxRepository().get_single(session, id=message_id)
 
 
-async def enqueued_id(uow: ApplicationUnitOfWork[Any]) -> UUID:
+async def enqueued_id(uow: ApplicationUnitOfWork) -> UUID:
     """Id of the row the UoW's outbox repository just staged.
 
     The read flushes the staged INSERT, which is also what makes it visible to the
@@ -99,7 +97,7 @@ async def test_commit_persists_the_row_and_publishes_it(
     committed_message_ids: list[UUID],
 ) -> None:
     async with AsyncSession(integration_engine, expire_on_commit=False) as session:
-        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
         async with uow:
             await dispatcher.enqueue_transactional(uow, probe_task, "hello", flag=True)
             message_id = await enqueued_id(uow)
@@ -127,7 +125,7 @@ async def test_rollback_discards_the_row_and_publishes_nothing(
     publish_spy: AsyncMock,
 ) -> None:
     async with AsyncSession(integration_engine, expire_on_commit=False) as session:
-        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
         async with uow:
             await dispatcher.enqueue_transactional(uow, probe_task, "dropped")
             message_id = await enqueued_id(uow)
@@ -151,7 +149,7 @@ async def test_pending_row_is_the_sweeper_batch_after_a_failed_publish(
     publish_spy.side_effect = RuntimeError("broker unreachable")
 
     async with AsyncSession(integration_engine, expire_on_commit=False) as session:
-        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
         async with uow:
             await dispatcher.enqueue_transactional(uow, probe_task, "retry-me")
             message_id = await enqueued_id(uow)

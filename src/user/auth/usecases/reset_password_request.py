@@ -4,7 +4,7 @@ from fastapi import Depends
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import build_email_throttle_key, mask_email
@@ -47,7 +47,7 @@ class ResetPasswordRequestUseCase:
 
     def __init__(
         self,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         notifier: EmailNotifier,
     ) -> None:
         self.uow = uow
@@ -94,9 +94,7 @@ class ResetPasswordRequestUseCase:
 
 
 def get_reset_password_request_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
     notifier: Annotated[EmailNotifier, Depends(get_reset_password_notifier)],
 ) -> ResetPasswordRequestUseCase:
     return ResetPasswordRequestUseCase(uow=uow, notifier=notifier)

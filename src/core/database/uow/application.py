@@ -3,14 +3,13 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.repositories import BaseRepository
-from src.core.database.uow.abstract import R, RepositoryProtocol
 from src.core.database.uow.sqlalchemy import RepositoryInstance, SQLAlchemyUnitOfWork
 from src.core.outbox.repositories import OutboxRepository
 from src.note.repositories import NoteRepository
 from src.user.repositories import UserRepository
 
 
-class ApplicationUnitOfWork(SQLAlchemyUnitOfWork[R]):
+class ApplicationUnitOfWork(SQLAlchemyUnitOfWork):
     """
     Application-specific Unit of Work implementation.
 
@@ -71,7 +70,7 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork[R]):
     # Add more repository properties as needed
 
 
-async def get_uow(session: AsyncSession) -> ApplicationUnitOfWork[RepositoryProtocol]:
+async def get_uow(session: AsyncSession) -> ApplicationUnitOfWork:
     """
     Dependency injection function to get an ApplicationUnitOfWork instance.
     This DI assumes the AsyncSession has already been created and is injected here.
