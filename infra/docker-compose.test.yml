@@ -15,13 +15,15 @@
 # not use this file at all (its Postgres is a GitHub Actions `services:` container).
 #
 # The image is built from infra/postgres/Dockerfile — the same definition the dev stack uses —
-# so extensions and server settings match what the application really runs against.
+# so extensions and server settings match what the application really runs against. It carries
+# its own tag, though: sharing `template-postgres:18` would let a build from either stack
+# silently replace the image the other one is about to start.
 services:
   postgres:
     build:
       context: ..
       dockerfile: infra/postgres/Dockerfile
-    image: template-postgres:18
+    image: template-postgres-test:18
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

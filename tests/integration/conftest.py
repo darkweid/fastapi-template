@@ -25,9 +25,11 @@ def pytest_itemcollected(item: pytest.Item) -> None:
 
     A module-level `pytestmark` would do the same, but forgetting it in one new file is
     enough to leak a database-dependent test into `make test`, which runs without Docker.
-    Marking by location makes that impossible. This hook and not
-    `pytest_collection_modifyitems`: the latter runs after pytest has already deselected
-    by `-m`, so a marker added there would arrive too late to matter.
+    Marking by location makes that impossible.
+
+    `pytest_itemcollected` fires as each item is created, so the marker is in place before
+    anything reads it — no assumption about how this hook orders against the `-m`
+    deselection pass, which `pytest_collection_modifyitems` would need.
     """
     if item.path is not None and INTEGRATION_ROOT in item.path.resolve().parents:
         item.add_marker(pytest.mark.integration)
