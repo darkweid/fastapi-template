@@ -232,6 +232,34 @@ def test_s3_placeholder_is_ignored_when_s3_disabled() -> None:
     assert collect_problems(example, actual) == []
 
 
+def test_omitted_s3_keys_are_allowed_when_s3_disabled() -> None:
+    """Credentials are optional while S3 is disabled, so a deploy that drops
+    the S3 keys entirely must not be rejected as missing them."""
+    example = {
+        **EXAMPLE,
+        "S3_ENABLED": "false",
+        "S3_ACCESS_KEY_ID": "example-s3-access-key-id-not-real",
+    }
+    actual = {**_deployable_env(), "S3_ENABLED": "false"}
+    actual.pop("S3_ACCESS_KEY_ID", None)
+
+    assert collect_problems(example, actual) == []
+
+
+def test_omitted_s3_keys_are_reported_when_s3_enabled() -> None:
+    example = {
+        **EXAMPLE,
+        "S3_ENABLED": "false",
+        "S3_ACCESS_KEY_ID": "example-s3-access-key-id-not-real",
+    }
+    actual = {**_deployable_env(), "S3_ENABLED": "true"}
+    actual.pop("S3_ACCESS_KEY_ID", None)
+
+    assert collect_problems(example, actual) == [
+        "Missing keys in .env: S3_ACCESS_KEY_ID"
+    ]
+
+
 def test_s3_placeholder_is_reported_when_s3_enabled() -> None:
     example = {
         **EXAMPLE,

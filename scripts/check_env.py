@@ -68,19 +68,26 @@ def points_at_localhost(value: str) -> bool:
     return hostname in LOCAL_HOSTNAMES or hostname.startswith("127.")
 
 
+def is_dormant_s3_key(key: str, s3_enabled: bool) -> bool:
+    """S3 keys other than the flag itself are optional while S3 is disabled."""
+    return key.startswith(S3_KEY_PREFIX) and key != "S3_ENABLED" and not s3_enabled
+
+
 def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[str]:
     problems = []
 
-    missing_keys = sorted(set(example) - set(actual))
+    s3_enabled = as_bool(actual.get("S3_ENABLED", "")) is True
+
+    missing_keys = sorted(
+        key
+        for key in set(example) - set(actual)
+        if not is_dormant_s3_key(key, s3_enabled)
+    )
     if missing_keys:
         problems.append(f"Missing keys in .env: {', '.join(missing_keys)}")
 
-    s3_enabled = as_bool(actual.get("S3_ENABLED", "")) is True
-
     for key, value in sorted(actual.items()):
-        skip_s3_placeholder = (
-            key.startswith(S3_KEY_PREFIX) and key != "S3_ENABLED" and not s3_enabled
-        )
+        skip_s3_placeholder = is_dormant_s3_key(key, s3_enabled)
         is_secret = bool(SECRET_KEY_PATTERN.search(key))
         copied_from_example = is_secret and value and value == example.get(key)
         if not skip_s3_placeholder and (
