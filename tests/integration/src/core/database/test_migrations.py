@@ -16,7 +16,7 @@ from tests.integration.conftest import REPO_ROOT
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-EXPECTED_TABLES = {"users", "outbox_messages"}
+EXPECTED_TABLES = {"users", "notes", "outbox_messages"}
 
 
 async def test_chain_applies_to_a_clean_database(
