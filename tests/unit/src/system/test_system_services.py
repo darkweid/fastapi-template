@@ -23,12 +23,12 @@ class RedisFail:
         raise RuntimeError("down")
 
 
-def build_readiness() -> ReadinessService:
-    return ReadinessService(repository=SystemRepository())
+def build_readiness(session: FakeAsyncSession) -> ReadinessService:
+    return ReadinessService(repository=SystemRepository(), session=session)
 
 
-def build_service(redis_client: object) -> HealthService:
-    return HealthService(redis_client=redis_client, readiness=build_readiness())
+def build_service(redis_client: object, session: FakeAsyncSession) -> HealthService:
+    return HealthService(redis_client=redis_client, readiness=build_readiness(session))
 
 
 @pytest.mark.asyncio
@@ -37,7 +37,7 @@ async def test_health_service_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
 
-    result = await build_service(RedisOk()).get_status(session=session)
+    result = await build_service(RedisOk(), session).get_status()
 
     assert result.status == "ok"
     assert result.postgres is True
@@ -53,7 +53,7 @@ async def test_health_service_redis_failure_degrades(
     monkeypatch.setattr("sentry_sdk.capture_exception", sentry_mock)
     session = FakeAsyncSession()
 
-    result = await build_service(RedisFail()).get_status(session=session)
+    result = await build_service(RedisFail(), session).get_status()
 
     assert result.status == "degraded"
     assert result.postgres is True
@@ -71,7 +71,7 @@ async def test_health_service_reports_postgres_failure_without_raising(
     session = FakeAsyncSession()
     session.execute = AsyncMock(side_effect=SQLAlchemyError("fail"))
 
-    result = await build_service(RedisOk()).get_status(session=session)
+    result = await build_service(RedisOk(), session).get_status()
 
     assert result.status == "degraded"
     assert result.postgres is False
@@ -81,7 +81,7 @@ async def test_health_service_reports_postgres_failure_without_raising(
 
 @pytest.mark.asyncio
 async def test_ensure_ready_passes_on_live_database() -> None:
-    await build_readiness().ensure_ready(FakeAsyncSession())
+    await build_readiness(FakeAsyncSession()).ensure_ready()
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_ensure_ready_raises_on_dead_database() -> None:
     session.execute = AsyncMock(side_effect=SQLAlchemyError("fail"))
 
     with pytest.raises(ServiceUnavailableException):
-        await build_readiness().ensure_ready(session)
+        await build_readiness(session).ensure_ready()
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,7 @@ async def test_ensure_ready_raises_on_unresolvable_host() -> None:
     )
 
     with pytest.raises(ServiceUnavailableException):
-        await build_readiness().ensure_ready(session)
+        await build_readiness(session).ensure_ready()
 
 
 @pytest.mark.asyncio
@@ -119,4 +119,4 @@ async def test_ensure_ready_raises_when_the_probe_times_out(
     session.execute = never_answers
 
     with pytest.raises(ServiceUnavailableException):
-        await build_readiness().ensure_ready(session)
+        await build_readiness(session).ensure_ready()

@@ -26,10 +26,11 @@ class ReadinessService:
     of the load balancer.
     """
 
-    def __init__(self, repository: SystemRepository) -> None:
+    def __init__(self, repository: SystemRepository, session: AsyncSession) -> None:
         self.repository = repository
+        self.session = session
 
-    async def ensure_ready(self, session: AsyncSession) -> None:
+    async def ensure_ready(self) -> None:
         """
         Gate readiness on PostgreSQL only - the single dependency without which
         the service cannot answer any meaningful request.
@@ -40,13 +41,13 @@ class ReadinessService:
                 timeout (HTTP 503). Not logged here: the handler logs every
                 503 once, and a polling probe must not log an outage twice.
         """
-        if not await self.check_postgres(session):
+        if not await self.check_postgres():
             raise ServiceUnavailableException(
                 "Readiness check failed: PostgreSQL is unreachable",
                 additional_info={"postgres": False},
             )
 
-    async def check_postgres(self, session: AsyncSession) -> bool:
+    async def check_postgres(self) -> bool:
         """
         Catches everything on purpose: a host that does not resolve reaches the
         probe as a bare socket.gaierror from the driver, never wrapped into
@@ -55,7 +56,7 @@ class ReadinessService:
         """
         try:
             async with asyncio.timeout(POSTGRES_PROBE_TIMEOUT_SECONDS):
-                await self.repository.ping(session)
+                await self.repository.ping(self.session)
             return True
         except Exception as exc:
             logger.warning("Postgres health check failed: %s", exc)
@@ -77,7 +78,7 @@ class HealthService:
         self.redis_client = redis_client
         self.readiness = readiness
 
-    async def get_status(self, session: AsyncSession) -> HealthCheckResponse:
+    async def get_status(self) -> HealthCheckResponse:
         """
         Report the state of every dependency.
 
@@ -85,7 +86,7 @@ class HealthService:
         dependency is down, so it must keep answering with a body exactly when
         something is broken. /ready/ is what turns a Postgres outage into a 503.
         """
-        postgres_is_ok = await self.readiness.check_postgres(session)
+        postgres_is_ok = await self.readiness.check_postgres()
         redis_is_ok = await self._check_redis()
         is_healthy = postgres_is_ok and redis_is_ok
         return HealthCheckResponse(

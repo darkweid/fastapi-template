@@ -33,10 +33,10 @@ async def test_user_service_create_passes_full_payload(
 ) -> None:
     user = object()
     repo = FakeRepository(user)
-    service = UserService(repository=repo)
+    service = UserService(repository=repo, session=fake_session)
     payload = CreateSchema(email="test@example.com", full_name="Test User")
 
-    result = await service.create(fake_session, payload)
+    result = await service.create(payload)
 
     assert result is user
     repo.create.assert_awaited_once_with(
@@ -50,9 +50,9 @@ async def test_user_service_create_passes_full_payload(
 async def test_user_service_get_single(fake_session: FakeAsyncSession) -> None:
     user = object()
     repo = FakeRepository(user)
-    service = UserService(repository=repo)
+    service = UserService(repository=repo, session=fake_session)
 
-    result = await service.get_single(fake_session, id="user-id")
+    result = await service.get_single(id="user-id")
 
     assert result is user
     repo.get_single.assert_awaited_once()
@@ -64,10 +64,10 @@ async def test_user_service_update_uses_partial_model_dump(
 ) -> None:
     user = object()
     repo = FakeRepository(user)
-    service = UserService(repository=repo)
+    service = UserService(repository=repo, session=fake_session)
     payload = UpdateSchema(full_name="Updated User")
 
-    result = await service.update(fake_session, payload, id="user-id")
+    result = await service.update(payload, id="user-id")
 
     assert result is user
     repo.update.assert_awaited_once_with(

@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.database.session import get_session
 from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
@@ -24,10 +23,9 @@ from src.user.schemas import UserProfileViewModel
 from src.user.usecases.update_password import get_update_user_password_use_case
 from src.user.usecases.update_profile import get_update_user_profile_use_case
 from tests.factories.user_factory import build_user
-from tests.fakes.db import FakeAsyncSession
 from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
-from tests.helpers.providers import ProvideAsyncValue, ProvideValue
+from tests.helpers.providers import ProvideValue
 
 
 class FakeUpdatePasswordUseCase:
@@ -107,7 +105,6 @@ async def test_get_user_profile_exposes_blocked_state(
 async def test_get_user_info_by_id(
     async_client,
     dependency_overrides: DependencyOverrides,
-    fake_session: FakeAsyncSession,
 ) -> None:
     admin_user = build_user(role=UserRole.ADMIN)
     target_user = build_user()
@@ -115,7 +112,6 @@ async def test_get_user_info_by_id(
     dependency_overrides.set(
         get_user_service, ProvideValue(FakeUserService(target_user))
     )
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     response = await async_client.get(f"/v1/users/{target_user.id}")
 
@@ -129,7 +125,6 @@ async def test_get_user_info_by_id(
 async def test_get_user_info_by_id_denies_without_view_users_permission(
     async_client,
     dependency_overrides: DependencyOverrides,
-    fake_session: FakeAsyncSession,
 ) -> None:
     # When a VIEWER tries to access another user's ID without VIEW_USERS permission,
     # the BOLA guard returns 404 to prevent enumeration: the response is indistinguishable
@@ -140,7 +135,6 @@ async def test_get_user_info_by_id_denies_without_view_users_permission(
     dependency_overrides.set(
         get_user_service, ProvideValue(FakeUserService(target_user))
     )
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     response = await async_client.get(f"/v1/users/{target_user.id}")
 
@@ -155,13 +149,11 @@ async def test_get_user_info_by_id_denies_without_view_users_permission(
 async def test_get_user_info_by_id_returns_404_when_user_is_missing(
     async_client,
     dependency_overrides: DependencyOverrides,
-    fake_session: FakeAsyncSession,
 ) -> None:
     admin_user = build_user(role=UserRole.ADMIN)
     missing_user_id = build_user().id
     dependency_overrides.set(get_current_user, ProvideValue(admin_user))
     dependency_overrides.set(get_user_service, ProvideValue(FakeUserService(None)))
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     response = await async_client.get(f"/v1/users/{missing_user_id}")
 

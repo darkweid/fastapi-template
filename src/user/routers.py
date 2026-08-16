@@ -7,11 +7,9 @@ from fastapi import (
     Request,
     Response,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.cache.decorators import cached_route
 from src.core.cache.interface import CacheScope
-from src.core.database.session import get_session
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse
 from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
@@ -78,12 +76,11 @@ async def get_user_info_by_id(
         Depends(require_self_or_permission("user_id", Permission.VIEW_USERS)),
     ],
     user_service: Annotated[UserService, Depends(get_user_service)],
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UserSummaryViewModel:
     """
     Returns public information about a user by their identifier.
     """
-    user = await user_service.get_single_or_404(session, id=user_id)
+    user = await user_service.get_single_or_404(id=user_id)
     return UserSummaryViewModel.model_validate(user)
 
 
