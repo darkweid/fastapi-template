@@ -17,6 +17,7 @@ from src.user.auth.cookies import (
     TokenCookieResponder,
     get_token_cookie_responder,
 )
+from src.user.auth.errors import TokenExpiredError
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.token_helpers import invalidate_all_user_sessions
@@ -336,7 +337,8 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         JWTPayload: The verified JWT payload.
 
     Raises:
-        UnauthorizedException: If the token is expired, malformed, has an invalid
+        TokenExpiredError: If the token has expired.
+        UnauthorizedException: If the token is malformed, has an invalid
             structure, was reused, or no longer matches the active Redis entry.
     """
     if isinstance(token, str) and token.lower().startswith("bearer "):
@@ -350,7 +352,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         )
         payload_typed = cast(JWTPayload, payload)
     except jwt.ExpiredSignatureError:
-        raise UnauthorizedException("Token expired")
+        raise TokenExpiredError("Token expired")
     except jwt.PyJWTError:
         raise UnauthorizedException("Invalid token")
 

@@ -7,7 +7,8 @@ import jwt
 import pytest
 from starlette.requests import Request as StarletteRequest
 
-from src.core.errors.exceptions import AccessForbiddenException, UnauthorizedException
+from src.core.errors.codes import ErrorCode
+from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
 from src.user.auth.cookies import (
@@ -27,6 +28,7 @@ from src.user.auth.dependencies import (
     verify_csrf,
     verify_jti,
 )
+from src.user.auth.errors import CsrfFailedError, TokenExpiredError
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
 from tests.factories.token_factory import (
@@ -70,8 +72,10 @@ async def test_verify_jti_expired_token(fake_redis: InMemoryRedis) -> None:
     payload["exp"] = int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp())
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
 
-    with pytest.raises(UnauthorizedException, match="Token expired"):
+    with pytest.raises(TokenExpiredError, match="Token expired") as exc_info:
         await verify_jti(token, fake_redis)
+
+    assert exc_info.value.error_code is ErrorCode.TOKEN_EXPIRED
 
 
 @pytest.mark.asyncio
@@ -350,7 +354,7 @@ async def test_verify_csrf_rejects_cookie_credentials_with_missing_csrf_token() 
     request = _csrf_request(cookie="refresh-token-value")
     credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         await verify_csrf(request, credentials, _refresh_responder())
 
 
@@ -361,7 +365,7 @@ async def test_verify_csrf_rejects_cookie_credentials_with_wrong_csrf_token() ->
     )
     credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         await verify_csrf(request, credentials, _refresh_responder())
 
 
@@ -398,7 +402,7 @@ async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_
     request = _csrf_request(cookie="refresh-token-value", declared_transport="body")
     credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         await verify_csrf(request, credentials, _refresh_responder())
 
 
