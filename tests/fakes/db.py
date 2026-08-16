@@ -35,6 +35,9 @@ class FakeAsyncSession:
         self.execute = AsyncMock()
         self.add = MagicMock()
         self.delete = AsyncMock()
+        # Mirrors real `AsyncSession.info`: a plain dict the UoW uses to mark
+        # itself active for the repository commit guard.
+        self.info: dict[str, Any] = {}
 
     def in_transaction(self) -> bool:
         return self._in_transaction

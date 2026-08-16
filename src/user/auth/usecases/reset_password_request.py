@@ -5,6 +5,7 @@ from fastapi import Depends
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import build_email_throttle_key, mask_email
 from src.user.auth.schemas import SendResetPasswordRequestModel
@@ -28,8 +29,10 @@ class ResetPasswordRequestUseCase:
 
     Workflow:
     1) Retrieve user by email.
-    2) If user exists, store the password reset email delivery in the outbox
-       using the notifier with throttling.
+    2) Store the password reset email delivery in the outbox using the
+       notifier with throttling. If a reset email was already sent recently
+       and the throttle window has not elapsed, return success=True without
+       committing, to prevent email enumeration.
     3) Commit the transaction (the outbox publish hook fires after commit).
 
     Side effects:
@@ -37,10 +40,6 @@ class ResetPasswordRequestUseCase:
       after commit.
     - Sets/updates a throttle key in Redis; releases it if the transaction
       fails to commit.
-
-    Errors:
-    - InstanceProcessingException: if a reset email was already sent recently
-      and the throttle window has not elapsed.
 
     Returns:
     - SuccessResponse: success=True regardless of whether email was sent.
@@ -65,11 +64,19 @@ class ResetPasswordRequestUseCase:
                 return SuccessResponse(success=True)
 
             throttle_key = build_email_throttle_key("password-reset", user.email)
-            await self.notifier.send_password_reset_email(
-                uow=uow,
-                user=user,
-                throttle_key=throttle_key,
-            )
+            try:
+                await self.notifier.send_password_reset_email(
+                    uow=uow,
+                    user=user,
+                    throttle_key=throttle_key,
+                )
+            except InstanceProcessingException:
+                logger.debug(
+                    "[ResetPasswordRequest] Skip sending to email '%s' due to throttle",
+                    mask_email(data.email),
+                )
+                return SuccessResponse(success=True)
+
             try:
                 await uow.commit()
             except Exception:

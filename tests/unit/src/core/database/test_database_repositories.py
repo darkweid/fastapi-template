@@ -116,6 +116,8 @@ class RepositorySession:
         self.delete = AsyncMock()
         self.execute = AsyncMock()
         self.scalar = AsyncMock()
+        # Mirrors real `AsyncSession.info`, consulted by the commit guard.
+        self.info: dict[str, Any] = {}
 
 
 FIXED_NOW = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
