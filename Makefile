@@ -5,6 +5,11 @@ DOCKER_COMPOSE = docker compose --env-file .env -f $(COMPOSE_BASE)
 DOCKER_COMPOSE_DEV = docker compose --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
 DOCKER_COMPOSE_EXEC = $(DOCKER_COMPOSE) exec
 
+# Throwaway PostgreSQL for the integration suite. Every invocation gets its own compose
+# project name and an ephemeral host port so it can never touch the dev stack; both are
+# built inside the test-integration recipe, which is why there is no shared variable here.
+COMPOSE_TEST = infra/docker-compose.test.yml
+
 # Container names
 APP_CONTAINER = app
 WORKER_CONTAINER = worker
@@ -118,12 +123,28 @@ check-lint: ## Run the pre-commit hooks of the push stage
 	pre-commit run --all-files --hook-stage push --verbose
 
 .PHONY: test
-test: ## Run the tests
+test: ## Run the tests, excluding the integration suite (no Docker needed)
 	TESTING=true pytest
 
 .PHONY: test-cov
 test-cov: ## Run the tests with a coverage report
 	TESTING=true pytest --cov=src --cov-report=term-missing --cov-report=xml
+
+.PHONY: test-integration
+test-integration: ## Run the integration suite against a throwaway PostgreSQL container
+	@set -e; \
+	COMPOSE="docker compose -p template-test-$$$$ --env-file .env.test -f $(COMPOSE_TEST)"; \
+	export POSTGRES_PORT=; \
+	trap "$$COMPOSE down -v --remove-orphans >/dev/null 2>&1" EXIT INT TERM; \
+	$$COMPOSE up -d --wait --wait-timeout 120; \
+	PG_PORT="$$($$COMPOSE port postgres 5432 | sed 's/.*://')"; \
+	TESTING=true \
+	POSTGRES_HOST=127.0.0.1 \
+	POSTGRES_PORT="$$PG_PORT" \
+	pytest tests/integration -m integration -v
+
+.PHONY: test-all
+test-all: test test-integration ## Run the unit suite and then the integration suite
 
 .PHONY: count-code-lines
 count-code-lines: ## Count Python lines, excluding the virtualenv

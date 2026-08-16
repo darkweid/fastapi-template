@@ -172,6 +172,77 @@ jobs:
           format: cobertura
           file: coverage.xml
 
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Credentials, database name and port all mirror .env.test, which `TESTING=true`
+    # loads and the suite reads its DSN from — a value changed in one place has to change
+    # in the other. Locally the same suite runs against the throwaway container
+    # `make test-integration` starts (infra/docker-compose.test.yml); here a service
+    # container is simpler, because GitHub already health-gates it before the steps run.
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test_db"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: |
+            infra/requirements/base.txt
+            infra/requirements/dev.txt
+            infra/requirements/prod.txt
+            infra/requirements.txt
+
+      - name: Cache venv
+        id: cache-venv
+        uses: actions/cache@v6
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('infra/requirements.txt', 'infra/requirements/dev.txt') }}
+
+      - name: Create venv and install deps
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -m venv .venv
+          ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/pip install -r infra/requirements.txt
+
+      - name: Create .env file from .env.example
+        run: cp .env.example .env
+
+      # Migrations are not applied in a step of their own: the `migrated_database`
+      # fixture does it, and that is the path developers run locally.
+      - name: Run integration tests
+        shell: bash
+        env:
+          TESTING: 'true'
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: '5432'
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          pytest tests/integration -m integration -v
+
   bandit:
     name: Bandit
     runs-on: ubuntu-latest
@@ -252,7 +323,7 @@ jobs:
   # on the production box mid-deploy. CD then pulls this exact sha tag.
   build-and-push:
     name: Build & push image
-    needs: [lint, migration-heads, unit-tests, bandit, pip-audit, gitleaks]
+    needs: [lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
