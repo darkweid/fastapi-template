@@ -73,6 +73,7 @@ class VerifyEmailUseCase:
                     secret=config.jwt.JWT_VERIFY_SECRET_KEY,
                     purpose="verification",
                     redis_client=self.redis_client,
+                    expected_mode="verification_token",
                 )
 
                 user = await uow.users.get_single(uow.session, email=normalized_email)

@@ -10,7 +10,6 @@ Overview of security mechanisms implemented in the template and the rationale be
 - `JWT_USER_SECRET_KEY` — access and refresh tokens.
 - `JWT_VERIFY_SECRET_KEY` — email verification tokens.
 - `JWT_RESET_PASSWORD_SECRET_KEY` — password reset tokens.
-- `JWT_ADMIN_SECRET_KEY` — reserved for admin tokens.
 
 Key compromise is isolated: leaking the reset-password key does not allow forging access tokens. Each token carries a unique JTI (JWT ID) tracked in Redis, enabling per-token revocation.
 
@@ -36,7 +35,7 @@ If a consumed token is presented again, **all user sessions are invalidated imme
 
 - Algorithm: **Argon2** (OWASP-recommended, memory-hard), via `argon2-cffi` directly.
 - Parameters: 64 MB memory, 3 iterations, 2 threads.
-- Hashing and verification both run via `asyncio.to_thread()` to avoid blocking the event loop.
+- Hashing and verification run off the event loop on a dedicated bounded executor (4 workers), capping concurrent Argon2 memory under request bursts.
 - `needs_password_rehash()` detects outdated hash parameters; `_rehash_password_if_needed()` in the login flow transparently upgrades hashes on successful authentication.
 
 **Why it matters:** Argon2's memory-hardness makes GPU/ASIC brute-force impractical. Auto-rehash ensures that strengthening parameters takes effect without requiring users to reset passwords.
@@ -108,7 +107,7 @@ Three-tier model:
 - All Pydantic schemas inherit from `Base` with `extra="forbid"` — unknown fields are rejected, not silently ignored.
 - Strong password regex: lowercase + uppercase + digit + special character, 8-128 chars, printable ASCII only.
 - Email normalization (`strip().lower()`) runs before validation via `EmailNormalizationMixin`.
-- Field-specific regex patterns for names, usernames, phone numbers, slugs, social handles.
+- Field-specific regex patterns for names, usernames and E.164 phone numbers.
 
 **Why it matters:** `extra="forbid"` prevents mass assignment attacks (injecting fields like `is_admin=True`). Strict regex patterns reject malformed input before it reaches business logic.
 
