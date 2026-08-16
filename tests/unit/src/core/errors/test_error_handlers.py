@@ -14,6 +14,7 @@ from src.core.errors.handlers import (
     handle_request_validation_exception,
     handle_validation_error,
 )
+import src.user.auth.errors  # noqa: F401 - register domain subclasses for the walk
 
 
 class SampleModel(BaseModel):
@@ -188,3 +189,27 @@ def test_format_error_response_defaults_message_when_blank() -> None:
         "code": ErrorCode.NOT_FOUND,
         "message": "No additional details available",
     }
+
+
+def _all_core_exception_classes() -> list[type[exc.CoreException]]:
+    found: list[type[exc.CoreException]] = []
+    stack: list[type[exc.CoreException]] = [exc.CoreException]
+    while stack:
+        current = stack.pop()
+        found.append(current)
+        stack.extend(current.__subclasses__())
+    return found
+
+
+ALLOWED_EXTRA_KEYS = {"retry_after", "errors"}
+
+
+@pytest.mark.parametrize("exception_class", _all_core_exception_classes())
+async def test_every_exception_answers_the_error_contract(
+    exception_class: type[exc.CoreException],
+) -> None:
+    response = await handle_core_exception(make_request(), exception_class("boom"))
+    body = json.loads(response.body)
+    assert set(body) - ALLOWED_EXTRA_KEYS == {"code", "message"}
+    assert body["code"] in set(ErrorCode)
+    assert response.status_code == exception_class.status_code

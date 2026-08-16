@@ -23,6 +23,24 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
+### Error responses
+
+Every error, from the application and from nginx alike, has one flat shape:
+
+```json
+{"code": "invalid_credentials", "message": "Incorrect email or password."}
+```
+
+- `code` is a stable machine-readable key from `src/core/errors/codes.py`
+  (`ErrorCode`); build client-side translations on it, never on `message`.
+- `message` is an English fallback for developers.
+- Validation errors (422) additionally carry
+  `"errors": [{"field": "...", "message": "..."}]`.
+- Rate-limit errors (429) additionally carry `"retry_after"` (seconds) in the
+  body and the `Retry-After` header.
+- Login answers a single `invalid_credentials` code for every failure reason —
+  wrong password, unknown email, blocked or unverified account — by design.
+
 ## Email Links
 Verification and password-reset emails link to your front-end, never to the API, and
 never to a host taken from the request — a forged `Host` on `POST /password/reset`
