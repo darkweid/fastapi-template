@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -118,6 +119,44 @@ async def test_send_email_with_s3_attachments_task_failure_keeps_keys(
 
     # A retry must be able to re-download and re-send the same key.
     assert await fake_s3.object_exists("outbox/report.pdf")
+
+
+@pytest.mark.asyncio
+async def test_send_email_with_s3_attachments_task_cleanup_failure_does_not_resend(
+    mock_mailer: MockMailer,
+    fake_s3: InMemoryS3Client,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The production logger is propagate=False (stdout-only); swap in a plain
+    # logger so caplog can observe the warning, mirroring test_route_logging.py.
+    test_logger = logging.getLogger("email_tasks_cleanup_test")
+    test_logger.handlers = []
+    test_logger.setLevel(logging.WARNING)
+    test_logger.propagate = True
+    monkeypatch.setattr(tasks, "logger", test_logger)
+
+    monkeypatch.setattr(config.s3, "S3_ENABLED", True)
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
+    monkeypatch.setattr(
+        tasks, "build_s3_adapter", lambda s3_config: FakeS3AdapterContext(fake_s3)
+    )
+    monkeypatch.setattr(
+        fake_s3, "delete_object", AsyncMock(side_effect=RuntimeError("delete failed"))
+    )
+    await fake_s3.upload_bytes("outbox/report.pdf", b"pdf-bytes")
+    caplog.set_level(logging.WARNING, logger="email_tasks_cleanup_test")
+
+    # Must not raise: a post-send cleanup failure would otherwise trigger
+    # SmartRetryMiddleware and resend an email that already went out.
+    await send_email_with_s3_attachments_task(
+        "S", ["a@b.com"], ["outbox/report.pdf"], "plain", cleanup=True
+    )
+
+    assert len(mock_mailer.sent_attachment_bytes) == 1
+    assert await fake_s3.object_exists("outbox/report.pdf")
+    warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("outbox/report.pdf" in message for message in warnings)
 
 
 @pytest.mark.asyncio

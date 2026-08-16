@@ -77,8 +77,20 @@ async def send_email_with_s3_attachments_task(
             # Deleting only after a confirmed send keeps a failed attempt (or a
             # retry) able to re-download the same keys and try again.
             if cleanup:
+                failed_keys: list[str] = []
                 for key in attachment_keys:
-                    await s3.delete_object(key)
+                    # Delivery already succeeded above; a delete failure must never
+                    # propagate here, or SmartRetryMiddleware would rerun the whole
+                    # task and resend the email that already went out.
+                    try:
+                        await s3.delete_object(key)
+                    except Exception:
+                        failed_keys.append(key)
+                if failed_keys:
+                    logger.warning(
+                        "Failed to delete S3 attachment(s) after send: %s",
+                        failed_keys,
+                    )
         logger.info(
             "Email with S3 attachments sent to %s", [mask_email(r) for r in recipients]
         )
