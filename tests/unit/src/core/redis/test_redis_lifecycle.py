@@ -24,7 +24,7 @@ async def test_on_redis_startup_and_shutdown(monkeypatch: pytest.MonkeyPatch) ->
 
     await lifecycle.on_redis_startup(app, "redis://example")  # type: ignore[arg-type]
 
-    assert getattr(app.state, "redis_client") is client
+    assert app.state.redis_client is client
     client.ping.assert_awaited_once()
 
     await lifecycle.on_redis_shutdown(app)  # type: ignore[arg-type]

@@ -26,6 +26,20 @@ def test_create_user_rejects_malformed_names(name: str) -> None:
         CreateUserModel(first_name=name, last_name="Doe", **VALID_USER_KWARGS)
 
 
+@pytest.mark.parametrize("phone_number", ["+12025550179", "+447911123456"])
+def test_create_user_accepts_e164_phone_numbers(phone_number: str) -> None:
+    kwargs = {**VALID_USER_KWARGS, "phone_number": phone_number}
+    model = CreateUserModel(first_name="John", last_name="Doe", **kwargs)
+    assert model.phone_number == phone_number
+
+
+@pytest.mark.parametrize("phone_number", ["12025550179", "+0123", "+1"])
+def test_create_user_rejects_non_e164_phone_numbers(phone_number: str) -> None:
+    kwargs = {**VALID_USER_KWARGS, "phone_number": phone_number}
+    with pytest.raises(ValidationError):
+        CreateUserModel(first_name="John", last_name="Doe", **kwargs)
+
+
 @pytest.mark.parametrize("name", ["Anne-Marie", "O'Brien"])
 def test_profile_update_accepts_real_names(name: str) -> None:
     assert UserProfileUpdateModel(first_name=name).first_name == name

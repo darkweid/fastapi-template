@@ -14,10 +14,23 @@ async def get_tasks_session() -> AsyncGenerator[AsyncSession]:
         yield session
 
 
+_tasks_redis_client: Redis | None = None
+
+
+def _tasks_redis() -> Redis:
+    global _tasks_redis_client
+    if _tasks_redis_client is None:
+        _tasks_redis_client = create_redis_client(config.redis.dsn)
+    return _tasks_redis_client
+
+
 async def get_tasks_redis_client() -> AsyncGenerator[Redis]:
-    """Per-task-run Redis client (app DB 0), closed after the task finishes."""
-    client = create_redis_client(config.redis.dsn)
-    try:
-        yield client
-    finally:
-        await client.aclose()
+    # One client per worker process; closed by the broker shutdown hook.
+    yield _tasks_redis()
+
+
+async def close_tasks_redis_client() -> None:
+    global _tasks_redis_client
+    if _tasks_redis_client is not None:
+        await _tasks_redis_client.aclose()
+        _tasks_redis_client = None

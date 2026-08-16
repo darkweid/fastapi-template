@@ -125,7 +125,15 @@ def s3_mocks(
 
 
 @pytest.mark.asyncio
-async def test_dependency_context_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_build_s3_adapter_constructs_client_from_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """build_s3_adapter maps config fields onto the aioboto3 client kwargs.
+
+    Entering/exiting the returned adapter, and get_s3_adapter's disabled/enabled
+    branches, are covered separately (test_s3_dependencies.py, test_lifespan.py) -
+    the adapter is now built once in lifespan and reused, not per-request.
+    """
     client = AsyncMock()
     cm = FakeClientCM(client)
     session = FakeSession(client, cm)
@@ -152,13 +160,37 @@ async def test_dependency_context_manager(monkeypatch: pytest.MonkeyPatch) -> No
         S3_RETRY_MODE="standard",
         S3_MAX_UPLOAD_SIZE_BYTES=20 * 1024 * 1024,
     )
-    settings = SimpleNamespace(s3=s3_settings)
 
-    gen = dependencies.get_s3_adapter(settings)
-    adapter = await gen.__anext__()  # noqa: F841
-    assert cm.entered
-    await gen.aclose()
+    adapter = dependencies.build_s3_adapter(s3_settings)
+    async with adapter:
+        assert cm.entered
+
     assert cm.exited
+    assert len(session.client_calls) == 1
+    call = session.client_calls[0]
+    assert call["args"] == ("s3",)
+    assert call["kwargs"]["region_name"] == "us-east-1"
+    assert call["kwargs"]["aws_access_key_id"] == "ak"
+    assert call["kwargs"]["aws_secret_access_key"] == "sk"
+    assert call["kwargs"]["verify"] is True
+    assert "config" in call["kwargs"]
+
+
+def test_build_s3_adapter_raises_when_credentials_missing() -> None:
+    from src.core.storage.s3 import dependencies
+
+    s3_settings = SimpleNamespace(
+        S3_ENABLED=True,
+        S3_BUCKET_NAME=None,
+        S3_REGION_NAME="us-east-1",
+        S3_ACCESS_KEY_ID="ak",
+        S3_SECRET_ACCESS_KEY="sk",
+    )
+
+    with pytest.raises(
+        InfrastructureException, match="S3 credentials are not configured"
+    ):
+        dependencies.build_s3_adapter(s3_settings)
 
 
 @pytest.mark.asyncio

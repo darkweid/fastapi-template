@@ -26,7 +26,6 @@ def _base_app_config_data() -> dict[str, object]:
     return {
         "VERSION": "1.0.0",
         "DEBUG": False,
-        "LOCAL_TIMEZONE": "UTC",
         "LOG_LEVEL": "INFO",
         "CORS_ALLOWED_ORIGINS": "https://app.example.com",
         "CORS_ALLOWED_CREDENTIALS": True,
