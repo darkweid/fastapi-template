@@ -1,20 +1,41 @@
 import pytest
 
 from src.core.utils import security
+from src.core.utils.security import (
+    DUMMY_PASSWORD_HASH,
+    hash_password,
+    is_password_hash,
+    needs_password_rehash,
+    verify_password,
+)
 
 
-@pytest.mark.asyncio
-async def test_hash_and_verify_password_success() -> None:
-    hashed = security.hash_password("strong-pass")
+async def test_hash_and_verify_roundtrip() -> None:
+    hashed = await hash_password("S3cret!pass")
+    assert hashed.startswith("$argon2")
+    assert await verify_password("S3cret!pass", hashed) is True
+    assert await verify_password("wrong", hashed) is False
 
-    assert await security.verify_password("strong-pass", hashed) is True
+
+async def test_verify_garbage_hash_returns_false() -> None:
+    assert await verify_password("whatever", "not-a-hash") is False
 
 
-@pytest.mark.asyncio
-async def test_verify_password_fail() -> None:
-    hashed = security.hash_password("original")
+async def test_is_password_hash() -> None:
+    assert is_password_hash(await hash_password("S3cret!pass")) is True
+    assert is_password_hash("plaintext") is False
 
-    assert await security.verify_password("other", hashed) is False
+
+async def test_needs_rehash_on_weaker_parameters() -> None:
+    from argon2 import PasswordHasher
+
+    weak = PasswordHasher(memory_cost=8, time_cost=1, parallelism=1).hash("x")
+    assert needs_password_rehash(weak) is True
+    assert needs_password_rehash(await hash_password("x")) is False
+
+
+def test_dummy_password_hash_is_real_argon2() -> None:
+    assert DUMMY_PASSWORD_HASH.startswith("$argon2")
 
 
 def test_mask_email_valid_and_invalid() -> None:
@@ -35,27 +56,6 @@ def test_generate_otp_range(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_generate_otp_invalid_length() -> None:
     with pytest.raises(ValueError, match="OTP length must be greater than 0, given 0."):
         security.generate_otp(0)
-
-
-def test_is_password_hash_recognizes_hash() -> None:
-    hashed = security.hash_password("strong-pass")
-
-    assert security.is_password_hash(hashed) is True
-    assert security.is_password_hash("plain-password") is False
-
-
-def test_needs_password_rehash_false_for_fresh_hash() -> None:
-    hashed = security.hash_password("strong-pass")
-
-    assert security.needs_password_rehash(hashed) is False
-
-
-def test_needs_password_rehash_true_when_context_requires(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(security.pwd_context, "needs_update", lambda _: True)
-
-    assert security.needs_password_rehash("any-hash") is True
 
 
 def test_build_email_throttle_key_and_normalize() -> None:
