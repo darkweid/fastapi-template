@@ -7,7 +7,8 @@ import jwt
 import pytest
 from starlette.requests import Request as StarletteRequest
 
-from src.core.errors.exceptions import AccessForbiddenException, UnauthorizedException
+from src.core.errors.codes import ErrorCode
+from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
 from src.user.auth.cookies import (
@@ -19,13 +20,21 @@ from src.user.auth.csrf import build_csrf_token
 from src.user.auth.dependencies import (
     AuthenticatedUser,
     RefreshCredentials,
+    authenticate_access_token,
     get_access_by_refresh_token,
+    get_authenticated_user,
     get_current_user,
     get_current_user_with_session,
     get_user_id_from_token,
     read_refresh_credentials,
     verify_csrf,
     verify_jti,
+)
+from src.user.auth.errors import (
+    CsrfFailedError,
+    TokenExpiredError,
+    UserBlockedError,
+    UserNotVerifiedError,
 )
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
@@ -70,8 +79,10 @@ async def test_verify_jti_expired_token(fake_redis: InMemoryRedis) -> None:
     payload["exp"] = int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp())
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
 
-    with pytest.raises(UnauthorizedException, match="Token expired"):
+    with pytest.raises(TokenExpiredError, match="Token expired") as exc_info:
         await verify_jti(token, fake_redis)
+
+    assert exc_info.value.error_code is ErrorCode.TOKEN_EXPIRED
 
 
 @pytest.mark.asyncio
@@ -136,7 +147,7 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_success(
+async def test_authenticate_access_token_success(
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
 ) -> None:
@@ -150,34 +161,7 @@ async def test_get_current_user_success(
     )
     user_repository = FakeUserRepository(user)
 
-    result = await get_current_user(
-        token=token,
-        session=fake_session,
-        redis_client=fake_redis,
-        user_repository=user_repository,
-    )
-
-    assert isinstance(result, User)
-    assert result.id == user.id
-    user_repository.get_single.assert_awaited_once_with(fake_session, id=str(user.id))
-
-
-@pytest.mark.asyncio
-async def test_get_current_user_with_session_success(
-    fake_redis: InMemoryRedis,
-    fake_session: FakeAsyncSession,
-) -> None:
-    user = build_user()
-    payload = build_access_payload(str(user.id))
-    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
-    await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
-        payload["jti"],
-        ex=60,
-    )
-    user_repository = FakeUserRepository(user)
-
-    result = await get_current_user_with_session(
+    result = await authenticate_access_token(
         token=token,
         session=fake_session,
         redis_client=fake_redis,
@@ -191,7 +175,7 @@ async def test_get_current_user_with_session_success(
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_wrong_mode(
+async def test_authenticate_access_token_wrong_mode(
     fake_redis: InMemoryRedis, fake_session: FakeAsyncSession
 ) -> None:
     payload = build_refresh_payload("user-1")
@@ -203,12 +187,82 @@ async def test_get_current_user_wrong_mode(
     )
 
     with pytest.raises(UnauthorizedException):
-        await get_current_user(
+        await authenticate_access_token(
             token=token,
             session=fake_session,
             redis_client=fake_redis,
             user_repository=FakeUserRepository(None),
         )
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_returns_user_when_admitted() -> None:
+    user = build_user()
+    authenticated = AuthenticatedUser(user=user, session_id="sid")
+
+    result = await get_current_user(authenticated)
+
+    assert isinstance(result, User)
+    assert result.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_blocks_inactive_user() -> None:
+    blocked = build_user(is_active=False)
+    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+
+    with pytest.raises(UserBlockedError):
+        await get_current_user(authenticated)
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_blocks_unverified_user() -> None:
+    unverified = build_user(is_verified=False)
+    authenticated = AuthenticatedUser(user=unverified, session_id="sid")
+
+    with pytest.raises(UserNotVerifiedError):
+        await get_current_user(authenticated)
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_with_session_returns_when_admitted() -> None:
+    user = build_user()
+    authenticated = AuthenticatedUser(user=user, session_id="sid")
+
+    result = await get_current_user_with_session(authenticated)
+
+    assert result is authenticated
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_with_session_blocks_inactive_user() -> None:
+    blocked = build_user(is_active=False)
+    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+
+    with pytest.raises(UserBlockedError):
+        await get_current_user_with_session(authenticated)
+
+
+@pytest.mark.asyncio
+async def test_get_authenticated_user_bypasses_the_gate_for_a_blocked_user() -> None:
+    blocked = build_user(is_active=False)
+    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+
+    result = await get_authenticated_user(authenticated)
+
+    assert result is blocked
+
+
+@pytest.mark.asyncio
+async def test_get_authenticated_user_bypasses_the_gate_for_an_unverified_user() -> (
+    None
+):
+    unverified = build_user(is_verified=False)
+    authenticated = AuthenticatedUser(user=unverified, session_id="sid")
+
+    result = await get_authenticated_user(authenticated)
+
+    assert result is unverified
 
 
 @pytest.mark.asyncio
@@ -350,7 +404,7 @@ async def test_verify_csrf_rejects_cookie_credentials_with_missing_csrf_token() 
     request = _csrf_request(cookie="refresh-token-value")
     credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         await verify_csrf(request, credentials, _refresh_responder())
 
 
@@ -361,7 +415,7 @@ async def test_verify_csrf_rejects_cookie_credentials_with_wrong_csrf_token() ->
     )
     credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         await verify_csrf(request, credentials, _refresh_responder())
 
 
@@ -398,7 +452,7 @@ async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_
     request = _csrf_request(cookie="refresh-token-value", declared_transport="body")
     credentials = RefreshCredentials(token="refresh-token-value", from_cookie=True)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         await verify_csrf(request, credentials, _refresh_responder())
 
 

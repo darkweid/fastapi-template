@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -45,6 +47,14 @@ class DummyCheckViolation:
         return "check violation"
 
 
+class DummyExclusionViolation:
+    sqlstate = "23P01"
+    detail = "Key (room_id, during)=(1, [09:00,10:00)) conflicts with existing key."
+
+    def __str__(self) -> str:
+        return "exclusion violation"
+
+
 class DummyUnknownViolation:
     sqlstate = "99999"
     detail = None
@@ -60,7 +70,10 @@ async def test_handle_postgresql_error_not_null_returns_500() -> None:
     result: PostgresqlErrorHandlingResult = handle_postgresql_error(err)
 
     assert result.response.status_code == 500
-    assert result.response.body == b'{"detail":"Unexpected error"}'
+    assert json.loads(result.response.body) == {
+        "code": "internal_error",
+        "message": "Unexpected error",
+    }
 
 
 @pytest.mark.asyncio
@@ -70,7 +83,21 @@ async def test_handle_postgresql_error_unique_violation_returns_409() -> None:
     result = handle_postgresql_error(err)
 
     assert result.response.status_code == 409
-    assert result.response.body == b'{"detail":"email"}'
+    assert json.loads(result.response.body) == {
+        "code": "already_exists",
+        "message": "Resource already exists.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_unique_violation_does_not_leak_the_conflicting_value() -> None:
+    err = IntegrityError("msg", None, DummyUniqueViolation())  # type: ignore[arg-type]
+
+    result = handle_postgresql_error(err)
+
+    body = json.loads(result.response.body)
+    assert body == {"code": "already_exists", "message": "Resource already exists."}
+    assert "user@example.com" not in result.response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -80,10 +107,11 @@ async def test_handle_postgresql_error_foreign_key_violation_returns_400() -> No
     result = handle_postgresql_error(err)
 
     assert result.response.status_code == 400
-    assert (
-        result.response.body
-        == b'{"detail":"Key (user_id)=(1) is not present in table."}'
-    )
+    assert json.loads(result.response.body) == {
+        "code": "invalid_reference",
+        "message": "Referenced resource does not exist.",
+    }
+    assert "user_id" not in result.response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -95,7 +123,10 @@ async def test_handle_postgresql_error_detail_fallback_from_raw_message() -> Non
     result = handle_postgresql_error(err)
 
     assert result.response.status_code == 400
-    assert result.response.body == b'{"detail":"missing reference"}'
+    assert json.loads(result.response.body) == {
+        "code": "invalid_reference",
+        "message": "Referenced resource does not exist.",
+    }
 
 
 @pytest.mark.asyncio
@@ -105,7 +136,24 @@ async def test_handle_postgresql_error_check_violation_returns_500() -> None:
     result = handle_postgresql_error(err)
 
     assert result.response.status_code == 500
-    assert result.response.body == b'{"detail":"Unexpected error"}'
+    assert json.loads(result.response.body) == {
+        "code": "internal_error",
+        "message": "Unexpected error",
+    }
+
+
+@pytest.mark.asyncio
+async def test_handle_postgresql_error_exclusion_violation_returns_500() -> None:
+    err = IntegrityError("msg", None, DummyExclusionViolation())  # type: ignore[arg-type]
+
+    result = handle_postgresql_error(err)
+
+    assert result.response.status_code == 500
+    assert json.loads(result.response.body) == {
+        "code": "internal_error",
+        "message": "Unexpected error",
+    }
+    assert "room_id" not in result.response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -115,4 +163,7 @@ async def test_handle_postgresql_error_unknown_violation_returns_500() -> None:
     result = handle_postgresql_error(err)
 
     assert result.response.status_code == 500
-    assert result.response.body == b'{"detail":"Unexpected error"}'
+    assert json.loads(result.response.body) == {
+        "code": "internal_error",
+        "message": "Unexpected error",
+    }

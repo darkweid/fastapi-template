@@ -13,6 +13,7 @@ from src.user.auth.usecases.login import (
 )
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
+from src.user.policies import AccountAccessViolation
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 from tests.fakes.redis import InMemoryRedis
@@ -180,15 +181,15 @@ async def test_login_returns_unified_error_for_wrong_password(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("user", "expected_log_fragment"),
+    ("user", "expected_violation"),
     [
-        (build_user(is_verified=False), "not verified"),
-        (build_user(is_verified=True, is_active=False), "is blocked"),
+        (build_user(is_verified=False), AccountAccessViolation.NOT_VERIFIED),
+        (build_user(is_verified=True, is_active=False), AccountAccessViolation.BLOCKED),
     ],
 )
 async def test_login_returns_unified_error_for_account_state_failures(
     user: User,
-    expected_log_fragment: str,
+    expected_violation: AccountAccessViolation,
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
@@ -211,5 +212,8 @@ async def test_login_returns_unified_error_for_account_state_failures(
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_not_awaited()
-    debug_mock.assert_called_once()
-    assert expected_log_fragment in debug_mock.call_args.args[0]
+    debug_mock.assert_called_once_with(
+        "[LoginUser] Account of '%s' fails admission (%s).",
+        "us***@ex***",
+        expected_violation,
+    )

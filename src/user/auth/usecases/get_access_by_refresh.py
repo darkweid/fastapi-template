@@ -5,10 +5,6 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.errors.exceptions import (
-    InstanceProcessingException,
-    PermissionDeniedException,
-)
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import mask_email
@@ -16,6 +12,7 @@ from src.main.config import config
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.security import create_access_token, rotate_refresh_token
 from src.user.models import User
+from src.user.policies import account_access_violation, ensure_can_use_session
 
 logger = get_logger(__name__)
 
@@ -34,7 +31,9 @@ class GetTokensByRefreshUserUseCase:
     - Refresh token must be valid and not reused (handled by rotate_refresh_token).
 
     Workflow:
-    1) Check if the user is active and verified.
+    1) Check account admission (active and verified) via policies.py; unlike
+       login, the real reason is reported since the caller already proved
+       possession of a valid refresh token.
     2) Rotate the refresh token (handles session invalidation and reuse detection).
     3) Decode the new refresh token to get the session ID.
     4) Create a new access token associated with the session.
@@ -44,8 +43,8 @@ class GetTokensByRefreshUserUseCase:
     - May invalidate sessions if token reuse is detected.
 
     Errors:
-    - PermissionDeniedException: if user is blocked.
-    - InstanceProcessingException: if user is not verified.
+    - UserBlockedError: if user is blocked.
+    - UserNotVerifiedError: if user is not verified.
     - UnauthorizedException: if token rotation fails.
 
     Returns:
@@ -60,19 +59,14 @@ class GetTokensByRefreshUserUseCase:
         user: User,
         old_token_payload: JWTPayload,
     ) -> TokenModel:
-        if not user.is_active:
+        violation = account_access_violation(user)
+        if violation is not None:
             logger.info(
-                "[RefreshTokens] Blocked user '%s' attempted refresh",
+                "[RefreshTokens] User '%s' fails admission (%s)",
                 mask_email(user.email),
+                violation,
             )
-            raise PermissionDeniedException("User is blocked")
-
-        if not user.is_verified:
-            logger.info(
-                "[RefreshTokens] Unverified user '%s' attempted refresh",
-                mask_email(user.email),
-            )
-            raise InstanceProcessingException("User is not verified")
+        ensure_can_use_session(user)
 
         # Use rotation helper to handle the previous token safely
         new_refresh_token = await rotate_refresh_token(

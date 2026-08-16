@@ -17,11 +17,13 @@ from src.user.auth.cookies import (
     TokenCookieResponder,
     get_token_cookie_responder,
 )
+from src.user.auth.errors import TokenExpiredError
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.token_helpers import invalidate_all_user_sessions
 from src.user.dependencies import get_user_repository
 from src.user.models import User
+from src.user.policies import ensure_can_use_session
 from src.user.repositories import UserRepository
 
 access_token_header = APIKeyHeader(name="Authorization", scheme_name="access-token")
@@ -113,45 +115,14 @@ async def verify_csrf(
     responder.verify_csrf(credentials.token, request.headers.get(CSRF_HEADER_NAME))
 
 
-async def get_current_user(
-    token: Annotated[str, Security(access_token_header)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    redis_client: Annotated[Redis, Depends(get_redis_client)],
-    user_repository: Annotated[UserRepository, Depends(get_user_repository)],
-) -> User:
-    """
-    Resolve the authenticated user from a valid access token.
-
-    Args:
-        token: The JWT access token from the Authorization header.
-        session: Database session.
-        redis_client: Redis client used to validate the active token JTI.
-        user_repository: Repository used to load the user entity.
-
-    Returns:
-        User: The authenticated user.
-
-    Raises:
-        UnauthorizedException: If the token is invalid, is not an access token,
-            or the user cannot be loaded.
-    """
-    authenticated = await get_current_user_with_session(
-        token=token,
-        session=session,
-        redis_client=redis_client,
-        user_repository=user_repository,
-    )
-    return authenticated.user
-
-
-async def get_current_user_with_session(
+async def authenticate_access_token(
     token: Annotated[str, Security(access_token_header)],
     session: Annotated[AsyncSession, Depends(get_session)],
     redis_client: Annotated[Redis, Depends(get_redis_client)],
     user_repository: Annotated[UserRepository, Depends(get_user_repository)],
 ) -> AuthenticatedUser:
     """
-    Resolve the authenticated user and current access-token session identifier.
+    Resolve the token to a user and session, WITHOUT the admission gate.
 
     Args:
         token: The JWT access token from the Authorization header.
@@ -186,6 +157,38 @@ async def get_current_user_with_session(
         raise credentials_exception
 
     return AuthenticatedUser(user=user, session_id=session_id)
+
+
+async def get_current_user_with_session(
+    authenticated: Annotated[AuthenticatedUser, Depends(authenticate_access_token)],
+) -> AuthenticatedUser:
+    """Authenticated AND admitted (active, verified) user with the session id."""
+    ensure_can_use_session(authenticated.user)
+    return authenticated
+
+
+async def get_current_user(
+    authenticated: Annotated[AuthenticatedUser, Depends(authenticate_access_token)],
+) -> User:
+    """The default auth dependency: authenticated AND admitted (active, verified).
+
+    Blocked or unverified accounts answer 403 with an honest code here; the
+    single opt-out is get_authenticated_user.
+    """
+    ensure_can_use_session(authenticated.user)
+    return authenticated.user
+
+
+async def get_authenticated_user(
+    authenticated: Annotated[AuthenticatedUser, Depends(authenticate_access_token)],
+) -> User:
+    """Authentication without the admission gate.
+
+    The single legitimate use is GET /me: a blocked or unverified account must
+    still read its own state (is_verified) so the client can show the right
+    screen. Any other use requires an explicit justification comment.
+    """
+    return authenticated.user
 
 
 async def get_logout_identity(
@@ -336,7 +339,8 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         JWTPayload: The verified JWT payload.
 
     Raises:
-        UnauthorizedException: If the token is expired, malformed, has an invalid
+        TokenExpiredError: If the token has expired.
+        UnauthorizedException: If the token is malformed, has an invalid
             structure, was reused, or no longer matches the active Redis entry.
     """
     if isinstance(token, str) and token.lower().startswith("bearer "):
@@ -350,7 +354,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         )
         payload_typed = cast(JWTPayload, payload)
     except jwt.ExpiredSignatureError:
-        raise UnauthorizedException("Token expired")
+        raise TokenExpiredError("Token expired")
     except jwt.PyJWTError:
         raise UnauthorizedException("Invalid token")
 

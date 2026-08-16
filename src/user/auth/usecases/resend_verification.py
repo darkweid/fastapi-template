@@ -13,6 +13,7 @@ from src.user.auth.services.verification_notifier import (
     VerificationNotifier,
     get_verification_notifier,
 )
+from src.user.policies import verification_pending
 
 logger = get_logger(__name__)
 
@@ -62,7 +63,7 @@ class SendVerificationUseCase:
                     mask_email(data.email),
                 )
                 return SuccessResponse(success=True)
-            if user.is_verified:
+            if not verification_pending(user):
                 logger.debug(
                     "[ResendVerification] User with email '%s' already verified.",
                     mask_email(data.email),

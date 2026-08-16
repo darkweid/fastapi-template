@@ -7,13 +7,11 @@ import jwt
 import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
-from src.core.errors.exceptions import (
-    InstanceProcessingException,
-    PermissionDeniedException,
-)
+from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse, TokenModel
 from src.core.utils.security import build_email_throttle_key
 from src.main.config import config
+from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import (
     CreateUserModel,
@@ -142,7 +140,7 @@ async def test_get_tokens_by_refresh_user_usecase_blocked(
 
     use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
 
-    with pytest.raises(PermissionDeniedException, match="User is blocked"):
+    with pytest.raises(UserBlockedError, match="User is blocked"):
         await use_case.execute(user=user, old_token_payload=payload)
 
 
@@ -155,7 +153,7 @@ async def test_get_tokens_by_refresh_user_usecase_unverified(
 
     use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
 
-    with pytest.raises(InstanceProcessingException, match="User is not verified"):
+    with pytest.raises(UserNotVerifiedError, match="User is not verified"):
         await use_case.execute(user=user, old_token_payload=payload)
 
 

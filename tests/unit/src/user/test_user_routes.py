@@ -6,12 +6,17 @@ import pytest
 
 from src.core.database.session import get_session
 from src.core.errors.exceptions import (
-    AccessForbiddenException,
     InstanceNotFoundException,
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
-from src.user.auth.dependencies import get_current_user
+from src.user.auth.dependencies import (
+    AuthenticatedUser,
+    authenticate_access_token,
+    get_authenticated_user,
+    get_current_user,
+)
+from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
@@ -69,7 +74,7 @@ async def test_get_user_profile(
     dependency_overrides: DependencyOverrides,
 ) -> None:
     user = build_user()
-    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(get_authenticated_user, ProvideValue(user))
 
     response = await async_client.get("/v1/users/me")
 
@@ -77,6 +82,25 @@ async def test_get_user_profile(
     payload = response.json()
     assert payload["id"] == str(user.id)
     assert payload["email"] == user.email
+    assert payload["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_user_profile_exposes_blocked_state(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    """The /me admission opt-out exists so a client can inspect its account
+    state during session bootstrap; the blocked flag must be visible there."""
+    user = build_user(is_active=False)
+    dependency_overrides.set(get_authenticated_user, ProvideValue(user))
+
+    response = await async_client.get("/v1/users/me")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["is_active"] is False
+    assert payload["is_verified"] is True
 
 
 @pytest.mark.asyncio
@@ -102,6 +126,32 @@ async def test_get_user_info_by_id(
 
 
 @pytest.mark.asyncio
+async def test_get_user_info_by_id_denies_without_view_users_permission(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_session: FakeAsyncSession,
+) -> None:
+    # Exercises the real checker: a VIEWER role has no VIEW_USERS permission, so
+    # this proves require_permission's RBAC denial still runs and is now on the
+    # new error type - admission (blocked/unverified) is no longer its job.
+    viewer_user = build_user(role=UserRole.VIEWER)
+    target_user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(viewer_user))
+    dependency_overrides.set(
+        get_user_service, ProvideValue(FakeUserService(target_user))
+    )
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+
+    response = await async_client.get(f"/v1/users/{target_user.id}")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "permission_denied",
+        "message": "Permission denied",
+    }
+
+
+@pytest.mark.asyncio
 async def test_get_user_info_by_id_returns_404_when_user_is_missing(
     async_client,
     dependency_overrides: DependencyOverrides,
@@ -117,7 +167,7 @@ async def test_get_user_info_by_id_returns_404_when_user_is_missing(
 
     assert response.status_code == 404
     assert response.json() == {
-        "error": "Instance not found",
+        "code": "not_found",
         "message": "User not found",
     }
 
@@ -230,7 +280,7 @@ async def test_update_user_password_rejects_wrong_current_password(
         get_update_user_password_use_case,
         ProvideValue(
             FakeUpdatePasswordUseCase(
-                error=AccessForbiddenException("Current password is incorrect.")
+                error=InvalidCredentialsError("Current password is incorrect.")
             )
         ),
     )
@@ -240,7 +290,11 @@ async def test_update_user_password_rejects_wrong_current_password(
         json={"current_password": "WrongPass1!", "password": "StrongPass1!"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "invalid_credentials",
+        "message": "Current password is incorrect.",
+    }
 
 
 @pytest.mark.asyncio
@@ -261,7 +315,7 @@ async def test_update_user_profile_returns_404_when_user_is_missing(
 
     assert response.status_code == 404
     assert response.json() == {
-        "error": "Instance not found",
+        "code": "not_found",
         "message": "User not found",
     }
 
@@ -292,3 +346,54 @@ async def test_update_user_profile_rejects_invalid_payloads(
     response = await async_client.patch("/v1/users/me", json=payload)
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_blocked_user_cannot_update_profile(
+    async_client, dependency_overrides: DependencyOverrides
+) -> None:
+    blocked = build_user(is_active=False)
+    dependency_overrides.set(
+        authenticate_access_token,
+        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+    )
+
+    response = await async_client.patch("/v1/users/me", json={"username": "new-name"})
+
+    assert response.status_code == 403
+    assert response.json() == {"code": "user_blocked", "message": "User is blocked"}
+
+
+@pytest.mark.asyncio
+async def test_blocked_user_cannot_change_password(
+    async_client, dependency_overrides: DependencyOverrides
+) -> None:
+    blocked = build_user(is_active=False)
+    dependency_overrides.set(
+        authenticate_access_token,
+        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+    )
+
+    response = await async_client.patch(
+        "/v1/users/me/password",
+        json={"current_password": "Current-1", "password": "Password-1"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "user_blocked"
+
+
+@pytest.mark.asyncio
+async def test_unverified_user_still_reads_own_profile(
+    async_client, dependency_overrides: DependencyOverrides
+) -> None:
+    unverified = build_user(is_verified=False)
+    dependency_overrides.set(
+        authenticate_access_token,
+        ProvideValue(AuthenticatedUser(user=unverified, session_id="sid")),
+    )
+
+    response = await async_client.get("/v1/users/me")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(unverified.id)
