@@ -40,6 +40,9 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
         # System permissions
         Permission.VIEW_LOGS,
         Permission.MANAGE_BACKUPS,
+        # Note permissions
+        Permission.VIEW_NOTES,
+        Permission.MANAGE_NOTES,
     },
     # Editor - can create and edit content but cannot manage users or system settings
     UserRole.EDITOR: {

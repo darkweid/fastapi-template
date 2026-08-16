@@ -8,4 +8,5 @@ table relationships effectively.
 # Import all models here
 
 from src.core.outbox.models import OutboxMessage as OutboxMessage
+from src.note.models import Note as Note  # Re-export the Note model explicitly
 from src.user.models import User as User  # Re-export the User model explicitly
