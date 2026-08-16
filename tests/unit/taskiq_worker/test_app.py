@@ -12,7 +12,7 @@ EXPECTED_TASKS = {
     "send_verification_email",
     "send_reset_password_email",
     "send_email",
-    "send_email_with_file",
+    "send_email_with_s3_attachments",
     "outbox_sweeper",
     "outbox_purge",
 }

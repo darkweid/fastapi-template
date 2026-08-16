@@ -28,4 +28,15 @@ class AbstractMailer(ABC):
         file_paths: list[Path],
         subtype: MessageType = MessageType.PLAIN,
     ) -> None:
-        """Send an email with multiple file attachments."""
+        """Send an email with multiple file attachments read from disk."""
+
+    @abstractmethod
+    async def send_with_attachment_bytes(
+        self,
+        subject: str,
+        recipients: list[str],
+        body_text: str,
+        attachments: list[tuple[str, bytes]],
+        subtype: MessageType = MessageType.PLAIN,
+    ) -> None:
+        """Send an email with attachments already held in memory as (filename, data)."""

@@ -65,6 +65,24 @@ path as arguments, so any message already sitting in the outbox or the broker
 carries a payload the new signature cannot bind. Drain the queue before rolling
 out, or expect those specific emails to fail their retries and be dropped.
 
+## Delayed Email Attachments
+`EmailService.send_file_to_email_with_delay` queues `send_email_with_s3_attachments_task`
+(`src/core/email_service/tasks.py`) with a list of S3 object keys, not local file paths
+or raw bytes — the worker process is not guaranteed to share a filesystem with the
+caller, and passing bytes through the broker would bloat the Redis stream. The
+caller uploads the attachments to S3 first (`S3_ENABLED=true` required — enqueueing
+otherwise raises `InfrastructureException`), then passes the resulting keys; the task
+downloads each key, attaches it under its basename, and — only on a confirmed
+send with `cleanup=True` — deletes the objects, so a retry after a failed send can
+re-download and re-send the same keys. The synchronous `send_email_with_attachments`
+path is unaffected: it still reads from local `Path`s and deletes them only when
+called with `cleanup=True`.
+
+Upgrading an existing fork: the old `send_email_with_file_task` (disk-path
+attachments) is gone, replaced by `send_email_with_s3_attachments_task` (S3-key
+attachments) with a different signature. Drain the queue before rolling out, or
+expect those specific emails to fail their retries and be dropped.
+
 ## Auth Cookie & CSRF Configuration
 The refresh token is delivered as an httponly cookie by default, with a stateless
 signed double-submit CSRF check on the refresh route; native clients that want the
