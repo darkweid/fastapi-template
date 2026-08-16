@@ -3,11 +3,13 @@ from typing import cast
 from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.core.errors.exceptions import CoreException
 from src.core.errors.handlers import (
     HandlerCallable,
     handle_core_exception,
+    handle_http_exception,
     handle_request_validation_exception,
     handle_validation_error,
 )
@@ -25,6 +27,10 @@ EXCEPTION_HANDLERS: tuple[tuple[type[Exception], HandlerCallable], ...] = (
         cast(HandlerCallable, handle_request_validation_exception),
     ),
     (ValidationError, cast(HandlerCallable, handle_validation_error)),
+    # FastAPI's HTTPException subclasses Starlette's, so this one registration
+    # covers framework-raised exceptions from both (missing credentials,
+    # unmatched routes, wrong methods) that would otherwise bypass the contract.
+    (StarletteHTTPException, cast(HandlerCallable, handle_http_exception)),
 )
 
 

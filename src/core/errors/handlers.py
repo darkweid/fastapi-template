@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 import sentry_sdk
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from loggers import get_logger
@@ -17,6 +18,15 @@ response_logger = get_logger("app.request.error_response", plain_format=True)
 
 # Type for exception handler
 HandlerCallable = Callable[[Request, Exception], Awaitable[Response]]
+
+_HTTP_STATUS_TO_ERROR_CODE = {
+    401: ErrorCode.UNAUTHORIZED,
+    403: ErrorCode.FORBIDDEN,
+    404: ErrorCode.NOT_FOUND,
+    405: ErrorCode.METHOD_NOT_ALLOWED,
+    413: ErrorCode.PAYLOAD_TOO_LARGE,
+    429: ErrorCode.RATE_LIMITED,
+}
 
 
 def format_error_response(code: ErrorCode, message: str | None) -> dict[str, Any]:
@@ -102,6 +112,38 @@ async def handle_core_exception(request: Request, exc: CoreException) -> JSONRes
         status_code=exc.status_code,
         content=format_error_response(exc.error_code, exc.message) | exc.body_extras(),
         headers=headers or None,
+    )
+
+
+async def handle_http_exception(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    """Translate framework-raised HTTPExceptions onto the error contract.
+
+    FastAPI's security utilities and Starlette's router raise bare
+    HTTPExceptions (missing credentials -> 401, unmatched path -> 404,
+    wrong method -> 405); without this handler they would answer
+    Starlette's default {"detail": ...} body and break the contract.
+    """
+    code = _HTTP_STATUS_TO_ERROR_CODE.get(
+        exc.status_code,
+        (
+            ErrorCode.INTERNAL_ERROR
+            if exc.status_code >= 500
+            else ErrorCode.PROCESSING_ERROR
+        ),
+    )
+    message = exc.detail if isinstance(exc.detail, str) else None
+    log_message = format_log_message(request, code, message, include_request_path=True)
+    if exc.status_code >= 500:
+        response_logger.error(log_message)
+    else:
+        response_logger.debug(log_message)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=format_error_response(code, message),
+        headers=exc.headers or None,
     )
 
 

@@ -1,7 +1,7 @@
 import json
 import logging
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 import pytest
@@ -213,3 +213,47 @@ async def test_every_exception_answers_the_error_contract(
     assert set(body) - ALLOWED_EXTRA_KEYS == {"code", "message"}
     assert body["code"] in set(ErrorCode)
     assert response.status_code == exception_class.status_code
+
+
+async def test_http_exception_handler_translates_401_and_passes_headers() -> None:
+    # FastAPI's Security utilities raise a bare HTTPException when credentials
+    # are missing; this is the smoke-tested regression for GET /v1/users/me.
+    unauthenticated = HTTPException(
+        status_code=401,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": 'Basic realm="docs"'},
+    )
+    response = await handlers.handle_http_exception(make_request(), unauthenticated)
+    assert response.status_code == 401
+    assert json.loads(response.body) == {
+        "code": "unauthorized",
+        "message": "Not authenticated",
+    }
+    assert response.headers["WWW-Authenticate"] == 'Basic realm="docs"'
+
+
+async def test_http_exception_handler_translates_404() -> None:
+    # Starlette's router raises this for an unmatched path.
+    not_found = HTTPException(status_code=404, detail="Not Found")
+    response = await handlers.handle_http_exception(make_request(), not_found)
+    assert response.status_code == 404
+    assert json.loads(response.body) == {"code": "not_found", "message": "Not Found"}
+
+
+async def test_http_exception_handler_translates_405() -> None:
+    wrong_method = HTTPException(status_code=405, detail="Method Not Allowed")
+    response = await handlers.handle_http_exception(make_request(), wrong_method)
+    assert response.status_code == 405
+    assert json.loads(response.body)["code"] == "method_not_allowed"
+
+
+async def test_http_exception_handler_maps_unknown_status_to_processing_error() -> None:
+    teapot = HTTPException(status_code=418, detail="I'm a teapot")
+    response = await handlers.handle_http_exception(make_request(), teapot)
+    assert json.loads(response.body)["code"] == "processing_error"
+
+
+async def test_http_exception_handler_maps_5xx_to_internal_error() -> None:
+    bad_gateway = HTTPException(status_code=502, detail="Bad Gateway")
+    response = await handlers.handle_http_exception(make_request(), bad_gateway)
+    assert json.loads(response.body)["code"] == "internal_error"

@@ -28,6 +28,7 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     INVALID_QUERY = "invalid_query"
     PROCESSING_ERROR = "processing_error"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
     # Produced only by the nginx error pages, never by the application.
     BAD_GATEWAY = "bad_gateway"
     GATEWAY_TIMEOUT = "gateway_timeout"
