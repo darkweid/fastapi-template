@@ -1,11 +1,11 @@
 from collections.abc import Awaitable
-import logging
 
 from fastapi import FastAPI
 
+from loggers import get_logger
 from src.core.redis.core import create_redis_client
 
-logger = logging.getLogger("redis")
+logger = get_logger(__name__)
 
 
 async def on_redis_startup(app: FastAPI, connection_url: str) -> None:

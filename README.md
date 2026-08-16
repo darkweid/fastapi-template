@@ -18,8 +18,8 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
 - Email service: templated mailer with async tasks for sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
-- Storage: async S3 adapter (`src/core/storage/s3`) with presign support.
-- Observability/resilience: structured logging (loggers), retry utils, health route.
+- Storage: async S3 adapter (`src/core/storage/s3`) with presign support, opt-in via `S3_ENABLED` (off by default; credentials are required only when it is on).
+- Observability/resilience: stdout-only structured logging (`loggers`, container-shipped, no file handler), retry utils, health route.
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
@@ -164,6 +164,7 @@ Redis increment however many entries carry it.
   make req-sync-dev
   ```
 - Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
+- S3 is off by default (`S3_ENABLED=false`); set it to `true` and fill `S3_BUCKET_NAME`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_REGION_NAME` to use file storage. `LOG_LEVEL` is read from the process environment (containers get it via `env_file`; a bare local run without it falls back to `INFO`).
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.

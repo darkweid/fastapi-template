@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from src.core.errors.exceptions import InfrastructureException
 from src.core.storage.s3.adapter import S3Adapter
 from src.core.storage.s3.interface import S3ClientProtocol
 from src.main.config import Config, get_settings
@@ -12,6 +13,20 @@ async def get_s3_adapter(
     settings: Annotated[Config, Depends(get_settings)],
 ) -> AsyncGenerator[S3ClientProtocol]:
     s3 = settings.s3
+    if not s3.S3_ENABLED:
+        raise InfrastructureException(
+            "S3 is disabled: set S3_ENABLED=true and provide S3 credentials"
+        )
+    # The require_credentials_when_enabled validator guarantees these are set
+    # whenever S3_ENABLED is true; this re-check narrows the Optional types
+    # without assert, which disappears under `python -O`.
+    if (
+        s3.S3_BUCKET_NAME is None
+        or s3.S3_REGION_NAME is None
+        or s3.S3_ACCESS_KEY_ID is None
+        or s3.S3_SECRET_ACCESS_KEY is None
+    ):
+        raise InfrastructureException("S3 credentials are not configured")
     async with S3Adapter(
         bucket=s3.S3_BUCKET_NAME,
         region=s3.S3_REGION_NAME,

@@ -1,8 +1,8 @@
-import logging
-
 from redis.asyncio import Redis
 
-logger = logging.getLogger(__name__)
+from loggers import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_redis_client(connection_url: str, *, decode_responses: bool = True) -> Redis:
