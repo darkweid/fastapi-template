@@ -152,6 +152,22 @@ async def test_request_validation_handler_shapes_errors_list() -> None:
     assert all(set(item) == {"field", "message"} for item in body["errors"])
 
 
+def test_format_validation_errors_keeps_non_leading_body_segment() -> None:
+    # Only the leading "body" prefix FastAPI adds is dropped; a field that is
+    # itself literally named "body" further down the path must survive.
+    errors = [
+        {
+            "loc": ("body", "payload", "body"),
+            "msg": "field required",
+            "type": "missing",
+        }
+    ]
+
+    formatted = handlers._format_validation_errors(errors)
+
+    assert formatted == [{"field": "payload.body", "message": "field required"}]
+
+
 async def test_backend_validation_handler_hides_details(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

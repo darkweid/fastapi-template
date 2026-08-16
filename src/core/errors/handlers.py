@@ -108,7 +108,12 @@ async def handle_core_exception(request: Request, exc: CoreException) -> JSONRes
 def _format_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, str]]:
     formatted = []
     for error in errors:
-        location = [str(part) for part in error.get("loc", ()) if part != "body"]
+        loc = tuple(error.get("loc", ()))
+        # Only FastAPI's leading "body" prefix is dropped; any other segment
+        # named "body" (e.g. a field literally called "body") is kept verbatim.
+        if loc and loc[0] == "body":
+            loc = loc[1:]
+        location = [str(part) for part in loc]
         formatted.append(
             {
                 "field": ".".join(location) or "body",
