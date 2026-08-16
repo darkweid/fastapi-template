@@ -74,15 +74,9 @@ class FakeUsersRepository:
         return self._updated_user
 
 
-class FakeVerificationNotifier:
+class FakeEmailNotifier:
     def __init__(self) -> None:
-        self.send_verification = AsyncMock()
-        self.release_throttle = AsyncMock()
-
-
-class FakeResetPasswordNotifier:
-    def __init__(self) -> None:
-        self.send_password_reset_email = AsyncMock()
+        self.send = AsyncMock()
         self.release_throttle = AsyncMock()
 
 
@@ -164,7 +158,7 @@ async def test_register_usecase_creates_user_and_sends_email(
     user = build_user(email="john@example.com")
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
+    notifier = FakeEmailNotifier()
     use_case = RegisterUseCase(uow=uow, notifier=notifier)
     data = CreateUserModel(
         first_name="John",
@@ -176,9 +170,7 @@ async def test_register_usecase_creates_user_and_sends_email(
     )
 
     call_order: list[str] = []
-    notifier.send_verification = AsyncMock(
-        side_effect=lambda **_: call_order.append("notify")
-    )
+    notifier.send = AsyncMock(side_effect=lambda **_: call_order.append("notify"))
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
     result = await use_case.execute(data=data)
@@ -186,12 +178,12 @@ async def test_register_usecase_creates_user_and_sends_email(
     assert isinstance(result, UserProfileViewModel)
     created_data = users_repo.create.await_args.kwargs["data"]
     assert created_data["password_hash"] != data.password
-    notifier.send_verification.assert_awaited_once()
+    notifier.send.assert_awaited_once()
     users_repo.create.assert_awaited_once()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
     assert call_order == ["notify", "commit"]
-    assert notifier.send_verification.await_args.kwargs == {
+    assert notifier.send.await_args.kwargs == {
         "uow": uow,
         "user": user,
     }
@@ -204,8 +196,8 @@ async def test_register_usecase_propagates_notifier_failure(
     user = build_user(email="john@example.com")
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
-    notifier.send_verification.side_effect = RuntimeError("outbox insert failed")
+    notifier = FakeEmailNotifier()
+    notifier.send.side_effect = RuntimeError("outbox insert failed")
     use_case = RegisterUseCase(uow=uow, notifier=notifier)
     data = CreateUserModel(
         first_name="John",
@@ -219,7 +211,7 @@ async def test_register_usecase_propagates_notifier_failure(
     with pytest.raises(RuntimeError, match="outbox insert failed"):
         await use_case.execute(data=data)
 
-    notifier.send_verification.assert_awaited_once()
+    notifier.send.assert_awaited_once()
     uow.commit.assert_not_awaited()
     uow.rollback.assert_awaited_once()
 
@@ -230,14 +222,14 @@ async def test_resend_verification_returns_success_on_missing_user(
 ) -> None:
     users_repo = FakeUsersRepository(user=None)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
+    notifier = FakeEmailNotifier()
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     data = ResendVerificationModel(email="missing@example.com")
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    notifier.send_verification.assert_not_awaited()
+    notifier.send.assert_not_awaited()
     uow.commit.assert_not_awaited()
 
 
@@ -248,20 +240,18 @@ async def test_resend_verification_success(
     user = build_user(is_verified=False)
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
+    notifier = FakeEmailNotifier()
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     call_order: list[str] = []
-    notifier.send_verification = AsyncMock(
-        side_effect=lambda **_: call_order.append("notify")
-    )
+    notifier.send = AsyncMock(side_effect=lambda **_: call_order.append("notify"))
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
     result = await use_case.execute(data=ResendVerificationModel(email=user.email))
 
     assert result == SuccessResponse(success=True)
     expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
-    notifier.send_verification.assert_awaited_once_with(
+    notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
     uow.commit.assert_awaited_once()
@@ -275,16 +265,16 @@ async def test_resend_verification_skips_if_throttled(
     user = build_user(is_verified=False)
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
-    notifier.send_verification.side_effect = InstanceProcessingException("throttled")
+    notifier = FakeEmailNotifier()
+    notifier.send.side_effect = InstanceProcessingException("throttled")
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     data = ResendVerificationModel(email=user.email)
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    notifier.send_verification.assert_awaited_once()
-    assert notifier.send_verification.await_args.kwargs["uow"] is uow
+    notifier.send.assert_awaited_once()
+    assert notifier.send.await_args.kwargs["uow"] is uow
     uow.commit.assert_not_awaited()
 
 
@@ -295,7 +285,7 @@ async def test_resend_verification_releases_throttle_when_commit_fails(
     user = build_user(is_verified=False)
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
+    notifier = FakeEmailNotifier()
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
     uow.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
 
@@ -315,14 +305,14 @@ async def test_resend_verification_user_already_verified(
     user = build_user(is_verified=True)
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeVerificationNotifier()
+    notifier = FakeEmailNotifier()
     use_case = SendVerificationUseCase(uow=uow, notifier=notifier)
 
     data = ResendVerificationModel(email=user.email)
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    notifier.send_verification.assert_not_awaited()
+    notifier.send.assert_not_awaited()
     uow.commit.assert_not_awaited()
 
 
@@ -333,13 +323,11 @@ async def test_reset_password_request_success(
     user = build_user()
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeResetPasswordNotifier()
+    notifier = FakeEmailNotifier()
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
 
     call_order: list[str] = []
-    notifier.send_password_reset_email = AsyncMock(
-        side_effect=lambda **_: call_order.append("notify")
-    )
+    notifier.send = AsyncMock(side_effect=lambda **_: call_order.append("notify"))
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
     data = SendResetPasswordRequestModel(email=user.email)
@@ -347,7 +335,7 @@ async def test_reset_password_request_success(
 
     assert result == SuccessResponse(success=True)
     expected_throttle_key = build_email_throttle_key("password-reset", user.email)
-    notifier.send_password_reset_email.assert_awaited_once_with(
+    notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
     uow.commit.assert_awaited_once()
@@ -361,7 +349,7 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
     user = build_user()
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeResetPasswordNotifier()
+    notifier = FakeEmailNotifier()
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
     uow.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
 
@@ -381,18 +369,16 @@ async def test_reset_password_request_skips_if_throttled(
     user = build_user()
     users_repo = FakeUsersRepository(user=user)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeResetPasswordNotifier()
-    notifier.send_password_reset_email.side_effect = InstanceProcessingException(
-        "throttled"
-    )
+    notifier = FakeEmailNotifier()
+    notifier.send.side_effect = InstanceProcessingException("throttled")
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
 
     data = SendResetPasswordRequestModel(email=user.email)
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    notifier.send_password_reset_email.assert_awaited_once()
-    assert notifier.send_password_reset_email.await_args.kwargs["uow"] is uow
+    notifier.send.assert_awaited_once()
+    assert notifier.send.await_args.kwargs["uow"] is uow
     uow.commit.assert_not_awaited()
 
 
@@ -402,14 +388,14 @@ async def test_reset_password_request_user_not_found(
 ) -> None:
     users_repo = FakeUsersRepository(user=None)
     uow = build_uow(fake_session, users_repo)
-    notifier = FakeResetPasswordNotifier()
+    notifier = FakeEmailNotifier()
     use_case = ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
 
     data = SendResetPasswordRequestModel(email="missing@example.com")
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    notifier.send_password_reset_email.assert_not_awaited()
+    notifier.send.assert_not_awaited()
     uow.commit.assert_not_awaited()
 
 

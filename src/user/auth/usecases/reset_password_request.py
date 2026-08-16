@@ -9,8 +9,8 @@ from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import build_email_throttle_key, mask_email
 from src.user.auth.schemas import SendResetPasswordRequestModel
-from src.user.auth.services.reset_password_notifier import (
-    ResetPasswordNotifier,
+from src.user.auth.services.email_notifier import (
+    EmailNotifier,
     get_reset_password_notifier,
 )
 
@@ -48,7 +48,7 @@ class ResetPasswordRequestUseCase:
     def __init__(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
-        notifier: ResetPasswordNotifier,
+        notifier: EmailNotifier,
     ) -> None:
         self.uow = uow
         self.notifier = notifier
@@ -65,7 +65,7 @@ class ResetPasswordRequestUseCase:
 
             throttle_key = build_email_throttle_key("password-reset", user.email)
             try:
-                await self.notifier.send_password_reset_email(
+                await self.notifier.send(
                     uow=uow,
                     user=user,
                     throttle_key=throttle_key,
@@ -97,6 +97,6 @@ def get_reset_password_request_use_case(
     uow: Annotated[
         ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
     ],
-    notifier: Annotated[ResetPasswordNotifier, Depends(get_reset_password_notifier)],
+    notifier: Annotated[EmailNotifier, Depends(get_reset_password_notifier)],
 ) -> ResetPasswordRequestUseCase:
     return ResetPasswordRequestUseCase(uow=uow, notifier=notifier)
