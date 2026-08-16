@@ -96,6 +96,9 @@ __pypackages__/
 # TLS material for the nginx TLS server (infra/nginx/tls.conf.example)
 infra/nginx/certs/
 
+# Database dumps produced by `make backup`
+backups/
+
 # Environments
 .env
 .venv

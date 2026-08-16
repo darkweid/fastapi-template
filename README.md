@@ -240,6 +240,44 @@ for `app.conf` once the certificate is in place.
 - `make test-integration` — integration suite against a throwaway PostgreSQL; `make test-all` — both suites
 - `make deploy-prod` — deploy on the box, building the image there
 - `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (what CD runs)
+- `make backup` — dump the database to `backups/<UTC timestamp>.dump`
+- `make restore f=backups/<file>.dump` — restore the database from a dump
+- `make psql` / `make redis-cli` — open an interactive shell inside the Postgres / Redis container
+- `make create-admin` — bootstrap the first admin account (env: `ADMIN_EMAIL`, `ADMIN_PASSWORD`) — see *Bootstrap the First Admin* below
+
+## Bootstrap the First Admin
+`make create-admin` runs `scripts/create_admin.py` inside the app container. It
+creates the first admin user, or — if an account with that email already
+exists — promotes it to `role=admin` and marks it active/verified without
+touching its stored password.
+
+Required env:
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD` — validated with the same strength rules as self-registration
+
+Optional env (defaults shown):
+- `ADMIN_FIRST_NAME` (`Admin`)
+- `ADMIN_LAST_NAME` (`User`)
+- `ADMIN_USERNAME` (the local part of `ADMIN_EMAIL`)
+- `ADMIN_PHONE` (`+10000000000`)
+
+```bash
+ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD='StrongPass1!' make create-admin
+```
+
+Exits with code `2` and a usage message if `ADMIN_EMAIL`/`ADMIN_PASSWORD` are
+missing or the password fails validation; the password itself is never logged
+or printed.
+
+## Manual Deploy Dispatch
+CD (`.github/workflows/deploy.yml`) normally runs automatically once CI
+succeeds on `main`. It can also be triggered manually — Actions tab → *CD* →
+*Run workflow*, or `gh workflow run deploy.yml` — via `workflow_dispatch`,
+with an optional `image_tag` input: leave it blank to deploy `sha-<12>` of the
+dispatched commit (`main` HEAD by default), or set it to redeploy a specific
+image CI already built and pushed to GHCR. The same `DEPLOY_ENABLED` gate and
+`deploy` concurrency group apply, so a manual run still waits behind any
+in-flight automatic deploy.
 
 ## Pre-commit Hooks
 - Install dev deps: `make req-sync-dev`

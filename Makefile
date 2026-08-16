@@ -96,6 +96,30 @@ migration: ## Create an Alembic revision: make migration m="add users table"
 	if [ -z "$$MSG" ]; then echo "Migration message cannot be empty"; exit 1; fi; \
 	$(DOCKER_COMPOSE_EXEC) $(APP_CONTAINER) alembic revision --autogenerate --message "$$MSG"
 
+.PHONY: backup
+backup: ## Dump the database to backups/<UTC timestamp>.dump
+	@mkdir -p backups
+	$(DOCKER_COMPOSE_EXEC) -T postgres sh -c 'pg_dump -U $$POSTGRES_USER -Fc $$POSTGRES_DB' > backups/$$(date -u +%Y%m%d-%H%M%S).dump
+
+.PHONY: restore
+restore: ## Restore the database from f=<backups/file.dump>
+	@test -n "$(f)" || { echo "Usage: make restore f=backups/<file>.dump"; exit 1; }
+	$(DOCKER_COMPOSE_EXEC) -T postgres sh -c 'pg_restore --clean --if-exists -U $$POSTGRES_USER -d $$POSTGRES_DB' < $(f)
+
+.PHONY: psql
+psql: ## Open psql inside the postgres container
+	$(DOCKER_COMPOSE_EXEC) postgres sh -c 'psql -U $$POSTGRES_USER $$POSTGRES_DB'
+
+.PHONY: redis-cli
+redis-cli: ## Open redis-cli inside the redis container
+	$(DOCKER_COMPOSE_EXEC) redis sh -c 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning'
+
+.PHONY: create-admin
+create-admin: ## Bootstrap the first admin (env: ADMIN_EMAIL, ADMIN_PASSWORD)
+# docker compose exec does not forward the caller's shell environment on its own; each
+# -e without a value re-requests it from the host process running this recipe.
+	$(DOCKER_COMPOSE_EXEC) -e ADMIN_EMAIL -e ADMIN_PASSWORD -e ADMIN_FIRST_NAME -e ADMIN_LAST_NAME -e ADMIN_USERNAME -e ADMIN_PHONE $(APP_CONTAINER) python -m scripts.create_admin
+
 ##@ Worker
 
 .PHONY: worker
