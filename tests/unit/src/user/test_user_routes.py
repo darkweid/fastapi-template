@@ -10,7 +10,12 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
-from src.user.auth.dependencies import get_current_user
+from src.user.auth.dependencies import (
+    AuthenticatedUser,
+    authenticate_access_token,
+    get_authenticated_user,
+    get_current_user,
+)
 from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.dependencies import get_user_service
@@ -69,7 +74,7 @@ async def test_get_user_profile(
     dependency_overrides: DependencyOverrides,
 ) -> None:
     user = build_user()
-    dependency_overrides.set(get_current_user, ProvideValue(user))
+    dependency_overrides.set(get_authenticated_user, ProvideValue(user))
 
     response = await async_client.get("/v1/users/me")
 
@@ -322,3 +327,54 @@ async def test_update_user_profile_rejects_invalid_payloads(
     response = await async_client.patch("/v1/users/me", json=payload)
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_blocked_user_cannot_update_profile(
+    async_client, dependency_overrides: DependencyOverrides
+) -> None:
+    blocked = build_user(is_active=False)
+    dependency_overrides.set(
+        authenticate_access_token,
+        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+    )
+
+    response = await async_client.patch("/v1/users/me", json={"username": "new-name"})
+
+    assert response.status_code == 403
+    assert response.json() == {"code": "user_blocked", "message": "User is blocked"}
+
+
+@pytest.mark.asyncio
+async def test_blocked_user_cannot_change_password(
+    async_client, dependency_overrides: DependencyOverrides
+) -> None:
+    blocked = build_user(is_active=False)
+    dependency_overrides.set(
+        authenticate_access_token,
+        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+    )
+
+    response = await async_client.patch(
+        "/v1/users/me/password",
+        json={"current_password": "Current-1", "password": "Password-1"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "user_blocked"
+
+
+@pytest.mark.asyncio
+async def test_unverified_user_still_reads_own_profile(
+    async_client, dependency_overrides: DependencyOverrides
+) -> None:
+    unverified = build_user(is_verified=False)
+    dependency_overrides.set(
+        authenticate_access_token,
+        ProvideValue(AuthenticatedUser(user=unverified, session_id="sid")),
+    )
+
+    response = await async_client.get("/v1/users/me")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(unverified.id)

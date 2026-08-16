@@ -20,7 +20,9 @@ from src.user.auth.csrf import build_csrf_token
 from src.user.auth.dependencies import (
     AuthenticatedUser,
     RefreshCredentials,
+    authenticate_access_token,
     get_access_by_refresh_token,
+    get_authenticated_user,
     get_current_user,
     get_current_user_with_session,
     get_user_id_from_token,
@@ -28,7 +30,12 @@ from src.user.auth.dependencies import (
     verify_csrf,
     verify_jti,
 )
-from src.user.auth.errors import CsrfFailedError, TokenExpiredError
+from src.user.auth.errors import (
+    CsrfFailedError,
+    TokenExpiredError,
+    UserBlockedError,
+    UserNotVerifiedError,
+)
 from src.user.auth.redis_keys import auth_redis_keys
 from src.user.models import User
 from tests.factories.token_factory import (
@@ -140,7 +147,7 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_success(
+async def test_authenticate_access_token_success(
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
 ) -> None:
@@ -154,34 +161,7 @@ async def test_get_current_user_success(
     )
     user_repository = FakeUserRepository(user)
 
-    result = await get_current_user(
-        token=token,
-        session=fake_session,
-        redis_client=fake_redis,
-        user_repository=user_repository,
-    )
-
-    assert isinstance(result, User)
-    assert result.id == user.id
-    user_repository.get_single.assert_awaited_once_with(fake_session, id=str(user.id))
-
-
-@pytest.mark.asyncio
-async def test_get_current_user_with_session_success(
-    fake_redis: InMemoryRedis,
-    fake_session: FakeAsyncSession,
-) -> None:
-    user = build_user()
-    payload = build_access_payload(str(user.id))
-    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
-    await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
-        payload["jti"],
-        ex=60,
-    )
-    user_repository = FakeUserRepository(user)
-
-    result = await get_current_user_with_session(
+    result = await authenticate_access_token(
         token=token,
         session=fake_session,
         redis_client=fake_redis,
@@ -195,7 +175,7 @@ async def test_get_current_user_with_session_success(
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_wrong_mode(
+async def test_authenticate_access_token_wrong_mode(
     fake_redis: InMemoryRedis, fake_session: FakeAsyncSession
 ) -> None:
     payload = build_refresh_payload("user-1")
@@ -207,12 +187,82 @@ async def test_get_current_user_wrong_mode(
     )
 
     with pytest.raises(UnauthorizedException):
-        await get_current_user(
+        await authenticate_access_token(
             token=token,
             session=fake_session,
             redis_client=fake_redis,
             user_repository=FakeUserRepository(None),
         )
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_returns_user_when_admitted() -> None:
+    user = build_user()
+    authenticated = AuthenticatedUser(user=user, session_id="sid")
+
+    result = await get_current_user(authenticated)
+
+    assert isinstance(result, User)
+    assert result.id == user.id
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_blocks_inactive_user() -> None:
+    blocked = build_user(is_active=False)
+    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+
+    with pytest.raises(UserBlockedError):
+        await get_current_user(authenticated)
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_blocks_unverified_user() -> None:
+    unverified = build_user(is_verified=False)
+    authenticated = AuthenticatedUser(user=unverified, session_id="sid")
+
+    with pytest.raises(UserNotVerifiedError):
+        await get_current_user(authenticated)
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_with_session_returns_when_admitted() -> None:
+    user = build_user()
+    authenticated = AuthenticatedUser(user=user, session_id="sid")
+
+    result = await get_current_user_with_session(authenticated)
+
+    assert result is authenticated
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_with_session_blocks_inactive_user() -> None:
+    blocked = build_user(is_active=False)
+    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+
+    with pytest.raises(UserBlockedError):
+        await get_current_user_with_session(authenticated)
+
+
+@pytest.mark.asyncio
+async def test_get_authenticated_user_bypasses_the_gate_for_a_blocked_user() -> None:
+    blocked = build_user(is_active=False)
+    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+
+    result = await get_authenticated_user(authenticated)
+
+    assert result is blocked
+
+
+@pytest.mark.asyncio
+async def test_get_authenticated_user_bypasses_the_gate_for_an_unverified_user() -> (
+    None
+):
+    unverified = build_user(is_verified=False)
+    authenticated = AuthenticatedUser(user=unverified, session_id="sid")
+
+    result = await get_authenticated_user(authenticated)
+
+    assert result is unverified
 
 
 @pytest.mark.asyncio
