@@ -49,6 +49,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
         """
         await self._exit_stack.__aenter__()
         await self._exit_stack.enter_async_context(safe_begin(self._session))
+        self._session.info["uow_active"] = True
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -60,10 +61,12 @@ class SQLAlchemyUnitOfWork(UnitOfWork[R]):
             exc_val: Exception value if an exception was raised
             exc_tb: Exception traceback if an exception was raised
         """
-        if exc_type is not None and not self._is_completed:
-            await self.rollback()
-
-        await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        try:
+            if exc_type is not None and not self._is_completed:
+                await self.rollback()
+            await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            self._session.info.pop("uow_active", None)
 
     def _ensure_not_completed(self) -> None:
         if self._is_completed:
