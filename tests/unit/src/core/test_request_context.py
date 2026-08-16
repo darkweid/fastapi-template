@@ -38,6 +38,7 @@ def test_resolve_request_id_accepts_max_length_id() -> None:
         "id;with;semicolons",
         "id\twith\ttab",
         "id_with_underscore",
+        "id-with-trailing-newline\n",
     ],
 )
 def test_resolve_request_id_generates_when_inbound_has_unsafe_characters(
@@ -46,6 +47,16 @@ def test_resolve_request_id_generates_when_inbound_has_unsafe_characters(
     resolved = resolve_request_id(inbound)
     assert uuid.UUID(hex=resolved)
     assert resolved != inbound
+
+
+def test_resolve_request_id_rejects_trailing_newline() -> None:
+    # Regression: re's $ matches just before a trailing "\n", so match()
+    # (unlike fullmatch()) would accept "valid-id\n" and let the newline
+    # reach logs/headers. Named separately from the parametrized case above
+    # to pin this exact regression.
+    resolved = resolve_request_id("valid-id-123\n")
+    assert resolved != "valid-id-123\n"
+    assert uuid.UUID(hex=resolved)
 
 
 def test_get_request_id_returns_none_outside_request_context() -> None:

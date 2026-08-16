@@ -21,6 +21,7 @@ location @error_payload_too_large {
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
+    add_header X-Request-ID $request_id always;
     return 413 '{"code":"payload_too_large","message":"Request body exceeds the maximum allowed size"}';
 }
 
@@ -29,6 +30,7 @@ location @error_bad_gateway {
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
+    add_header X-Request-ID $request_id always;
     return 502 '{"code":"bad_gateway","message":"The service is temporarily unreachable"}';
 }
 
@@ -37,6 +39,7 @@ location @error_gateway_timeout {
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
+    add_header X-Request-ID $request_id always;
     return 504 '{"code":"gateway_timeout","message":"The service took too long to respond"}';
 }
 

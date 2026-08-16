@@ -21,6 +21,10 @@ def get_request_id() -> str | None:
 
 def resolve_request_id(inbound: str | None) -> str:
     """Echo a safe inbound id, generate uuid4().hex otherwise."""
-    if inbound is not None and _REQUEST_ID_PATTERN.match(inbound):
+    # fullmatch, not match: with a $-anchored pattern, match() still accepts
+    # a string with a trailing "\n" (re's $ matches just before it), letting
+    # a newline-terminated id slip into logs/headers. fullmatch() requires
+    # consuming the whole string, so the trailing newline is rejected too.
+    if inbound is not None and _REQUEST_ID_PATTERN.fullmatch(inbound):
         return inbound
     return uuid.uuid4().hex
