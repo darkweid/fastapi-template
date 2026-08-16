@@ -153,8 +153,6 @@ packaging==26.3
     #   pytest
     #   taskiq
     #   wheel
-passlib==1.7.4
-    # via -r base.in
 pathspec==1.1.1
     # via
     #   black
@@ -254,8 +252,6 @@ truststore==0.10.4
     # via
     #   httpcore2
     #   httpx2
-types-passlib==1.7.7.20260211
-    # via -r dev.in
 types-pyyaml==6.0.12.20260724
     # via -r dev.in
 types-requests==2.33.0.20260712

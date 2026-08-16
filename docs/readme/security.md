@@ -34,9 +34,9 @@ If a consumed token is presented again, **all user sessions are invalidated imme
 
 `src/core/utils/security.py`
 
-- Algorithm: **Argon2** (OWASP-recommended, memory-hard).
+- Algorithm: **Argon2** (OWASP-recommended, memory-hard), via `argon2-cffi` directly.
 - Parameters: 64 MB memory, 3 iterations, 2 threads.
-- Verification runs via `asyncio.to_thread()` to avoid blocking the event loop.
+- Hashing and verification both run via `asyncio.to_thread()` to avoid blocking the event loop.
 - `needs_password_rehash()` detects outdated hash parameters; `_rehash_password_if_needed()` in the login flow transparently upgrades hashes on successful authentication.
 
 **Why it matters:** Argon2's memory-hardness makes GPU/ASIC brute-force impractical. Auto-rehash ensures that strengthening parameters takes effect without requiring users to reset passwords.
@@ -46,7 +46,7 @@ If a consumed token is presented again, **all user sessions are invalidated imme
 `src/user/auth/usecases/login.py`, `reset_password_request.py`, `resend_verification.py`
 
 All authentication endpoints return **identical responses** regardless of whether a user exists:
-- Login: verifies the password against a pre-computed dummy hash (`INVALID_CREDENTIALS_PASSWORD_HASH`) when the user is not found, producing constant execution time.
+- Login: verifies the password against a pre-computed dummy hash (`DUMMY_PASSWORD_HASH`) when the user is not found, producing constant execution time.
 - Password reset and resend verification: return `success=True` even if the email is not registered.
 
 **Why it matters:** Timing and response differences let attackers enumerate valid accounts. Dummy-hash verification eliminates the timing side-channel; uniform responses eliminate the content side-channel.

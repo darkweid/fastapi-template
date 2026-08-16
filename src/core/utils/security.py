@@ -1,76 +1,62 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import secrets
 
-from passlib.context import CryptContext
+from argon2 import PasswordHasher, extract_parameters
+from argon2.exceptions import InvalidHashError, VerificationError
 from pydantic import EmailStr
 
 from loggers import get_logger
 
 logger = get_logger(__name__)
 
-pwd_context = CryptContext(
-    schemes=["argon2"],
-    deprecated="auto",
-    argon2__memory_cost=65536,  # 64 MB
-    argon2__time_cost=3,
-    argon2__parallelism=2,
+password_hasher = PasswordHasher(
+    memory_cost=65536,  # 64 MB
+    time_cost=3,
+    parallelism=2,
 )
 
+# Every concurrent Argon2 call holds memory_cost (64 MB) for its duration.
+# A dedicated bounded executor caps hashing memory at max_workers * 64 MB
+# no matter how many requests arrive at once; the default executor would
+# allow up to min(32, cpu + 4) simultaneous hashes.
+_password_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="argon2")
 
-def hash_password(password: str) -> str:
-    """
-    Hashes a given plaintext password using a secure hashing algorithm.
+# Computed once at import. Login verifies against it when the user does not
+# exist, so failure timing matches a real password check; it must be a real
+# hash produced with the current parameters.
+DUMMY_PASSWORD_HASH: str = password_hasher.hash("dummy-password")
 
-    This function uses a password hashing context to hash the input password securely.
 
-    Args:
-        password: A plaintext password string to be hashed.
-
-    Returns:
-        The securely hashed password as a string.
-    """
-    return pwd_context.hash(password)
+async def hash_password(password: str) -> str:
+    """Hash a plaintext password with Argon2 off the event loop."""
+    return await asyncio.get_running_loop().run_in_executor(
+        _password_executor, password_hasher.hash, password
+    )
 
 
 def is_password_hash(value: str) -> bool:
-    """
-    Check whether the given value looks like a password hash.
-    """
-    return pwd_context.identify(value) is not None
+    """Check whether the given value is a structurally valid Argon2 hash."""
+    try:
+        extract_parameters(value)
+    except InvalidHashError:
+        return False
+    return True
 
 
 def needs_password_rehash(hashed_password: str) -> bool:
-    """
-    Determines if a hashed password needs to be rehashed to maintain security.
-
-    This function evaluates whether a given hashed password requires rehashing based
-    on the current settings of the password hashing context. Rehashing is necessary
-    if the algorithm, iteration count, or salt length has changed since the password
-    was first hashed.
-
-    Args:
-        hashed_password: The hashed password to be evaluated as a string.
-
-    Returns:
-        bool: True if the hashed password needs to be rehashed, False otherwise.
-    """
-    return pwd_context.needs_update(hashed_password)
+    """True when the hash was made with outdated parameters."""
+    return password_hasher.check_needs_rehash(hashed_password)
 
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verifies that a text password matches its hashed counterpart.
-
-    :param plain_password: The text password provided by the user.
-    :param hashed_password: The stored hashed password from the database.
-    :return: True if the passwords match, False otherwise.
-    """
+    """Verify a password against its hash off the event loop."""
     try:
-        return await asyncio.to_thread(
-            pwd_context.verify, plain_password, hashed_password
+        return await asyncio.get_running_loop().run_in_executor(
+            _password_executor, password_hasher.verify, hashed_password, plain_password
         )
-    except ValueError:
+    except (VerificationError, InvalidHashError, ValueError):
         return False
 
 

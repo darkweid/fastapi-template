@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.core.database.uow.application import ApplicationUnitOfWork
-from src.core.utils.security import hash_password
+from src.core.utils.security import password_hasher
 from src.user.enums import UserRole
 from src.user.repositories import UserRepository
 from tests.fakes.db import FakeAsyncSession
@@ -19,7 +19,7 @@ def _valid_user_data(**overrides: Any) -> dict[str, Any]:
         "email": "user@example.com",
         "username": "user",
         "phone_number": "+10000000000",
-        "password_hash": hash_password("password"),
+        "password_hash": password_hasher.hash("password"),
         "role": UserRole.VIEWER,
         "is_verified": True,
         "is_active": True,

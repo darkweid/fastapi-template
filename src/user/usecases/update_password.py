@@ -95,7 +95,8 @@ class UpdateUserPasswordUseCase:
                     "New password must differ from the current one."
                 )
 
-            update_data = {"password_hash": hash_password(data.password)}
+            new_password_hash = await hash_password(data.password)
+            update_data = {"password_hash": new_password_hash}
             updated_user = await uow.users.update(uow.session, update_data, id=user_id)
             if not updated_user:
                 raise InstanceNotFoundException("User not found.")
