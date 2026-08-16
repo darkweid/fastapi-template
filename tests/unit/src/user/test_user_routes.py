@@ -325,7 +325,7 @@ async def test_update_user_profile_returns_404_when_user_is_missing(
     "payload",
     [
         pytest.param({"first_name": ""}, id="first_name-below-min-length"),
-        pytest.param({"first_name": "x" * 51}, id="first_name-above-max-length"),
+        pytest.param({"first_name": "a" * 31}, id="first_name-above-max-length"),
         pytest.param({"username": "ab"}, id="username-below-min-length"),
         pytest.param({"username": "x" * 51}, id="username-above-max-length"),
         pytest.param({"nickname": "Grace"}, id="unknown-field-is-rejected"),

@@ -75,10 +75,24 @@ class BaseRepository(Generic[T]):
                     "searchable"
                 )
 
+    @staticmethod
+    def _ensure_commit_allowed(session: AsyncSession) -> None:
+        # A UoW owns its transaction: a direct commit under it would end the
+        # transaction while the UoW still believes it is open (rollback becomes
+        # impossible, uow.commit() would later "succeed" on nothing).
+        if session.info.get("uow_active"):
+            raise RuntimeError(
+                "commit=True inside an active UnitOfWork: the UoW owns the "
+                "transaction. Call the repository with commit=False and let "
+                "the UoW commit."
+            )
+
     async def create(
         self, session: AsyncSession, data: dict[str, Any], commit: bool = False
     ) -> T:
         """Create a new record using the provided session."""
+        if commit:
+            self._ensure_commit_allowed(session)
         try:
             instance = self.model(**data)
             session.add(instance)
@@ -236,6 +250,8 @@ class BaseRepository(Generic[T]):
         **filters: Any,
     ) -> T | None:
         """Update a record using the provided session."""
+        if commit:
+            self._ensure_commit_allowed(session)
         self._ensure_filters_present(filters)
         try:
             query = select(self.model).filter_by(**filters)
@@ -269,6 +285,8 @@ class BaseRepository(Generic[T]):
         self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
         """Delete a record using the provided session."""
+        if commit:
+            self._ensure_commit_allowed(session)
         self._ensure_filters_present(filters)
         try:
             query = select(self.model).filter_by(**filters)
@@ -402,6 +420,8 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
         """Soft delete a record, using the filters."""
+        if commit:
+            self._ensure_commit_allowed(session)
         filters.setdefault("is_deleted", False)
         try:
             query = select(self.model).filter_by(**filters)
@@ -434,6 +454,8 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         commit: bool = False,
     ) -> int:
         """Soft delete multiple records matching the typed filter conditions."""
+        if commit:
+            self._ensure_commit_allowed(session)
         if not filters.has_conditions():
             raise ValueError("At least one filter condition must be provided")
         merged = FilterCondition(
