@@ -189,7 +189,11 @@ def test_integrity_unique_violation() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 409
-    assert resp.json() == {"detail": "email"}
+    assert resp.json() == {
+        "code": "already_exists",
+        "message": "Resource already exists.",
+    }
+    assert "test@example.com" not in resp.text
 
 
 def test_integrity_not_null_violation() -> None:
@@ -199,7 +203,10 @@ def test_integrity_not_null_violation() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
 
 
 def test_integrity_foreign_key_violation() -> None:
@@ -209,7 +216,10 @@ def test_integrity_foreign_key_violation() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 400
-    assert resp.json() == {"detail": DummyForeignKey.detail}
+    assert resp.json() == {
+        "code": "invalid_reference",
+        "message": "Referenced resource does not exist.",
+    }
 
 
 def test_integrity_check_violation() -> None:
@@ -219,7 +229,10 @@ def test_integrity_check_violation() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
 
 
 def test_integrity_unknown_violation_defaults_to_500() -> None:
@@ -229,7 +242,10 @@ def test_integrity_unknown_violation_defaults_to_500() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
 
 
 def test_operational_error() -> None:
@@ -238,9 +254,10 @@ def test_operational_error() -> None:
 
     resp = client.get("/boom")
 
-    assert resp.status_code == 500
+    assert resp.status_code == 503
     assert resp.json() == {
-        "detail": "Database connection error. Please try again later."
+        "code": "service_unavailable",
+        "message": "Database is temporarily unavailable. Please try again later.",
     }
 
 
@@ -251,7 +268,10 @@ def test_programming_error() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": "Database query error."}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
 
 
 def test_unexpected_error_middleware() -> None:
@@ -267,7 +287,10 @@ def test_unexpected_error_middleware() -> None:
     resp = client.get("/boom")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
 
 
 def test_cached_statement_plan_error_is_not_retried() -> None:
@@ -277,7 +300,10 @@ def test_cached_statement_plan_error_is_not_retried() -> None:
     resp = client.get("/cached-statement-plan")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
     assert app.state.cached_statement_attempts == 1
 
 
@@ -287,9 +313,10 @@ def test_invalidated_connection_error_is_not_retried() -> None:
 
     resp = client.get("/invalidated-connection")
 
-    assert resp.status_code == 500
+    assert resp.status_code == 503
     assert resp.json() == {
-        "detail": "Database connection error. Please try again later."
+        "code": "service_unavailable",
+        "message": "Database is temporarily unavailable. Please try again later.",
     }
     assert app.state.invalidated_connection_attempts == 1
 
@@ -301,5 +328,8 @@ def test_database_error_middleware_does_not_retry_integrity_error() -> None:
     resp = client.get("/integrity-error")
 
     assert resp.status_code == 500
-    assert resp.json() == {"detail": middleware.UNEXPECTED_ERROR_DETAIL}
+    assert resp.json() == {
+        "code": "internal_error",
+        "message": middleware.UNEXPECTED_ERROR_DETAIL,
+    }
     assert app.state.integrity_attempts == 1
