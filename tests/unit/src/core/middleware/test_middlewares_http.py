@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from sqlalchemy.exc import (
 )
 
 import src.core.middleware as middleware
+from src.core.request_context import _REQUEST_ID_PATTERN
 
 
 class DummyUnique:
@@ -333,3 +336,66 @@ def test_database_error_middleware_does_not_retry_integrity_error() -> None:
         "message": middleware.UNEXPECTED_ERROR_DETAIL,
     }
     assert app.state.integrity_attempts == 1
+
+
+def test_response_carries_generated_request_id_when_none_supplied() -> None:
+    app = _make_app(lambda: None)
+    client = TestClient(app)
+
+    resp = client.get("/ok")
+
+    assert _REQUEST_ID_PATTERN.match(resp.headers["X-Request-ID"])
+
+
+def test_response_echoes_valid_inbound_request_id() -> None:
+    app = _make_app(lambda: None)
+    client = TestClient(app)
+
+    resp = client.get("/ok", headers={"X-Request-ID": "caller-supplied-id-123"})
+
+    assert resp.headers["X-Request-ID"] == "caller-supplied-id-123"
+
+
+def test_response_replaces_invalid_inbound_request_id() -> None:
+    app = _make_app(lambda: None)
+    client = TestClient(app)
+
+    resp = client.get("/ok", headers={"X-Request-ID": "not valid\r\nheader value"})
+
+    returned_id = resp.headers["X-Request-ID"]
+    assert returned_id != "not valid\r\nheader value"
+    assert _REQUEST_ID_PATTERN.match(returned_id)
+
+
+def test_error_response_still_carries_request_id() -> None:
+    # unexpected_error_middleware converts the exception into a response
+    # before request_id_middleware sees it - the header must still be set.
+    app = _make_app(lambda: RuntimeError("boom"))
+    client = TestClient(app)
+
+    resp = client.get("/boom")
+
+    assert resp.status_code == 500
+    assert _REQUEST_ID_PATTERN.match(resp.headers["X-Request-ID"])
+
+
+def test_timing_log_record_carries_the_response_request_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Pins middleware registration order: request_id_middleware must wrap
+    # request_timing_middleware so the id is still set in the contextvar
+    # when the timing log line is emitted.
+    app = _make_app(lambda: None)
+    client = TestClient(app)
+
+    middleware.timing_logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="src.request.timing")
+    try:
+        resp = client.get("/ok")
+    finally:
+        middleware.timing_logger.removeHandler(caplog.handler)
+
+    timing_records = [r for r in caplog.records if r.name == "src.request.timing"]
+    assert timing_records
+    assert timing_records[0].request_id != "-"
+    assert timing_records[0].request_id == resp.headers["X-Request-ID"]

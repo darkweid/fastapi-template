@@ -6,7 +6,12 @@ import pytest
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.schemas import MailTemplateBodyFile, MailTemplateDataBody
 from src.core.email_service.service import EmailService
-from src.core.email_service.tasks import send_email_task, send_email_with_file_task
+from src.core.email_service.tasks import (
+    send_email_task,
+    send_email_with_s3_attachments_task,
+)
+from src.core.errors.exceptions import InfrastructureException
+from src.main.config import config
 from tests.fakes.email import MockMailer
 
 
@@ -27,6 +32,16 @@ class FailingMailer(AbstractMailer):
         recipients: list[str],
         body_text: str,
         file_paths: list[Path],
+        subtype: str = "plain",
+    ) -> None:
+        raise RuntimeError("send failed")
+
+    async def send_with_attachment_bytes(
+        self,
+        subject: str,
+        recipients: list[str],
+        body_text: str,
+        attachments: list[tuple[str, bytes]],
         subtype: str = "plain",
     ) -> None:
         raise RuntimeError("send failed")
@@ -99,7 +114,7 @@ async def test_send_email_with_single_attachment(
     data = mock_mailer.sent_attachments[0]
     assert data["recipients"] == ["user@example.com"]
     assert data["file_paths"] == [file_path]
-    assert not file_path.exists()
+    assert file_path.exists()  # cleanup defaults to False
 
 
 @pytest.mark.asyncio
@@ -117,7 +132,7 @@ async def test_send_email_with_attachment_all_invalid(
             file_path=file_path,
         )
 
-    assert not file_path.exists()
+    assert file_path.exists()  # cleanup defaults to False
 
 
 @pytest.mark.asyncio
@@ -139,6 +154,27 @@ async def test_send_email_with_multiple_attachments(
     assert len(mock_mailer.sent_attachments) == 1
     data = mock_mailer.sent_attachments[0]
     assert set(data["file_paths"]) == {file1, file2}
+    assert all(p.exists() for p in [file1, file2])  # cleanup defaults to False
+
+
+@pytest.mark.asyncio
+async def test_send_email_with_multiple_attachments_cleanup_true_removes_files(
+    tmp_path: Path, email_service: EmailService, mock_mailer: MockMailer
+):
+    file1 = tmp_path / "doc1.pdf"
+    file2 = tmp_path / "doc2.csv"
+    file1.write_text("PDF content")
+    file2.write_text("CSV content")
+
+    await email_service.send_email_with_attachments(
+        subject="Multiple Files",
+        recipients="user@example.com",
+        body_text="Here are multiple attachments.",
+        file_paths=[file1, file2],
+        cleanup=True,
+    )
+
+    assert len(mock_mailer.sent_attachments) == 1
     assert all(not p.exists() for p in [file1, file2])
 
 
@@ -174,7 +210,7 @@ async def test_send_email_with_attachment_unusual_file_types(
     )
 
     assert len(mock_mailer.sent_attachments) == 1
-    assert not file_path.exists()
+    assert file_path.exists()  # cleanup defaults to False
 
 
 @pytest.mark.asyncio
@@ -215,24 +251,48 @@ async def test_send_template_email_with_delay_queues_task(
 
 @pytest.mark.asyncio
 async def test_send_file_to_email_with_delay_queues_task(
-    email_service: EmailService, email_dispatcher: AsyncMock, tmp_path: Path
+    email_service: EmailService,
+    email_dispatcher: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    file_path = tmp_path / "file.txt"
-    file_path.write_text("content")
+    monkeypatch.setattr(config.s3, "S3_ENABLED", True)
 
     await email_service.send_file_to_email_with_delay(
         subject="Files",
         recipients="user@example.com",
-        attachments=[file_path],
+        attachment_keys=["uploads/report.pdf"],
+        cleanup=True,
     )
 
-    assert email_dispatcher.enqueue.await_args.args[0] is send_email_with_file_task
+    assert (
+        email_dispatcher.enqueue.await_args.args[0]
+        is send_email_with_s3_attachments_task
+    )
     assert email_dispatcher.enqueue.await_args.args[1:] == (
         "Files",
         ["user@example.com"],
-        [str(file_path)],
+        ["uploads/report.pdf"],
         "plain",
     )
+    assert email_dispatcher.enqueue.await_args.kwargs == {"cleanup": True}
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_email_with_delay_raises_when_s3_disabled(
+    email_service: EmailService,
+    email_dispatcher: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config.s3, "S3_ENABLED", False)
+
+    with pytest.raises(InfrastructureException):
+        await email_service.send_file_to_email_with_delay(
+            subject="Files",
+            recipients="user@example.com",
+            attachment_keys=["uploads/report.pdf"],
+        )
+
+    email_dispatcher.enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -278,6 +338,26 @@ async def test_send_email_with_attachments_cleans_up_on_error(
             recipients="user@example.com",
             body_text="body",
             file_paths=[file_path],
+            cleanup=True,
         )
 
     assert not file_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_send_email_with_attachments_keeps_file_on_error_without_cleanup(
+    tmp_path: Path,
+) -> None:
+    email_service = EmailService(FailingMailer())
+    file_path = tmp_path / "kept.txt"
+    file_path.write_text("kept")
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        await email_service.send_email_with_attachments(
+            subject="Cleanup",
+            recipients="user@example.com",
+            body_text="body",
+            file_paths=[file_path],
+        )
+
+    assert file_path.exists()

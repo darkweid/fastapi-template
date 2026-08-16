@@ -46,6 +46,11 @@ Benefits:
 **External systems (S3, Email, Queues, HTTP clients)**
 - Always at the UseCase level or in infra adapters used by a UseCase.
 
+### Routers Never Receive a DB Session
+Routers only inject the Service or UseCase they call; the session itself stops one layer earlier. No exceptions — the system probes get theirs the same way, through `get_readiness_service`, not through a session dependency on the route.
+- `BaseService.__init__(repository, session, response_schema=None)` takes the session as a constructor argument; the DI provider that builds the service (e.g. `get_user_service`, `get_readiness_service`) resolves it via `Depends(get_session)` and passes it in. Every CRUD method then forwards `self.session` to the repository — no method still accepts a `session` argument.
+- Anti-pattern: injecting `AsyncSession` into a router, or passing a session from a router into a service method.
+
 ### Repository Access
 - All DB work goes through repositories; no direct SQL in usecases/services/routers.
 - Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.
@@ -110,6 +115,11 @@ in the UseCase, compare the field against the caller, raise
 ownership is visible right in the path. Every endpoint that takes a foreign
 identifier must carry a test proving "foreign object → 404".
 
+`src/note/` (`policies.ensure_note_access`, used by the update/delete
+UseCases and by `GET /v1/notes/{note_id}`) is the worked example of the
+`owner_id` variant: same 404-on-mismatch rule, an optional `has_permission`
+escape hatch for roles that may reach another user's object.
+
 ---
 ## Project Layout
 ```
@@ -157,6 +167,7 @@ identifier must carry a test proving "foreign object → 404".
 │   │   ├── storage/                     # Storage adapters (S3)
 │   │   ├── utils/                       # Utility functions
 │   │   ├── middleware.py                # Application middleware setup
+│   │   ├── request_context.py           # Request-id ContextVar shared by middleware and logging
 │   │   ├── schemas.py                   # Core data validation schemas
 │   │   ├── services.py                  # Core services shared across modules
 │   │   └── validations.py               # Data validation utilities
@@ -168,13 +179,23 @@ identifier must carry a test proving "foreign object → 404".
 │   │   ├── route_logging.py             # Utility for logging routes summary
 │   │   └── web.py                       # FastAPI application setup
 │   │
+│   ├── note/                            # Reference flat domain module - copy this to start a new one
+│   │   ├── dependencies.py              # Note DI providers
+│   │   ├── models.py                    # Note data model (ORM)
+│   │   ├── policies.py                  # Pure ownership rule (ensure_note_access)
+│   │   ├── repositories.py              # Note data repository layer
+│   │   ├── routers.py                   # Note API endpoints
+│   │   ├── schemas.py                   # Note Pydantic schemas
+│   │   ├── services.py                  # Note business logic service
+│   │   └── usecases/                    # Note-related use cases
+│   │
 │   ├── system/                          # System-level functionality
 │   │   ├── dependencies.py              # System DI providers
 │   │   ├── routers.py                   # System API endpoints (live, ready, health, time)
 │   │   ├── schemas.py                   # System Pydantic schemas
 │   │   └── services.py                  # Health check service
 │   │
-│   └── user/                            # User functionality
+│   └── user/                            # Auth infrastructure (accounts, sessions, permissions)
 │       ├── auth/                        # Authentication logic for regular users
 │       ├── dependencies.py              # User dependencies
 │       ├── models.py                    # User data models (ORM)
@@ -197,6 +218,7 @@ identifier must carry a test proving "foreign object → 404".
 │       └── src/                         # Mirrors src/ layout
 │           ├── core/                    # Core component tests
 │           ├── main/                    # Main module tests
+│           ├── note/                    # Note reference module tests
 │           ├── system/                  # System routes tests
 │           └── user/                    # User & auth tests
 │

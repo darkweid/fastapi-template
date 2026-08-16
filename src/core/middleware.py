@@ -17,6 +17,7 @@ from starlette.responses import Response
 from loggers import get_logger
 from src.core.errors.codes import ErrorCode
 from src.core.errors.handlers import format_error_response
+from src.core.request_context import request_id_var, resolve_request_id
 
 logger = get_logger(__name__)
 timing_logger = get_logger("src.request.timing", plain_format=True)
@@ -162,6 +163,24 @@ def register_middlewares(app: FastAPI) -> None:
             )
             sentry_sdk.capture_exception(e)
             return _internal_error_response()
+
+    @app.middleware("http")
+    async def request_id_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Registered last so it wraps every other custom middleware here
+        # (Starlette runs the most-recently-registered middleware outermost):
+        # the id is set before request_timing_middleware runs and only reset
+        # after it has logged, and the header lands on responses produced by
+        # database_error_middleware/unexpected_error_middleware too.
+        resolved_id = resolve_request_id(request.headers.get("x-request-id"))
+        token = request_id_var.set(resolved_id)
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_var.reset(token)
+        response.headers["X-Request-ID"] = resolved_id
+        return response
 
 
 def handle_postgresql_error(

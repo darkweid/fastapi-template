@@ -1,9 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database.session import get_session
 from src.core.utils.datetime_utils import get_utc_now
 from src.system.dependencies import get_health_service, get_readiness_service
 from src.system.schemas import HealthCheckResponse, ProbeResponse, ServerTimeResponse
@@ -23,10 +21,9 @@ async def check_liveness() -> ProbeResponse:
 @router.head("/ready/", response_model=ProbeResponse, include_in_schema=False)
 async def check_readiness(
     readiness_service: Annotated[ReadinessService, Depends(get_readiness_service)],
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProbeResponse:
     """Readiness probe: reports whether the service can reach its database."""
-    await readiness_service.ensure_ready(session=session)
+    await readiness_service.ensure_ready()
     return ProbeResponse()
 
 
@@ -34,10 +31,9 @@ async def check_readiness(
 @router.head("/health/", response_model=HealthCheckResponse, include_in_schema=False)
 async def check_health(
     health_service: Annotated[HealthService, Depends(get_health_service)],
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> HealthCheckResponse:
     """Detailed health report with the status of every dependency."""
-    return await health_service.get_status(session=session)
+    return await health_service.get_status()
 
 
 @router.get("/time/", response_model=ServerTimeResponse)

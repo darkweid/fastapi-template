@@ -45,3 +45,7 @@ class Permission(StrEnum):
     # System permissions
     VIEW_LOGS = "view_logs"
     MANAGE_BACKUPS = "manage_backups"
+
+    # Note permissions
+    VIEW_NOTES = "view_notes"
+    MANAGE_NOTES = "manage_notes"

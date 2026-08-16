@@ -152,6 +152,16 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 
 **Why it matters:** Error messages are an information disclosure vector. Generic responses prevent attackers from inferring database schema, business logic, or technology stack from error output.
 
+## Request ID Propagation
+
+`src/core/request_context.py`, `src/core/middleware.py`, `loggers/__init__.py`
+
+- An inbound `X-Request-ID` is only echoed back when it matches `^[A-Za-z0-9-]{1,64}$`; anything else (empty, overlong, containing CR/LF or other characters) is replaced with a freshly generated id, so a client cannot inject arbitrary content into log lines or the response header via this header.
+- Behind Nginx the id is always the one Nginx generated (`proxy_set_header X-Request-ID $request_id;` in `infra/nginx/proxy.inc`), which already satisfies the pattern; the application-level validation is the fallback for direct access (dev, tests).
+- The id is held in a `ContextVar` for the lifetime of the request and stamped onto every log record by `RequestIDFilter`, so correlating one request's log lines never depends on trusting message text.
+
+**Why it matters:** A client-controlled header echoed unvalidated into logs or headers is a log/response injection vector (CRLF, control characters, oversized values). Validating it at the boundary keeps request correlation useful without opening that door.
+
 ## OTP Generation
 
 `src/core/utils/security.py`
@@ -344,5 +354,6 @@ another" once a shared cache sits on the request path.
 - `infra/redis.conf` enables AOF (`appendfsync everysec`) alongside the RDB snapshots, since this Redis now also holds the task stream: an RDB-only setup can lose queued jobs written since the last snapshot on a crash.
 - `taskiq_worker/broker.py`'s `STREAM_MAXLEN` bounds stream growth (acked entries are never otherwise removed), sized well above any realistic backlog for this workload — `XADD MAXLEN` trims oldest-first regardless of ack state, so a cap sized too close to real traffic could discard unacknowledged work.
 - PII lifecycle: task payloads (email addresses, etc.) persist in the Redis stream until `STREAM_MAXLEN` trims them and live on disk in the AOF/RDB volume until then. Outbox rows keep the same task args in Postgres for 7 days (`outbox_purge`, `src/core/outbox/tasks.py`). Worker-side dedup markers (`taskiq:done:{task_id}`) hold no payload, just a 1-hour TTL marker.
+- `send_email_with_s3_attachments_task` (`src/core/email_service/tasks.py`) carries S3 object keys, never file bytes or local paths — the attachment content itself never touches the Redis stream or the outbox row, only the key string does. The task deletes the objects only after a confirmed send and only when called with `cleanup=True`, so a retry can re-download and re-send the same keys; a task picked up after S3 was disabled fails with `InfrastructureException` instead of silently dropping the attachment.
 
 **Why it matters:** taskiq serializes task arguments onto the Redis stream. Passing tokens or sensitive objects through it expands the attack surface. Creating tokens inside the task keeps sensitive material within the application boundary.

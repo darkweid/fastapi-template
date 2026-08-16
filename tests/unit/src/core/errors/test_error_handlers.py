@@ -70,7 +70,7 @@ def _patch_response_logger(monkeypatch: pytest.MonkeyPatch) -> logging.Logger:
 
 
 def test_format_log_message_masks_sensitive_data() -> None:
-    request = make_request(headers=[(b"x-request-id", b"req-123")])
+    request = make_request()
 
     message = handlers.format_log_message(
         request,
@@ -80,9 +80,22 @@ def test_format_log_message_masks_sensitive_data() -> None:
         include_request_path=True,
     )
 
-    assert "[req-123] [Unauthorized] GET /v1/resource | token leaked" in message
+    # No request-id prefix: the id is carried by the log record/format
+    # (RequestIDFilter), not embedded in the message text.
+    assert "[Unauthorized] GET /v1/resource | token leaked" in message
     assert "token=***" in message
     assert "note='safe'" in message
+
+
+def test_format_log_message_does_not_read_inbound_request_id_header() -> None:
+    # A client-supplied X-Request-ID header must never be echoed into the
+    # log message text; the id used comes from the contextvar via the
+    # logging filter/format, not from request headers here.
+    request = make_request(headers=[(b"x-request-id", b"req-123")])
+
+    message = handlers.format_log_message(request, "error", "boom")
+
+    assert "req-123" not in message
 
 
 def test_format_log_message_truncates_long_text() -> None:

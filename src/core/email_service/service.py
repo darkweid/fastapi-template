@@ -10,10 +10,12 @@ from src.core.email_service.enums import MessageType
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.tasks import (
     send_email_task,
-    send_email_with_file_task,
+    send_email_with_s3_attachments_task,
 )
+from src.core.errors.exceptions import InfrastructureException
 from src.core.outbox.dispatcher import TaskDispatcher
 from src.core.utils.security import mask_email
+from src.main.config import config
 
 logger = get_logger(__name__)
 
@@ -88,21 +90,29 @@ class EmailService:
         self,
         subject: str,
         recipients: str | list[str],
-        attachments: list[Path],
+        attachment_keys: list[str],
         subtype: MessageType = MessageType.PLAIN,
+        *,
+        cleanup: bool = False,
     ) -> None:
+        if not config.s3.S3_ENABLED:
+            raise InfrastructureException(
+                "S3 is disabled: set S3_ENABLED=true and provide S3 credentials"
+            )
+
         validated_recipients = self._normalize_and_validate_recipients(recipients)
 
         await self._require_dispatcher().enqueue(
-            send_email_with_file_task,
+            send_email_with_s3_attachments_task,
             subject,
             [str(e) for e in validated_recipients],
-            [str(path) for path in attachments],
+            attachment_keys,
             subtype.value,
+            cleanup=cleanup,
         )
 
         logger.debug(
-            "Attachment email task queued for %s",
+            "S3 attachment email task queued for %s",
             [mask_email(str(e)) for e in validated_recipients],
         )
 
@@ -113,6 +123,8 @@ class EmailService:
         body_text: str,
         file_paths: list[Path],
         subtype: MessageType = MessageType.PLAIN,
+        *,
+        cleanup: bool = False,
     ) -> None:
         try:
             validated_recipients = self._normalize_and_validate_recipients(recipients)
@@ -134,9 +146,10 @@ class EmailService:
             raise
 
         finally:
-            for file_path in file_paths:
-                with contextlib.suppress(FileNotFoundError, PermissionError):
-                    os.unlink(file_path)
+            if cleanup:
+                for file_path in file_paths:
+                    with contextlib.suppress(FileNotFoundError, PermissionError):
+                        os.unlink(file_path)
 
     async def send_email_with_single_attachment(
         self,
@@ -145,6 +158,8 @@ class EmailService:
         body_text: str,
         file_path: Path,
         subtype: MessageType = MessageType.PLAIN,
+        *,
+        cleanup: bool = False,
     ) -> None:
         """
         Send an email with a single attachment.
@@ -155,6 +170,7 @@ class EmailService:
             body_text (str): Email body.
             file_path (Path): Path to the single file attachment.
             subtype (MessageType): Email content type. Defaults to plain.
+            cleanup (bool): Delete the file after a successful send. Defaults to False.
         """
         await self.send_email_with_attachments(
             subject=subject,
@@ -162,6 +178,7 @@ class EmailService:
             body_text=body_text,
             file_paths=[file_path],
             subtype=subtype,
+            cleanup=cleanup,
         )
 
     def _require_dispatcher(self) -> TaskDispatcher:

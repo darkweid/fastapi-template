@@ -6,6 +6,7 @@ from src.core.database.repositories import BaseRepository
 from src.core.database.uow.abstract import R, RepositoryProtocol
 from src.core.database.uow.sqlalchemy import RepositoryInstance, SQLAlchemyUnitOfWork
 from src.core.outbox.repositories import OutboxRepository
+from src.note.repositories import NoteRepository
 from src.user.repositories import UserRepository
 
 
@@ -61,6 +62,11 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork[R]):
     def outbox(self) -> OutboxRepository:
         """Get the OutboxRepository."""
         return self._get_repository(OutboxRepository)
+
+    @property
+    def notes(self) -> NoteRepository:
+        """Get the NoteRepository."""
+        return self._get_repository(NoteRepository)
 
     # Add more repository properties as needed
 
