@@ -317,7 +317,9 @@ class BaseRepository(Generic[T]):
 
     def _apply_for_update(self, query: Any) -> Any:
         """Limit row locking to the current model table to avoid outer-join issues."""
-        table = getattr(self.model, "__table__")
+        # getattr, not attribute access: SQLAlchemy's declarative stubs type
+        # __table__ narrowly enough that direct access loses .primary_key.columns.
+        table = getattr(self.model, "__table__")  # noqa: B009
         pk_columns = tuple(
             cast("ColumnElement[Any]", column) for column in table.primary_key.columns
         )
@@ -428,8 +430,12 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
             result = await session.execute(query)
             instance: T | None = result.scalars().first()
             if instance:
-                setattr(instance, "is_deleted", True)
-                setattr(instance, "deleted_at", get_utc_now())
+                # setattr, not attribute access: T is bound to the declarative
+                # base only, not to SoftDeleteMixin, so mypy cannot see these
+                # fields on it; _assert_softdelete_fields() guarantees they
+                # exist on the actual model at runtime.
+                setattr(instance, "is_deleted", True)  # noqa: B010
+                setattr(instance, "deleted_at", get_utc_now())  # noqa: B010
                 if commit:
                     await session.commit()
                     await session.refresh(instance)
