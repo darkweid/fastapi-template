@@ -23,7 +23,7 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Type safety: mypy in strict mode; strict settings (no implicit Optional, no untyped defs, disallow Any in generics) keep interfaces honest and catch regressions early.
 - Tooling: pre-commit/ruff/black/mypy, pytest (asyncio), Alembic migrations.
 
-### Error responses
+## Error responses
 
 Every error, from the application and from nginx alike, has one flat shape:
 
