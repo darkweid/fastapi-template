@@ -35,7 +35,8 @@ class UpdateNoteUseCase:
     2) Enforce ownership/permission via ensure_note_access.
     3) Apply the changed fields.
     4) Flush pending DB changes.
-    5) Commit the transaction.
+    5) Refresh the server-generated updated_at value.
+    6) Commit the transaction.
 
     Side effects:
     - Updates the note record.
@@ -69,6 +70,13 @@ class UpdateNoteUseCase:
             if updated_note is None:
                 raise InstanceNotFoundException("Note not found.")
             await uow.flush()
+            # updated_at has onupdate=func.now(), a server-side expression: the
+            # UPDATE does not return its value, so SQLAlchemy leaves the attribute
+            # expired after flush. Refreshing it here, inside the still-open
+            # transaction, is required - reading it after commit instead would
+            # need an implicit reload with no transaction/greenlet context left to
+            # do it in, and serialization below would fail.
+            await uow.session.refresh(updated_note, ["updated_at"])
             await uow.commit()
             logger.debug(
                 "[UpdateNote] note %s updated by user %s.", note_id, current_user.id

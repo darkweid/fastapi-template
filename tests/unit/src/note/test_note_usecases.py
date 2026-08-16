@@ -114,6 +114,11 @@ async def test_update_note_owner_succeeds(fake_session: FakeAsyncSession) -> Non
 
     assert result.title == "New title"
     uow.commit.assert_awaited_once()
+    # updated_at has onupdate=func.now(), a server-side expression: SQLAlchemy
+    # leaves it expired after an UPDATE flush, so it must be explicitly
+    # refreshed before it is read again (serialization, below) or after commit
+    # closes the transaction - see UpdateNoteUseCase.execute.
+    fake_session.refresh.assert_awaited_once_with(updated_note, ["updated_at"])
 
 
 @pytest.mark.asyncio
