@@ -28,7 +28,6 @@ def _base_app_config_data() -> dict[str, object]:
         "DEBUG": False,
         "LOCAL_TIMEZONE": "UTC",
         "LOG_LEVEL": "INFO",
-        "LOG_LEVEL_FILE": "WARNING",
         "CORS_ALLOWED_ORIGINS": "https://app.example.com",
         "CORS_ALLOWED_CREDENTIALS": True,
         "CORS_ALLOWED_METHODS": "*",

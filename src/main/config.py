@@ -1,14 +1,11 @@
 from functools import lru_cache
 import json
-import logging
 import os
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-logger = logging.getLogger(__name__)
 
 # Shortest secret the app accepts anywhere. Matches the HMAC-SHA256 block size,
 # which is the weakest signature the JWT algorithm allowlist permits.
@@ -246,7 +243,6 @@ class AppConfig(BaseModel):
     LOCAL_TIMEZONE: str
 
     LOG_LEVEL: str
-    LOG_LEVEL_FILE: str
 
     CORS_ALLOWED_ORIGINS: list[str] = Field([])
     CORS_ALLOWED_CREDENTIALS: bool = True
