@@ -2,8 +2,9 @@ name: CD
 
 # Runs after CI succeeds on main, then deploys the image CI already built and
 # pushed to GHCR - the box never builds on the CD path. workflow_dispatch adds
-# a manual escape hatch for redeploying an already-built image without waiting
-# for a new push to main.
+# a manual escape hatch for redeploying an already-built image - by its
+# sha-<12> tag, the only shape CI ever produces - without waiting for a new
+# push to main.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -12,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag to deploy (blank = sha-<12> of main HEAD)"
+        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of main HEAD)"
         required: false
         default: ""
 
@@ -48,32 +49,60 @@ jobs:
       - name: Capture job start time
         run: echo "JOB_START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
-      # workflow_run carries the exact commit CI validated; workflow_dispatch has
-      # no such context, so it falls back to github.sha (the tip of the ref the
-      # dispatch ran against, main by default). Computed once so checkout, the
-      # image tag and the remote deploy step all agree on the same commit.
-      - name: Resolve the commit to deploy
-        id: ref
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout the deployed commit
+      # workflow_run carries the exact commit CI validated; workflow_dispatch has no
+      # such context, so it provisionally checks out github.sha (the tip of the
+      # dispatched ref, main by default). fetch-depth: 0 gives the next step full
+      # history to resolve an older, explicitly pinned commit against, should the
+      # dispatch ask for one.
+      - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ steps.ref.outputs.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      # image_tag is dispatcher-controlled input, so it is read from `env:` here -
+      # never interpolated into the script - and only a bare sha-<12 lowercase hex>
+      # shape is accepted, since that is the only tag CI ever produces from a main
+      # push. A matching tag is resolved against the full history fetched above and
+      # checked out locally, so the runner's checkout, the image tag pushed to GHCR
+      # and the remote box all agree on the exact same commit; a workflow_run keeps
+      # deploying the commit CI itself validated, unchanged.
+      - name: Resolve the commit to deploy
+        id: ref
+        env:
+          INPUT_TAG: ${{ github.event.inputs.image_tag }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -z "$INPUT_TAG" ]; then
+              sha="${{ github.sha }}"
+            else
+              if ! printf '%s' "$INPUT_TAG" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+                echo "::error::image_tag '$INPUT_TAG' has an invalid shape."
+                exit 1
+              fi
+              if ! printf '%s' "$INPUT_TAG" | grep -qE '^sha-[0-9a-f]{12}$'; then
+                echo "::error::image_tag must be blank or match sha-<12 lowercase hex chars> - CI never produces any other shape. Got '$INPUT_TAG'."
+                exit 1
+              fi
+              prefix="${INPUT_TAG#sha-}"
+              if ! sha="$(git rev-parse --verify "${prefix}^{commit}" 2>/dev/null)"; then
+                echo "::error::No commit in this repository's history matches image_tag prefix '$prefix'."
+                exit 1
+              fi
+              git checkout --quiet "$sha"
+            fi
+          else
+            sha="${{ github.event.workflow_run.head_sha }}"
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       - name: Compute image and tag
         id: meta
         run: |
           image_lower="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           short_sha="$(echo "${{ steps.ref.outputs.sha }}" | cut -c1-12)"
-          input_tag="${{ github.event.inputs.image_tag }}"
           echo "image=${image_lower}" >> "$GITHUB_OUTPUT"
-          echo "tag=${input_tag:-sha-${short_sha}}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
       # known_hosts comes from a secret (`ssh-keyscan <host>` once, by hand):
       # keyscanning inside the job would trust whatever answers, which is the
@@ -98,7 +127,7 @@ jobs:
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" bash -s <<EOF
           set -euo pipefail
           cd "${{ env.APP_DIR }}"
-          git fetch --quiet origin main
+          git fetch --quiet origin
           git checkout --quiet ${{ steps.ref.outputs.sha }}
           echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
           # The token would otherwise sit base64-encoded in ~/.docker/config.json
@@ -144,7 +173,7 @@ jobs:
 
           MESSAGE="${STATUS}
           🚀 <b>Project</b>: ${PROJECT}
-          🔖 <b>Version</b>: <code>${{ github.event.workflow_run.head_sha }}</code>
+          🔖 <b>Version</b>: <code>${{ steps.ref.outputs.sha }}</code>
           👤 <b>Author</b>: ${AUTHOR}
           ⏱️ <b>Duration</b>: ${DURATION_HUMAN}
           ♻️ <b>Attempt</b>: ${GITHUB_RUN_ATTEMPT}

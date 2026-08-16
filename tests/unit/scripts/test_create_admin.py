@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 from pydantic import ValidationError
 import pytest
 
-from scripts.create_admin import _AdminPasswordModel, ensure_admin, main
+from scripts.create_admin import _AdminCredentialsModel, ensure_admin, main
 from src.core.utils.security import is_password_hash
 from src.user.enums import UserRole
 from src.user.models import User
@@ -14,6 +14,7 @@ from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 
 STRONG_PASSWORD = "StrongPass1!"
 WEAK_PASSWORD = "weak"
+INVALID_EMAIL = "not-an-email"
 
 
 class FakeUsersRepository:
@@ -125,12 +126,46 @@ async def test_ensure_admin_rejects_weak_password_before_db_access(
     uow.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_ensure_admin_rejects_invalid_email_before_db_access(
+    fake_session: FakeAsyncSession,
+) -> None:
+    """An email EmailStr rejects would create an account nobody could log
+    into, since login validates the same way - reject it up front instead."""
+    users_repo = FakeUsersRepository(user=None)
+    uow = build_uow(fake_session, users_repo)
+
+    with pytest.raises(ValidationError):
+        await ensure_admin(
+            uow,
+            email=INVALID_EMAIL,
+            password=STRONG_PASSWORD,
+            first_name="Admin",
+            last_name="User",
+            username="admin",
+            phone_number="+10000000000",
+        )
+
+    users_repo.get_single.assert_not_awaited()
+    users_repo.create.assert_not_awaited()
+    users_repo.update.assert_not_awaited()
+    uow.commit.assert_not_awaited()
+
+
 def test_password_validation_message_does_not_echo_password() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        _AdminPasswordModel(password=WEAK_PASSWORD)
+        _AdminCredentialsModel(email="admin@example.com", password=WEAK_PASSWORD)
 
     message = exc_info.value.errors()[0]["msg"]
     assert WEAK_PASSWORD not in message
+
+
+def test_email_validation_message_does_not_echo_password() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        _AdminCredentialsModel(email=INVALID_EMAIL, password=WEAK_PASSWORD)
+
+    for error in exc_info.value.errors():
+        assert WEAK_PASSWORD not in error["msg"]
 
 
 @pytest.mark.asyncio
@@ -159,3 +194,17 @@ async def test_main_exits_with_usage_when_password_missing(
 
     assert exc_info.value.code == 2
     assert "Usage:" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_main_exits_2_for_invalid_email(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("ADMIN_EMAIL", INVALID_EMAIL)
+    monkeypatch.setenv("ADMIN_PASSWORD", STRONG_PASSWORD)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await main()
+
+    assert exc_info.value.code == 2
+    assert "Invalid ADMIN_EMAIL:" in capsys.readouterr().err

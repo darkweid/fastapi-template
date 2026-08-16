@@ -12,13 +12,17 @@ import asyncio
 import os
 import sys
 
-from pydantic import ValidationError
+from pydantic import EmailStr, ValidationError
 
 from loggers import get_logger
 from src.core.database.session import tasks_async_session
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
-from src.core.schemas import StrongPasswordValidationMixin
-from src.core.utils.security import hash_password, mask_email, normalize_email
+from src.core.schemas import (
+    Base,
+    EmailNormalizationMixin,
+    StrongPasswordValidationMixin,
+)
+from src.core.utils.security import hash_password, mask_email
 from src.user.enums import UserRole
 
 logger = get_logger(__name__)
@@ -33,9 +37,17 @@ USAGE = (
 )
 
 
-class _AdminPasswordModel(StrongPasswordValidationMixin):
-    """Validates a candidate admin password with the registration rules."""
+class _AdminCredentialsModel(
+    StrongPasswordValidationMixin, EmailNormalizationMixin, Base
+):
+    """Validates the admin email/password with the same rules as self-registration.
 
+    An email that fails EmailStr validation would create an account nobody
+    could ever log into (login validates the same way), so it is rejected
+    here rather than left to surface later as an unexplained login failure.
+    """
+
+    email: EmailStr
     password: str
 
 
@@ -59,11 +71,12 @@ async def ensure_admin(
       when a new user is created.
 
     Validations:
-    - password must satisfy the same strength rules as self-registration,
-      checked before any repository call.
+    - email and password are validated with the same rules as self-registration
+      (EmailStr plus normalization, and the strong-password pattern), checked
+      before any repository call.
 
     Workflow:
-    1) Validate the password and normalize the email.
+    1) Validate and normalize the email; validate the password strength.
     2) Look up an existing, non-deleted user by email.
     3) If found, force role=ADMIN and is_active/is_verified=True, leaving the
        stored password hash untouched.
@@ -75,13 +88,14 @@ async def ensure_admin(
     - Creates or updates one row in the users table.
 
     Errors:
-    - pydantic.ValidationError: the password does not meet the strength rules.
+    - pydantic.ValidationError: the email is not a valid address, or the
+      password does not meet the strength rules.
 
     Returns:
     - None.
     """
-    _AdminPasswordModel(password=password)
-    normalized_email = normalize_email(email)
+    credentials = _AdminCredentialsModel(email=email, password=password)
+    normalized_email = credentials.email
 
     async with uow:
         existing_user = await uow.users.get_single(uow.session, email=normalized_email)
@@ -143,7 +157,12 @@ async def main() -> None:
                 phone_number=phone_number,
             )
         except ValidationError as exc:
-            print(f"Invalid ADMIN_PASSWORD: {exc.errors()[0]['msg']}", file=sys.stderr)
+            # Only ['msg'] is ever printed - pydantic also carries the raw
+            # input under ['input'] (and in str(exc)), which would echo the
+            # password back on a validation failure.
+            for error in exc.errors():
+                field = str(error["loc"][0]).upper() if error["loc"] else "INPUT"
+                print(f"Invalid ADMIN_{field}: {error['msg']}", file=sys.stderr)
             raise SystemExit(2) from exc
 
 
