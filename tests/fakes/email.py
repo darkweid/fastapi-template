@@ -11,6 +11,7 @@ class MockMailer(AbstractMailer):
     def __init__(self):
         self.sent_template_emails = []
         self.sent_attachments = []
+        self.sent_attachment_bytes = []
 
     async def send_template(
         self,
@@ -48,6 +49,24 @@ class MockMailer(AbstractMailer):
                 "recipients": recipients,
                 "body_text": body_text,
                 "file_paths": file_paths,
+                "subtype": subtype,
+            }
+        )
+
+    async def send_with_attachment_bytes(
+        self,
+        subject: str,
+        recipients: list[str],
+        body_text: str,
+        attachments: list[tuple[str, bytes]],
+        subtype: MessageType = MessageType.PLAIN,
+    ) -> None:
+        self.sent_attachment_bytes.append(
+            {
+                "subject": subject,
+                "recipients": recipients,
+                "body_text": body_text,
+                "attachments": attachments,
                 "subtype": subtype,
             }
         )

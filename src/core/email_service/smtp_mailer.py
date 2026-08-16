@@ -74,6 +74,21 @@ class SmtpMailer(AbstractMailer):
 
         await self._send(message)
 
+    async def send_with_attachment_bytes(
+        self,
+        subject: str,
+        recipients: list[str],
+        body_text: str,
+        attachments: list[tuple[str, bytes]],
+        subtype: MessageType = MessageType.PLAIN,
+    ) -> None:
+        message = self._build_message(subject, recipients)
+        message.set_content(body_text, subtype=subtype.value)
+        for filename, data in attachments:
+            self._attach_bytes(message, filename, data)
+
+        await self._send(message)
+
     def _build_message(self, subject: str, recipients: list[str]) -> EmailMessage:
         message = EmailMessage()
         message["Subject"] = subject
@@ -87,15 +102,18 @@ class SmtpMailer(AbstractMailer):
 
     async def _attach_file(self, message: EmailMessage, file_path: Path) -> None:
         payload = await asyncio.to_thread(file_path.read_bytes)
-        guessed_type, _ = mimetypes.guess_type(file_path.name)
+        self._attach_bytes(message, file_path.name, payload)
+
+    def _attach_bytes(self, message: EmailMessage, filename: str, data: bytes) -> None:
+        guessed_type, _ = mimetypes.guess_type(filename)
         maintype, _, subtype = (guessed_type or DEFAULT_ATTACHMENT_MIME_TYPE).partition(
             "/"
         )
         message.add_attachment(
-            payload,
+            data,
             maintype=maintype,
             subtype=subtype,
-            filename=file_path.name,
+            filename=filename,
         )
 
     async def _send(self, message: EmailMessage) -> None:

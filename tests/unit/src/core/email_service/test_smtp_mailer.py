@@ -118,6 +118,29 @@ async def test_send_with_attachments_encodes_every_file(
 
 
 @pytest.mark.asyncio
+async def test_send_with_attachment_bytes_encodes_every_attachment(
+    send_mock: AsyncMock,
+) -> None:
+    mailer = SmtpMailer(build_config())
+
+    await mailer.send_with_attachment_bytes(
+        subject="Report",
+        recipients=["first@example.com"],
+        body_text="See attached",
+        attachments=[
+            ("report.txt", b"report body"),
+            ("logo.png", b"\x89PNG\r\n"),
+        ],
+    )
+
+    attachments = list(sent_message(send_mock).iter_attachments())
+    assert [part.get_filename() for part in attachments] == ["report.txt", "logo.png"]
+    assert attachments[0].get_content_type() == "text/plain"
+    assert attachments[1].get_content_type() == "image/png"
+    assert attachments[1].get_payload(decode=True) == b"\x89PNG\r\n"
+
+
+@pytest.mark.asyncio
 async def test_send_passes_transport_settings(send_mock: AsyncMock) -> None:
     mailer = SmtpMailer(build_config(EMAIL_USE_TLS=True, EMAIL_STARTTLS=False))
 
