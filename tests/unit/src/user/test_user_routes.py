@@ -131,9 +131,9 @@ async def test_get_user_info_by_id_denies_without_view_users_permission(
     dependency_overrides: DependencyOverrides,
     fake_session: FakeAsyncSession,
 ) -> None:
-    # Exercises the real checker: a VIEWER role has no VIEW_USERS permission, so
-    # this proves require_permission's RBAC denial still runs and is now on the
-    # new error type - admission (blocked/unverified) is no longer its job.
+    # When a VIEWER tries to access another user's ID without VIEW_USERS permission,
+    # the BOLA guard returns 404 to prevent enumeration: the response is indistinguishable
+    # from a genuinely missing user, so the endpoint cannot be used to discover valid IDs.
     viewer_user = build_user(role=UserRole.VIEWER)
     target_user = build_user()
     dependency_overrides.set(get_current_user, ProvideValue(viewer_user))
@@ -144,10 +144,10 @@ async def test_get_user_info_by_id_denies_without_view_users_permission(
 
     response = await async_client.get(f"/v1/users/{target_user.id}")
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     assert response.json() == {
-        "code": "permission_denied",
-        "message": "Permission denied",
+        "code": "not_found",
+        "message": "User not found.",
     }
 
 
