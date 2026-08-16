@@ -240,6 +240,8 @@ class AppConfig(BaseModel):
     DEBUG: bool = False
     TESTING: bool = False
 
+    # Read by loggers/ straight from os.environ, never through this field; it
+    # stays here so startup and check_env keep requiring the key in .env.
     LOG_LEVEL: str
 
     CORS_ALLOWED_ORIGINS: list[str] = Field([])
