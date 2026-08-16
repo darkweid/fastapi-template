@@ -5,13 +5,13 @@ from src.core.database.base import Base
 from src.core.database.mixins import (
     SoftDeleteMixin,
     TimestampMixin,
-    UUIDIDMixin,
+    UUID7IDMixin,
 )
 from src.core.utils.security import is_password_hash
 from src.user.enums import UserRole
 
 
-class User(Base, UUIDIDMixin, TimestampMixin, SoftDeleteMixin):
+class User(Base, UUID7IDMixin, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "users"
     __table_args__ = (
         Index(
