@@ -12,17 +12,14 @@ PASSWORD_MAX_LENGTH = 128
 PHONE_NUMBER_MIN_LENGTH = 5
 
 # Name and personal identifiers
-# Validates a full name with alphanumeric characters only (no spaces)
-# Example: "JohnDoe123"
-FULL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{2,30}$")
+# Latin letters; single spaces, hyphens or apostrophes between parts.
+# Length (2-30) is enforced by the schemas via Field, not here.
+# Example: "Anne-Marie", "O'Brien", "John Smith"
+FULL_NAME_PATTERN = re.compile(r"^[a-zA-Z]+(?:[ '\-][a-zA-Z]+)*$")
 
 # Validates a username with alphanumeric characters, underscore, dash, and dot
 # Example: "john.doe_2023"
 USERNAME_VALIDATOR = re.compile(r"^[a-zA-Z0-9_\-.]{4,60}$")
-
-# Validates a name with letters and spaces only
-# Example: "John Smith"
-NAME_WITH_SPACES = re.compile(r"^[a-zA-Z\s]{2,50}$")
 
 # Phone related
 # Validates a phone number in international E.164 format (starts with + followed by country code and digits)
