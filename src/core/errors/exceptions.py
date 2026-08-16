@@ -54,11 +54,6 @@ class InstanceNotFoundException(CoreException):
     error_code = ErrorCode.NOT_FOUND
 
 
-class InstanceAlreadyExistsException(CoreException):
-    status_code = 409
-    error_code = ErrorCode.ALREADY_EXISTS
-
-
 class InstanceProcessingException(CoreException):
     pass
 
@@ -99,10 +94,6 @@ class AccessForbiddenException(CoreException):
     status_code = 403
     error_code = ErrorCode.FORBIDDEN
     log_level = "warning"
-
-
-class NotAcceptableException(CoreException):
-    status_code = 406
 
 
 class PermissionDeniedException(CoreException):

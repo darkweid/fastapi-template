@@ -117,7 +117,7 @@ async def test_get_user_info_by_id_returns_404_when_user_is_missing(
 
     assert response.status_code == 404
     assert response.json() == {
-        "error": "Instance not found",
+        "code": "not_found",
         "message": "User not found",
     }
 
@@ -261,7 +261,7 @@ async def test_update_user_profile_returns_404_when_user_is_missing(
 
     assert response.status_code == 404
     assert response.json() == {
-        "error": "Instance not found",
+        "code": "not_found",
         "message": "User not found",
     }
 
