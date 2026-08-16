@@ -240,8 +240,6 @@ class AppConfig(BaseModel):
     DEBUG: bool = False
     TESTING: bool = False
 
-    LOCAL_TIMEZONE: str
-
     LOG_LEVEL: str
 
     CORS_ALLOWED_ORIGINS: list[str] = Field([])

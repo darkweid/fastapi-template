@@ -1,3 +1,4 @@
+from typing import Annotated
 from unittest.mock import AsyncMock
 
 from fastapi import Depends, FastAPI, routing
@@ -59,7 +60,7 @@ def transport_app() -> FastAPI:
 
     @app.get("/probe")
     async def probe(
-        transport: TokenTransport = Depends(get_token_transport),
+        transport: Annotated[TokenTransport, Depends(get_token_transport)],
     ) -> dict[str, str]:
         return {"transport": transport.value}
 

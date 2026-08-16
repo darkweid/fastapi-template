@@ -84,7 +84,7 @@ class FastAPILimiter:
             cls.lua_sha = await redis_instance.script_load(cls.lua_script)
         except Exception as e:
             logger.error(f"Failed to load Lua script: {e}")
-            raise RuntimeError(f"Failed to load Lua script: {e}")
+            raise RuntimeError(f"Failed to load Lua script: {e}") from e
 
         logger.info("FastAPILimiter initialized successfully.")
 

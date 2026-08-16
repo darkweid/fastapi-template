@@ -100,7 +100,7 @@ class RateLimiter:
 
             reloaded_lua_sha = FastAPILimiter.lua_sha
             if reloaded_lua_sha is None:
-                raise RuntimeError("Failed to load Lua script.")
+                raise RuntimeError("Failed to load Lua script.") from None
 
             eval_result = redis.evalsha(
                 reloaded_lua_sha,

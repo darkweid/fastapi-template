@@ -150,7 +150,7 @@ async def authenticate_access_token(
         if mode != "access_token":
             raise credentials_exception
     except KeyError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     user = await user_repository.get_single(session, id=user_id)
     if not user:
@@ -281,7 +281,7 @@ async def get_access_by_refresh_token(
             raise credentials_exception
 
     except KeyError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     user = await user_repository.get_single(session, id=user_id)
     if not user:
@@ -324,7 +324,7 @@ async def get_user_id_from_token(
     except KeyError:
         raise UnauthorizedException(
             "Invalid or expired token",
-        )
+        ) from None
 
 
 async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
@@ -354,9 +354,9 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         )
         payload_typed = cast(JWTPayload, payload)
     except jwt.ExpiredSignatureError:
-        raise TokenExpiredError("Token expired")
+        raise TokenExpiredError("Token expired") from None
     except jwt.PyJWTError:
-        raise UnauthorizedException("Invalid token")
+        raise UnauthorizedException("Invalid token") from None
 
     try:
         jti = payload_typed["jti"]
@@ -364,7 +364,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         user_id = payload_typed["sub"]
         session_id = payload_typed["session_id"]
     except KeyError:
-        raise UnauthorizedException("Invalid token structure")
+        raise UnauthorizedException("Invalid token structure") from None
 
     if mode not in {"access_token", "refresh_token"}:
         raise UnauthorizedException("Invalid token structure")

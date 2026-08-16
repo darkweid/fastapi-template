@@ -119,7 +119,7 @@ def check_env_file() -> None:
         actual = parse_env(Path(".env"))
     except FileNotFoundError as e:
         print(f"File not found: {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     problems = collect_problems(example, actual)
     if problems:
