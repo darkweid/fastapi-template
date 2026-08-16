@@ -91,6 +91,25 @@ Use PostgreSQL advisory transaction locks to serialize critical sections without
 - **When to use `xact_lock`:** when you must block until the lock is acquired (e.g., prevent duplicate workflow execution).
 - **When to use `try_xact_lock`:** when you want a non-blocking check and a boolean result (e.g., skip work if already running).
 - **Keying:** pass a string key; the repository namespaces it by model (`<table>:<key>`) before hashing to a 64-bit advisory lock key.
+
+## Object-level authorization (ownership)
+
+Role → permission (`require_permission`) answers "may this role use this
+feature". It does not answer "may this caller touch THIS object" — the gap
+behind BOLA, the top item of the OWASP API Top 10.
+
+The reference guard is `require_self_or_permission(path_param, fallback)`
+(`src/user/auth/permissions/ownership.py`), applied to `GET /v1/users/{user_id}`:
+the caller passes when the id is their own, or when their role holds the
+fallback permission. Failure answers **404**, never 403 — a foreign id must be
+indistinguishable from a nonexistent one.
+
+Porting the rule to a domain entity with an `owner_id` column: load the object
+in the UseCase, compare the field against the caller, raise
+`InstanceNotFoundException` on mismatch. Use the dependency form only when
+ownership is visible right in the path. Every endpoint that takes a foreign
+identifier must carry a test proving "foreign object → 404".
+
 ---
 ## Project Layout
 ```
