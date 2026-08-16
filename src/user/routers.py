@@ -16,6 +16,7 @@ from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse
 from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
 from src.user.auth.dependencies import (
+    get_authenticated_user,
     get_current_user,
     get_user_id_from_token,
 )
@@ -52,7 +53,9 @@ router.include_router(auth_router, prefix="/auth")
     response_model=UserProfileViewModel,
 )
 async def get_user_profile(
-    current_user: Annotated[User, Depends(get_current_user)],
+    # Deliberate opt-out of the admission gate: a blocked or unverified account
+    # must still see its own is_verified / is_active state.
+    current_user: Annotated[User, Depends(get_authenticated_user)],
 ) -> UserProfileViewModel:
     """
     Returns the current user's information.

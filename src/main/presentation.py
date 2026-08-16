@@ -3,38 +3,14 @@ from typing import cast
 from fastapi import APIRouter, FastAPI
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from src.core.errors.exceptions import (
-    AccessForbiddenException,
-    CoreException,
-    FilteringError,
-    InfrastructureException,
-    InstanceAlreadyExistsException,
-    InstanceNotFoundException,
-    InstanceProcessingException,
-    NotAcceptableException,
-    PayloadTooLargeException,
-    PermissionDeniedException,
-    ServiceUnavailableException,
-    TooManyRequestsException,
-    UnauthorizedException,
-)
+from src.core.errors.exceptions import CoreException
 from src.core.errors.handlers import (
     HandlerCallable,
-    handle_access_forbidden_exception,
     handle_core_exception,
-    handle_filtering_error,
-    handle_infrastructure_exception,
-    handle_instance_already_exists_exception,
-    handle_instance_not_found_exception,
-    handle_instance_processing_exception,
-    handle_not_acceptable_exception,
-    handle_payload_too_large_exception,
-    handle_permission_denied_exception,
+    handle_http_exception,
     handle_request_validation_exception,
-    handle_service_unavailable_exception,
-    handle_too_many_requests_exception,
-    handle_unauthorized_exception,
     handle_validation_error,
 )
 from src.system import routers as system_routers
@@ -43,66 +19,18 @@ from src.system import routers as system_routers
 from src.user import routers as user_routers
 
 EXCEPTION_HANDLERS: tuple[tuple[type[Exception], HandlerCallable], ...] = (
-    (
-        InfrastructureException,
-        cast(HandlerCallable, handle_infrastructure_exception),
-    ),
-    (
-        ServiceUnavailableException,
-        cast(HandlerCallable, handle_service_unavailable_exception),
-    ),
+    # Starlette resolves handlers over the exception's MRO, so this one entry
+    # covers every CoreException subclass, current and future.
+    (CoreException, cast(HandlerCallable, handle_core_exception)),
     (
         RequestValidationError,
         cast(HandlerCallable, handle_request_validation_exception),
     ),
-    (
-        ValidationError,
-        cast(HandlerCallable, handle_validation_error),
-    ),
-    (
-        InstanceNotFoundException,
-        cast(HandlerCallable, handle_instance_not_found_exception),
-    ),
-    (
-        InstanceAlreadyExistsException,
-        cast(HandlerCallable, handle_instance_already_exists_exception),
-    ),
-    (
-        InstanceProcessingException,
-        cast(HandlerCallable, handle_instance_processing_exception),
-    ),
-    (
-        PayloadTooLargeException,
-        cast(HandlerCallable, handle_payload_too_large_exception),
-    ),
-    (
-        FilteringError,
-        cast(HandlerCallable, handle_filtering_error),
-    ),
-    (
-        CoreException,
-        cast(HandlerCallable, handle_core_exception),
-    ),
-    (
-        AccessForbiddenException,
-        cast(HandlerCallable, handle_access_forbidden_exception),
-    ),
-    (
-        UnauthorizedException,
-        cast(HandlerCallable, handle_unauthorized_exception),
-    ),
-    (
-        NotAcceptableException,
-        cast(HandlerCallable, handle_not_acceptable_exception),
-    ),
-    (
-        PermissionDeniedException,
-        cast(HandlerCallable, handle_permission_denied_exception),
-    ),
-    (
-        TooManyRequestsException,
-        cast(HandlerCallable, handle_too_many_requests_exception),
-    ),
+    (ValidationError, cast(HandlerCallable, handle_validation_error)),
+    # FastAPI's HTTPException subclasses Starlette's, so this one registration
+    # covers framework-raised exceptions from both (missing credentials,
+    # unmatched routes, wrong methods) that would otherwise bypass the contract.
+    (StarletteHTTPException, cast(HandlerCallable, handle_http_exception)),
 )
 
 

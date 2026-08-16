@@ -1,55 +1,27 @@
 import json
 import logging
-from unittest.mock import MagicMock
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 import pytest
+import sentry_sdk
 
-from src.core.errors import handlers
-from src.core.errors.exceptions import (
-    AccessForbiddenException,
-    CoreException,
-    FilteringError,
-    InfrastructureException,
-    InstanceAlreadyExistsException,
-    InstanceNotFoundException,
-    InstanceProcessingException,
-    NotAcceptableException,
-    PayloadTooLargeException,
-    PermissionDeniedException,
-    TooManyRequestsException,
-    UnauthorizedException,
+from src.core.errors import exceptions as exc, handlers
+from src.core.errors.codes import ErrorCode
+from src.core.errors.handlers import (
+    handle_core_exception,
+    handle_request_validation_exception,
+    handle_validation_error,
 )
+import src.user.auth.errors  # noqa: F401 - register domain subclasses for the walk; every new domain errors module must be imported here the same way
 
 
 class SampleModel(BaseModel):
     field: int
 
 
-class LogMessageWithPath:
-    def __init__(self, original):
-        self._original = original
-
-    def __call__(
-        self,
-        request: Request,
-        error_type: str,
-        message: str | None,
-        additional_info: dict[str, object] | None = None,
-        include_request_path: bool = False,
-    ) -> str:
-        return self._original(
-            request,
-            error_type,
-            message,
-            additional_info,
-            include_request_path=True,
-        )
-
-
-def _build_request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
+def make_request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
     scope = {
         "type": "http",
         "method": "GET",
@@ -67,6 +39,26 @@ def _build_request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
     return Request(scope)
 
 
+def make_request_validation_error() -> RequestValidationError:
+    return RequestValidationError(
+        [
+            {
+                "loc": ("body", "field"),
+                "msg": "value is not a valid integer",
+                "type": "type_error.integer",
+            }
+        ]
+    )
+
+
+def make_pydantic_error() -> ValidationError:
+    try:
+        SampleModel.model_validate({"field": "bad"})
+    except ValidationError as error:
+        return error
+    raise AssertionError("expected ValidationError")
+
+
 @pytest.fixture(autouse=True)
 def _patch_response_logger(monkeypatch: pytest.MonkeyPatch) -> logging.Logger:
     logger = logging.getLogger("response_logger_test")
@@ -78,7 +70,7 @@ def _patch_response_logger(monkeypatch: pytest.MonkeyPatch) -> logging.Logger:
 
 
 def test_format_log_message_masks_sensitive_data() -> None:
-    request = _build_request(headers=[(b"x-request-id", b"req-123")])
+    request = make_request(headers=[(b"x-request-id", b"req-123")])
 
     message = handlers.format_log_message(
         request,
@@ -94,7 +86,7 @@ def test_format_log_message_masks_sensitive_data() -> None:
 
 
 def test_format_log_message_truncates_long_text() -> None:
-    request = _build_request()
+    request = make_request()
     long_message = "a" * 600
 
     message = handlers.format_log_message(request, "error", long_message)
@@ -103,226 +95,174 @@ def test_format_log_message_truncates_long_text() -> None:
     assert message.count("a") == 497
 
 
-@pytest.mark.asyncio
-async def test_core_exception_handler(caplog: pytest.LogCaptureFixture) -> None:
-    request = _build_request()
-    caplog.set_level(logging.INFO, logger="response_logger_test")
-
-    response = await handlers.handle_core_exception(
-        request,
-        CoreException("failed to process"),
+async def test_generic_handler_serializes_declared_status_and_code() -> None:
+    response = await handle_core_exception(
+        make_request(), exc.InstanceNotFoundException("User not found.")
     )
-
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert json.loads(response.body) == {
-        "error": "Bad request",
-        "message": "failed to process",
-    }
-    assert any("Bad request" in record.message for record in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_filtering_error_handler_logs_warning(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    request = _build_request()
-    caplog.set_level(logging.WARNING, logger="response_logger_test")
-
-    response = await handlers.handle_filtering_error(
-        request,
-        FilteringError("invalid filter"),
-    )
-
-    assert response.status_code == 400
-    assert json.loads(response.body) == {
-        "error": "Filtering error",
-        "message": "invalid filter",
-    }
-    assert any(
-        record.levelno == logging.WARNING and "Filtering error" in record.message
-        for record in caplog.records
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "handler_fn,exc_cls,status,error_type,log_level,include_path",
-    [
-        (
-            handlers.handle_instance_not_found_exception,
-            InstanceNotFoundException,
-            404,
-            "Instance not found",
-            logging.INFO,
-            False,
-        ),
-        (
-            handlers.handle_instance_already_exists_exception,
-            InstanceAlreadyExistsException,
-            409,
-            "Instance already exists",
-            logging.INFO,
-            False,
-        ),
-        (
-            handlers.handle_instance_processing_exception,
-            InstanceProcessingException,
-            400,
-            "Instance processing error",
-            logging.INFO,
-            False,
-        ),
-        (
-            handlers.handle_unauthorized_exception,
-            UnauthorizedException,
-            401,
-            "Unauthorized",
-            logging.WARNING,
-            True,
-        ),
-        (
-            handlers.handle_access_forbidden_exception,
-            AccessForbiddenException,
-            403,
-            "Forbidden",
-            logging.WARNING,
-            True,
-        ),
-        (
-            handlers.handle_not_acceptable_exception,
-            NotAcceptableException,
-            406,
-            "Not Acceptable",
-            logging.INFO,
-            False,
-        ),
-        (
-            handlers.handle_permission_denied_exception,
-            PermissionDeniedException,
-            403,
-            "Permission Denied",
-            logging.WARNING,
-            True,
-        ),
-    ],
-)
-async def test_other_handlers(
-    handler_fn: handlers.HandlerCallable,
-    exc_cls: type[CoreException],
-    status: int,
-    error_type: str,
-    log_level: int,
-    include_path: bool,
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    request = _build_request()
-    caplog.set_level(log_level, logger="response_logger_test")
-
-    if include_path:
-        monkeypatch.setattr(
-            handlers,
-            "format_log_message",
-            LogMessageWithPath(handlers.format_log_message),
-        )
-
-    response = await handler_fn(request, exc_cls("failure"))
-
-    assert response.status_code == status
-    assert json.loads(response.body) == {"error": error_type, "message": "failure"}
-    assert any(
-        record.levelno == log_level and error_type in record.message
-        for record in caplog.records
-    )
-
-
-@pytest.mark.asyncio
-async def test_infrastructure_exception_handler_captures_sentry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    request = _build_request()
-    capture = MagicMock()
-    monkeypatch.setattr(handlers.sentry_sdk, "capture_exception", capture)
-
-    response = await handlers.handle_infrastructure_exception(
-        request,
-        InfrastructureException("infra fail"),
-    )
-
-    assert response.status_code == 500
-    assert json.loads(response.body) == {
-        "error": "Infrastructure error",
-        "message": "infra fail",
-    }
-    capture.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_request_validation_exception_handler_returns_422() -> None:
-    request = _build_request()
-    exc = RequestValidationError(
-        [
-            {
-                "loc": ("body", "field"),
-                "msg": "value is not a valid integer",
-                "type": "type_error.integer",
-            }
-        ]
-    )
-
-    response = await handlers.handle_request_validation_exception(request, exc)
-
-    assert response.status_code == 422
-    payload = json.loads(response.body)
-    assert payload["detail"][0]["loc"] == ["body", "field"]
-    assert payload["detail"][0]["msg"] == "value is not a valid integer"
-
-
-@pytest.mark.asyncio
-async def test_validation_error_exception_handler_returns_500_and_captures(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    request = _build_request()
-    capture = MagicMock()
-    monkeypatch.setattr(handlers.sentry_sdk, "capture_exception", capture)
-
-    with pytest.raises(ValidationError) as exc_info:
-        SampleModel.model_validate({"field": "bad"})
-
-    response = await handlers.handle_validation_error(request, exc_info.value)
-
-    assert response.status_code == 500
-    assert json.loads(response.body) == {"detail": "Unexpected error"}
-    capture.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_payload_too_large_exception_handler_returns_413() -> None:
-    request = _build_request()
-
-    response = await handlers.handle_payload_too_large_exception(
-        request,
-        PayloadTooLargeException("too large"),
-    )
-
-    assert response.status_code == 413
-    assert json.loads(response.body) == {
-        "error": "Payload too large",
-        "message": "too large",
+        "code": "not_found",
+        "message": "User not found.",
     }
 
 
-@pytest.mark.asyncio
-async def test_too_many_requests_exception_handler_sets_retry_after() -> None:
-    request = _build_request()
+async def test_generic_handler_defaults_message() -> None:
+    response = await handle_core_exception(make_request(), exc.CoreException())
+    assert json.loads(response.body) == {
+        "code": "processing_error",
+        "message": "No additional details available",
+    }
 
-    response = await handlers.handle_too_many_requests_exception(
-        request, TooManyRequestsException("slow down", retry_after=5)
+
+async def test_generic_handler_emits_declared_headers_and_extras() -> None:
+    response = await handle_core_exception(
+        make_request(),
+        exc.TooManyRequestsException("Too many requests", retry_after=30),
     )
-
     assert response.status_code == 429
-    assert response.headers.get("Retry-After") == "5"
+    assert response.headers["Retry-After"] == "30"
     assert json.loads(response.body) == {
-        "error": "Too Many Requests",
-        "message": "slow down",
+        "code": "rate_limited",
+        "message": "Too many requests",
+        "retry_after": 30,
     }
+
+
+async def test_generic_handler_captures_sentry_only_when_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[BaseException] = []
+    monkeypatch.setattr(sentry_sdk, "capture_exception", captured.append)
+
+    await handle_core_exception(make_request(), exc.InfrastructureException("boom"))
+    assert len(captured) == 1
+
+    await handle_core_exception(make_request(), exc.ServiceUnavailableException("down"))
+    assert len(captured) == 1
+
+
+async def test_request_validation_handler_shapes_errors_list() -> None:
+    validation_error = make_request_validation_error()
+    response = await handle_request_validation_exception(
+        make_request(), validation_error
+    )
+    body = json.loads(response.body)
+    assert response.status_code == 422
+    assert body["code"] == "validation_error"
+    assert body["message"] == "Request validation failed"
+    assert all(set(item) == {"field", "message"} for item in body["errors"])
+
+
+def test_format_validation_errors_keeps_non_leading_body_segment() -> None:
+    # Only the leading "body" prefix FastAPI adds is dropped; a field that is
+    # itself literally named "body" further down the path must survive.
+    errors = [
+        {
+            "loc": ("body", "payload", "body"),
+            "msg": "field required",
+            "type": "missing",
+        }
+    ]
+
+    formatted = handlers._format_validation_errors(errors)
+
+    assert formatted == [{"field": "payload.body", "message": "field required"}]
+
+
+async def test_backend_validation_handler_hides_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[BaseException] = []
+    monkeypatch.setattr(sentry_sdk, "capture_exception", captured.append)
+    response = await handle_validation_error(make_request(), make_pydantic_error())
+    assert response.status_code == 500
+    assert json.loads(response.body) == {
+        "code": "internal_error",
+        "message": "Unexpected error",
+    }
+    assert len(captured) == 1
+
+
+def test_format_error_response_defaults_message_when_blank() -> None:
+    body = handlers.format_error_response(ErrorCode.NOT_FOUND, None)
+    assert body == {
+        "code": ErrorCode.NOT_FOUND,
+        "message": "No additional details available",
+    }
+
+
+def _all_core_exception_classes() -> list[type[exc.CoreException]]:
+    found: list[type[exc.CoreException]] = []
+    stack: list[type[exc.CoreException]] = [exc.CoreException]
+    while stack:
+        current = stack.pop()
+        found.append(current)
+        stack.extend(current.__subclasses__())
+    return found
+
+
+ALLOWED_EXTRA_KEYS = {"retry_after", "errors"}
+
+
+@pytest.mark.parametrize("exception_class", _all_core_exception_classes())
+async def test_every_exception_answers_the_error_contract(
+    exception_class: type[exc.CoreException],
+) -> None:
+    response = await handle_core_exception(make_request(), exception_class("boom"))
+    body = json.loads(response.body)
+    assert set(body) - ALLOWED_EXTRA_KEYS == {"code", "message"}
+    assert body["code"] in set(ErrorCode)
+    assert response.status_code == exception_class.status_code
+
+
+async def test_http_exception_handler_translates_401_and_passes_headers() -> None:
+    # FastAPI's Security utilities raise a bare HTTPException when credentials
+    # are missing; this is the smoke-tested regression for GET /v1/users/me.
+    unauthenticated = HTTPException(
+        status_code=401,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": 'Basic realm="docs"'},
+    )
+    response = await handlers.handle_http_exception(make_request(), unauthenticated)
+    assert response.status_code == 401
+    assert json.loads(response.body) == {
+        "code": "unauthorized",
+        "message": "Not authenticated",
+    }
+    assert response.headers["WWW-Authenticate"] == 'Basic realm="docs"'
+
+
+async def test_http_exception_handler_translates_404() -> None:
+    # Starlette's router raises this for an unmatched path.
+    not_found = HTTPException(status_code=404, detail="Not Found")
+    response = await handlers.handle_http_exception(make_request(), not_found)
+    assert response.status_code == 404
+    assert json.loads(response.body) == {"code": "not_found", "message": "Not Found"}
+
+
+async def test_http_exception_handler_translates_405() -> None:
+    wrong_method = HTTPException(status_code=405, detail="Method Not Allowed")
+    response = await handlers.handle_http_exception(make_request(), wrong_method)
+    assert response.status_code == 405
+    assert json.loads(response.body)["code"] == "method_not_allowed"
+
+
+async def test_http_exception_handler_maps_unknown_status_to_processing_error() -> None:
+    teapot = HTTPException(status_code=418, detail="I'm a teapot")
+    response = await handlers.handle_http_exception(make_request(), teapot)
+    assert json.loads(response.body)["code"] == "processing_error"
+
+
+async def test_http_exception_handler_maps_5xx_to_internal_error() -> None:
+    bad_gateway = HTTPException(status_code=502, detail="Bad Gateway")
+    response = await handlers.handle_http_exception(make_request(), bad_gateway)
+    assert json.loads(response.body)["code"] == "internal_error"
+
+
+async def test_http_exception_handler_omits_body_for_bodyless_status() -> None:
+    # 304 (and 204/1xx) must not carry a body; a JSON error payload there
+    # would be a protocol violation.
+    not_modified = HTTPException(status_code=304)
+    response = await handlers.handle_http_exception(make_request(), not_modified)
+    assert response.status_code == 304
+    assert response.body == b""

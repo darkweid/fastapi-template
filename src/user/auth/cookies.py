@@ -3,10 +3,11 @@ from typing import Annotated, Final
 from fastapi import Depends, Response
 
 from loggers import get_logger
-from src.core.errors.exceptions import AccessForbiddenException, InfrastructureException
+from src.core.errors.exceptions import InfrastructureException
 from src.core.schemas import TokenModel
 from src.main.config import Config, CookieConfig, get_settings
 from src.user.auth.csrf import build_csrf_token, verify_csrf_token
+from src.user.auth.errors import CsrfFailedError
 from src.user.auth.token_transport import TokenTransport
 
 logger = get_logger(__name__)
@@ -129,7 +130,7 @@ class TokenCookieResponder:
         else:
             logger.warning("[CSRF] Refresh request carried a mismatched CSRF token.")
 
-        raise AccessForbiddenException(CSRF_FAILURE_MESSAGE)
+        raise CsrfFailedError(CSRF_FAILURE_MESSAGE)
 
     def _set_cookie(
         self,

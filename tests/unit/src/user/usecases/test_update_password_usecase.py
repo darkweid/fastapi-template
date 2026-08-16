@@ -6,11 +6,11 @@ import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import (
-    AccessForbiddenException,
     InstanceNotFoundException,
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
+from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
@@ -79,7 +79,7 @@ async def test_update_password_rejects_wrong_current_password(
 
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(InvalidCredentialsError, match="Current password is incorrect."):
         await use_case.execute(
             data=change_password_data(current="WrongPass1!"),
             user_id=user.id,

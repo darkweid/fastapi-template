@@ -114,9 +114,12 @@ CSRF check fails → 403 (`AccessForbiddenException`).
 - Dependency returns `(user, payload)` to the use case.
 
 ## 3) Domain checks before rotation
-- `GetTokensByRefreshUserUseCase` receives the current user from dependency.
-  - If blocked → `PermissionDeniedException`.
-  - If not verified → `InstanceProcessingException`.
+- `GetTokensByRefreshUserUseCase` receives the current user from dependency and runs
+  `account_access_violation`/`ensure_can_use_session` (`src/user/policies.py`). Unlike
+  login, the caller already proved possession of a valid refresh token, so the real
+  reason is reported instead of being masked:
+  - If blocked → `UserBlockedError` (403, `user_blocked`).
+  - If not verified → `UserNotVerifiedError` (403, `user_not_verified`).
 
 ## 4) Rotation execution
 - `rotate_refresh_token`:

@@ -5,7 +5,10 @@ import pytest
 
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import SuccessResponse, TokenModel
-from src.user.auth.dependencies import get_access_by_refresh_token, get_current_user
+from src.user.auth.dependencies import (
+    get_access_by_refresh_token,
+    get_authenticated_user,
+)
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     LoginUserModel,
@@ -168,7 +171,9 @@ async def test_login_refresh_access_flow(
         get_tokens_by_refresh_user_use_case, ProvideValue(refresh_use_case)
     )
     dependency_overrides.set(get_access_by_refresh_token, refresh_dependency)
-    dependency_overrides.set(get_current_user, access_dependency)
+    # GET /users/me opts out of the admission gate (get_authenticated_user), so it is
+    # the dependency this end-to-end flow must authorize against, not get_current_user.
+    dependency_overrides.set(get_authenticated_user, access_dependency)
 
     # X-Token-Transport: body keeps the refresh token in the JSON body so this flow
     # can forward it via the Authorization header, exactly as a native client would.

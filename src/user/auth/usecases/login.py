@@ -9,7 +9,6 @@ from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
-from src.core.errors.exceptions import InstanceProcessingException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import (
@@ -18,12 +17,17 @@ from src.core.utils.security import (
     needs_password_rehash,
     verify_password,
 )
+from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.schemas import LoginUserModel
 from src.user.auth.security import create_access_token, create_refresh_token
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
+from src.user.policies import (
+    INVALID_CREDENTIALS_MESSAGE,
+    account_access_violation,
+    ensure_can_authenticate,
+)
 
-INVALID_CREDENTIALS_MESSAGE = "Incorrect email or password."
 INVALID_CREDENTIALS_PASSWORD_HASH = hash_password("dummy-password")
 logger = get_logger(__name__)
 
@@ -38,17 +42,16 @@ class LoginUserUseCase:
     Validations:
     - User must exist.
     - Password must be correct.
-    - User must be verified.
-    - User must be active (not blocked).
+    - Account must pass admission (verified and active) - see policies.py.
 
     Workflow:
     1) Retrieve user by email.
     2) Verify password (using dummy hash if user not found to prevent timing attacks).
-    3) Check if user is verified.
-    4) Check if user is active.
-    5) Rehash and persist the password if needed.
-    6) Invalidate the user cache namespace.
-    7) Commit the transaction and generate access and refresh tokens.
+    3) Check account admission; a violation is masked into the same error as
+       bad credentials (anti-enumeration).
+    4) Rehash and persist the password if needed.
+    5) Invalidate the user cache namespace.
+    6) Commit the transaction and generate access and refresh tokens.
 
     Side effects:
     - Persists password hash updates when rehashing is required.
@@ -59,8 +62,8 @@ class LoginUserUseCase:
     - Token creation handles its own caching.
 
     Errors:
-    - InstanceProcessingException: if credentials are invalid, the user is not
-      verified, or the user is blocked.
+    - InvalidCredentialsError: wrong credentials, unverified or blocked account -
+      one code by design (anti-enumeration).
 
     Returns:
     - TokenModel with access and refresh tokens.
@@ -88,7 +91,7 @@ class LoginUserUseCase:
                     mask_email(data.email),
                 )
                 await verify_password(data.password, INVALID_CREDENTIALS_PASSWORD_HASH)
-                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
+                raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             correct_password = await verify_password(data.password, user.password_hash)
             if not correct_password:
@@ -96,21 +99,16 @@ class LoginUserUseCase:
                     "[LoginUser] Incorrect password for user '%s'",
                     mask_email(data.email),
                 )
-                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
+                raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
-            if not user.is_verified:
+            violation = account_access_violation(user)
+            if violation is not None:
                 logger.debug(
-                    "[LoginUser] User with email '%s' not verified.",
+                    "[LoginUser] Account of '%s' fails admission (%s).",
                     mask_email(data.email),
+                    violation,
                 )
-                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
-
-            if not user.is_active:
-                logger.debug(
-                    "[LoginUser] User with email '%s' is blocked.",
-                    mask_email(data.email),
-                )
-                raise InstanceProcessingException(INVALID_CREDENTIALS_MESSAGE)
+            ensure_can_authenticate(user)
 
             await self._rehash_password_if_needed(uow, user, data.password)
             session_id = str(uuid4())

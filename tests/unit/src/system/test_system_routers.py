@@ -97,7 +97,7 @@ async def test_check_readiness_returns_503_when_database_is_down(
         response = await client.get("/ready/")
 
         assert response.status_code == 503
-        assert response.json()["error"] == "Service unavailable"
+        assert response.json()["code"] == "service_unavailable"
 
 
 @pytest.mark.asyncio

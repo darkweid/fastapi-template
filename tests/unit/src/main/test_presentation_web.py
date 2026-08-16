@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import pytest
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
-from src.core.errors.exceptions import UnauthorizedException
+from src.core.errors.exceptions import CoreException
 from src.core.middleware import DOCS_CONTENT_SECURITY_POLICY
 from src.main.config import config
 from src.main.presentation import include_exceptions_handlers, include_routers
@@ -31,7 +31,9 @@ def test_include_exceptions_handlers_registers_handlers() -> None:
     app = FastAPI()
     include_exceptions_handlers(app)
 
-    assert UnauthorizedException in app.exception_handlers
+    # Starlette resolves handlers over the exception's MRO, so registering
+    # CoreException alone covers every subclass, e.g. UnauthorizedException.
+    assert CoreException in app.exception_handlers
 
 
 def test_get_application_registers_middlewares() -> None:

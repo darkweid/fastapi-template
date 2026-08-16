@@ -1,18 +1,25 @@
+import json
+
 from fastapi import Response
 import pytest
 
-from src.core.errors.exceptions import AccessForbiddenException, InfrastructureException
+from src.core.errors.codes import ErrorCode
+from src.core.errors.exceptions import InfrastructureException
+from src.core.errors.handlers import handle_core_exception
 from src.core.schemas import TokenModel
 from src.main.config import CookieConfig
 from src.user.auth.cookies import (
     CSRF_COOKIE_NAME,
     CSRF_COOKIE_PATH,
+    CSRF_FAILURE_MESSAGE,
     REFRESH_COOKIE_NAME,
     REFRESH_COOKIE_PATH,
     TokenCookieResponder,
 )
 from src.user.auth.csrf import build_csrf_token
+from src.user.auth.errors import CsrfFailedError
 from src.user.auth.token_transport import TokenTransport
+from tests.helpers.requests import build_request
 
 SECRET = "unit-test-csrf-secret-key-value-32"
 
@@ -187,12 +194,29 @@ def test_verify_csrf_accepts_a_valid_pair(responder: TokenCookieResponder) -> No
 
 
 def test_verify_csrf_rejects_a_missing_header(responder: TokenCookieResponder) -> None:
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         responder.verify_csrf("r", None)
 
 
 def test_verify_csrf_rejects_a_wrong_signature(
     responder: TokenCookieResponder,
 ) -> None:
-    with pytest.raises(AccessForbiddenException):
+    with pytest.raises(CsrfFailedError):
         responder.verify_csrf("r", build_csrf_token("other", SECRET))
+
+
+async def test_verify_csrf_failure_serializes_to_csrf_failed_body(
+    responder: TokenCookieResponder,
+) -> None:
+    with pytest.raises(CsrfFailedError) as exc_info:
+        responder.verify_csrf("r", None)
+
+    assert exc_info.value.error_code is ErrorCode.CSRF_FAILED
+
+    response = await handle_core_exception(build_request(), exc_info.value)
+
+    assert response.status_code == 403
+    assert json.loads(response.body) == {
+        "code": "csrf_failed",
+        "message": CSRF_FAILURE_MESSAGE,
+    }

@@ -1,50 +1,38 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from fastapi import Request
+from fastapi import Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import ValidationError
 import sentry_sdk
-from starlette.responses import Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from loggers import get_logger
-from src.core.errors.exceptions import (
-    AccessForbiddenException,
-    CoreException,
-    FilteringError,
-    InfrastructureException,
-    InstanceAlreadyExistsException,
-    InstanceNotFoundException,
-    InstanceProcessingException,
-    NotAcceptableException,
-    PayloadTooLargeException,
-    PermissionDeniedException,
-    ServiceUnavailableException,
-    TooManyRequestsException,
-    UnauthorizedException,
-)
+from src.core.errors.codes import ErrorCode
+from src.core.errors.exceptions import CoreException
 
 response_logger = get_logger("app.request.error_response", plain_format=True)
 
 # Type for exception handler
 HandlerCallable = Callable[[Request, Exception], Awaitable[Response]]
 
+_HTTP_STATUS_TO_ERROR_CODE = {
+    401: ErrorCode.UNAUTHORIZED,
+    403: ErrorCode.FORBIDDEN,
+    404: ErrorCode.NOT_FOUND,
+    405: ErrorCode.METHOD_NOT_ALLOWED,
+    413: ErrorCode.PAYLOAD_TOO_LARGE,
+    429: ErrorCode.RATE_LIMITED,
+}
 
-def format_error_response(error_type: str, message: str | None) -> dict[str, Any]:
-    """
-    Format error response content for JSONResponse
 
-    Args:
-        error_type: Type of error (e.g., "Unauthorized", "Instance not found")
-        message: Detailed error message
-
-    Returns:
-        Dictionary with error information
-    """
+def format_error_response(code: ErrorCode, message: str | None) -> dict[str, Any]:
+    """Build the flat error body every response follows: {"code", "message"}."""
     return {
-        "error": error_type,
+        "code": code,
         "message": message or "No additional details available",
     }
 
@@ -112,219 +100,107 @@ def format_log_message(
     return log_msg
 
 
-async def handle_infrastructure_exception(
-    request: Request,
-    exc: InfrastructureException,
-) -> JSONResponse:
-    error_type = "Infrastructure error"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.error(log_msg)
-    sentry_sdk.capture_exception(exc)
+async def handle_core_exception(request: Request, exc: CoreException) -> JSONResponse:
+    log_message = format_log_message(
+        request, exc.error_code, exc.message, exc.additional_info
+    )
+    getattr(response_logger, exc.log_level)(log_message)
+    if exc.capture_to_sentry:
+        sentry_sdk.capture_exception(exc)
+    headers = exc.response_headers()
     return JSONResponse(
-        status_code=500,
-        content=format_error_response(error_type, exc.message),
+        status_code=exc.status_code,
+        content=format_error_response(exc.error_code, exc.message) | exc.body_extras(),
+        headers=headers or None,
     )
 
 
-# Deliberately no Sentry capture: readiness probes poll every few seconds, so a
-# minute of downtime would file dozens of identical events for a state the
-# orchestrator already sees through the 503.
-async def handle_service_unavailable_exception(
+async def handle_http_exception(
     request: Request,
-    exc: ServiceUnavailableException,
-) -> JSONResponse:
-    error_type = "Service unavailable"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.error(log_msg)
-    return JSONResponse(
-        status_code=503,
-        content=format_error_response(error_type, exc.message),
+    exc: StarletteHTTPException,
+) -> Response:
+    """Translate framework-raised HTTPExceptions onto the error contract.
+
+    FastAPI's security utilities and Starlette's router raise bare
+    HTTPExceptions (missing credentials -> 401, unmatched path -> 404,
+    wrong method -> 405); without this handler they would answer
+    Starlette's default {"detail": ...} body and break the contract.
+    """
+    if not is_body_allowed_for_status_code(exc.status_code):
+        return Response(status_code=exc.status_code, headers=exc.headers or None)
+    code = _HTTP_STATUS_TO_ERROR_CODE.get(
+        exc.status_code,
+        (
+            ErrorCode.INTERNAL_ERROR
+            if exc.status_code >= 500
+            else ErrorCode.PROCESSING_ERROR
+        ),
     )
+    message = exc.detail if isinstance(exc.detail, str) else None
+    log_message = format_log_message(request, code, message, include_request_path=True)
+    if exc.status_code >= 500:
+        response_logger.error(log_message)
+    else:
+        response_logger.debug(log_message)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=format_error_response(code, message),
+        headers=exc.headers or None,
+    )
+
+
+def _format_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, str]]:
+    formatted = []
+    for error in errors:
+        loc = tuple(error.get("loc", ()))
+        # Only FastAPI's leading "body" prefix is dropped; any other segment
+        # named "body" (e.g. a field literally called "body") is kept verbatim.
+        if loc and loc[0] == "body":
+            loc = loc[1:]
+        location = [str(part) for part in loc]
+        formatted.append(
+            {
+                "field": ".".join(location) or "body",
+                "message": str(error.get("msg", "Invalid value")),
+            }
+        )
+    return formatted
 
 
 async def handle_request_validation_exception(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    error_type = "Request validation error"
-    safe_detail = jsonable_encoder(exc.errors())
-    log_msg = format_log_message(
+    safe_errors = _format_validation_errors(jsonable_encoder(exc.errors()))
+    log_message = format_log_message(
         request,
-        error_type,
-        str(safe_detail),
+        ErrorCode.VALIDATION_ERROR,
+        str(safe_errors),
         include_request_path=True,
     )
-    response_logger.debug(log_msg)
-    return JSONResponse(status_code=422, content={"detail": safe_detail})
+    response_logger.debug(log_message)
+    return JSONResponse(
+        status_code=422,
+        content=format_error_response(
+            ErrorCode.VALIDATION_ERROR, "Request validation failed"
+        )
+        | {"errors": safe_errors},
+    )
 
 
 async def handle_validation_error(
     request: Request,
     exc: ValidationError,
 ) -> JSONResponse:
-    error_type = "Backend validation error"
-    safe_detail = jsonable_encoder(exc.errors())
-    log_msg = format_log_message(
+    log_message = format_log_message(
         request,
-        error_type,
-        str(safe_detail),
+        ErrorCode.INTERNAL_ERROR,
+        str(jsonable_encoder(exc.errors())),
         include_request_path=True,
     )
-    response_logger.error(log_msg)
+    response_logger.error(log_message)
     sentry_sdk.capture_exception(exc)
-    return JSONResponse(status_code=500, content={"detail": "Unexpected error"})
-
-
-async def handle_core_exception(
-    request: Request,
-    exc: CoreException,
-) -> JSONResponse:
-    error_type = "Bad request"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.info(log_msg)
     return JSONResponse(
-        status_code=400,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_instance_not_found_exception(
-    request: Request,
-    exc: InstanceNotFoundException,
-) -> JSONResponse:
-    error_type = "Instance not found"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.info(log_msg)
-    return JSONResponse(
-        status_code=404,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_instance_already_exists_exception(
-    request: Request,
-    exc: InstanceAlreadyExistsException,
-) -> JSONResponse:
-    error_type = "Instance already exists"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.info(log_msg)
-    return JSONResponse(
-        status_code=409,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_instance_processing_exception(
-    request: Request,
-    exc: InstanceProcessingException,
-) -> JSONResponse:
-    error_type = "Instance processing error"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.info(log_msg)
-    return JSONResponse(
-        status_code=400,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_payload_too_large_exception(
-    request: Request,
-    exc: PayloadTooLargeException,
-) -> JSONResponse:
-    error_type = "Payload too large"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.info(log_msg)
-    return JSONResponse(
-        status_code=413,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_filtering_error(
-    request: Request,
-    exc: FilteringError,
-) -> JSONResponse:
-    error_type = "Filtering error"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.warning(log_msg)
-    return JSONResponse(
-        status_code=400,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_unauthorized_exception(
-    request: Request,
-    exc: UnauthorizedException,
-) -> JSONResponse:
-    error_type = "Unauthorized"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.warning(log_msg)
-
-    headers = {}
-    if exc.www_authenticate:
-        headers["WWW-Authenticate"] = exc.www_authenticate
-
-    return JSONResponse(
-        status_code=401,
-        content=format_error_response(error_type, exc.message),
-        headers=headers,
-    )
-
-
-async def handle_access_forbidden_exception(
-    request: Request,
-    exc: AccessForbiddenException,
-) -> JSONResponse:
-    error_type = "Forbidden"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.warning(log_msg)
-    return JSONResponse(
-        status_code=403,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_not_acceptable_exception(
-    request: Request,
-    exc: NotAcceptableException,
-) -> JSONResponse:
-    error_type = "Not Acceptable"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.info(log_msg)
-    return JSONResponse(
-        status_code=406,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_permission_denied_exception(
-    request: Request,
-    exc: PermissionDeniedException,
-) -> JSONResponse:
-    error_type = "Permission Denied"
-    log_msg = format_log_message(request, error_type, exc.message, exc.additional_info)
-    response_logger.warning(log_msg)
-    return JSONResponse(
-        status_code=403,
-        content=format_error_response(error_type, exc.message),
-    )
-
-
-async def handle_too_many_requests_exception(
-    request: Request,
-    exc: TooManyRequestsException,
-) -> JSONResponse:
-    error_type = "Too Many Requests"
-    log_msg = format_log_message(request, error_type, exc.message)
-    response_logger.info(log_msg)
-
-    headers = {}
-    if exc.retry_after:
-        headers["Retry-After"] = str(exc.retry_after)
-
-    return JSONResponse(
-        status_code=429,
-        content=format_error_response(error_type, exc.message),
-        headers=headers,
+        status_code=500,
+        content=format_error_response(ErrorCode.INTERNAL_ERROR, "Unexpected error"),
     )

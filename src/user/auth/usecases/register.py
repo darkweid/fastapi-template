@@ -38,7 +38,8 @@ class RegisterUseCase:
       after commit.
 
     Errors:
-    - InstanceAlreadyExistsException: if email or username already exists.
+    - Duplicate email/username surfaces as IntegrityError and is answered 409
+      with code "already_exists" by the database error middleware.
 
     Returns:
     - UserProfileViewModel: the newly created user profile.

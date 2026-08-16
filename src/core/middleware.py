@@ -15,6 +15,8 @@ from sqlalchemy.exc import (
 from starlette.responses import Response
 
 from loggers import get_logger
+from src.core.errors.codes import ErrorCode
+from src.core.errors.handlers import format_error_response
 
 logger = get_logger(__name__)
 timing_logger = get_logger("src.request.timing", plain_format=True)
@@ -56,6 +58,15 @@ class PostgresqlErrorHandlingResult:
     response: JSONResponse
     send_to_sentry: bool
     is_server_error: bool
+
+
+def _internal_error_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content=format_error_response(
+            ErrorCode.INTERNAL_ERROR, UNEXPECTED_ERROR_DETAIL
+        ),
+    )
 
 
 def register_middlewares(app: FastAPI) -> None:
@@ -123,18 +134,17 @@ def register_middlewares(app: FastAPI) -> None:
             )
             sentry_sdk.capture_exception(e)
             return JSONResponse(
-                status_code=500,
-                content={
-                    "detail": "Database connection error. Please try again later."
-                },
+                status_code=503,
+                content=format_error_response(
+                    ErrorCode.SERVICE_UNAVAILABLE,
+                    "Database is temporarily unavailable. Please try again later.",
+                ),
             )
 
         except ProgrammingError as e:
             logger.error(f"SQL syntax error at {request.url.path}: {str(e.orig)}")
             sentry_sdk.capture_exception(e)
-            return JSONResponse(
-                status_code=500, content={"detail": "Database query error."}
-            )
+            return _internal_error_response()
 
     @app.middleware("http")
     async def unexpected_error_middleware(
@@ -151,9 +161,7 @@ def register_middlewares(app: FastAPI) -> None:
                 error_traceback,
             )
             sentry_sdk.capture_exception(e)
-            return JSONResponse(
-                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
-            )
+            return _internal_error_response()
 
 
 def handle_postgresql_error(
@@ -162,11 +170,13 @@ def handle_postgresql_error(
     """
     Build a structured handling result for PostgreSQL IntegrityError with HTTP response, Sentry flag, and log severity.
 
-    A unique violation answers 409 with the conflicting value, which on
-    registration tells a caller that an address is already taken. That is a
-    deliberate trade: account enumeration through this route is cheap anyway
-    (login timing, password reset), while a client that cannot distinguish
-    "already registered" from a generic failure sends the user in circles.
+    A unique violation answers 409, which on registration tells a caller that
+    an address is already taken. That is a deliberate trade: account
+    enumeration through this route is cheap anyway (login timing, password
+    reset), while a client that cannot distinguish "already registered" from
+    a generic failure sends the user in circles. The conflicting value itself
+    is never echoed back — the DB DETAIL can carry someone else's data (an
+    email, a phone number), so only the status and code are client-facing.
     """
     orig_error = error.orig
     sqlstate = getattr(orig_error, "sqlstate", None)
@@ -181,13 +191,13 @@ def handle_postgresql_error(
             detail_message = "No additional details provided."
 
     if sqlstate == "23505":  # UniqueViolation
-        match = re.search(r"\(([^)]+)\)", detail_message)
-        if match:
-            first_value = match.group(1)
-        else:
-            first_value = detail_message
         return PostgresqlErrorHandlingResult(
-            response=JSONResponse(status_code=409, content={"detail": first_value}),
+            response=JSONResponse(
+                status_code=409,
+                content=format_error_response(
+                    ErrorCode.ALREADY_EXISTS, "Resource already exists."
+                ),
+            ),
             send_to_sentry=False,
             is_server_error=False,
         )
@@ -203,39 +213,37 @@ def handle_postgresql_error(
             detail_message,
         )
         return PostgresqlErrorHandlingResult(
-            response=JSONResponse(
-                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
-            ),
+            response=_internal_error_response(),
             send_to_sentry=True,
             is_server_error=True,
         )
     if sqlstate == "23503":  # ForeignKeyViolation
         return PostgresqlErrorHandlingResult(
-            response=JSONResponse(status_code=400, content={"detail": detail_message}),
+            response=JSONResponse(
+                status_code=400,
+                content=format_error_response(
+                    ErrorCode.INVALID_REFERENCE,
+                    "Referenced resource does not exist.",
+                ),
+            ),
             send_to_sentry=False,
             is_server_error=False,
         )
     if sqlstate == "23514":  # CheckViolation
         return PostgresqlErrorHandlingResult(
-            response=JSONResponse(
-                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
-            ),
+            response=_internal_error_response(),
             send_to_sentry=True,
             is_server_error=True,
         )
     if sqlstate == "23P01":  # ExclusionViolation
         return PostgresqlErrorHandlingResult(
-            response=JSONResponse(
-                status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
-            ),
+            response=_internal_error_response(),
             send_to_sentry=True,
             is_server_error=True,
         )
 
     return PostgresqlErrorHandlingResult(
-        response=JSONResponse(
-            status_code=500, content={"detail": UNEXPECTED_ERROR_DETAIL}
-        ),
+        response=_internal_error_response(),
         send_to_sentry=True,
         is_server_error=True,
     )

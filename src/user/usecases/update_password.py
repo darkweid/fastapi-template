@@ -10,13 +10,13 @@ from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import (
-    AccessForbiddenException,
     InstanceNotFoundException,
     InstanceProcessingException,
 )
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import hash_password, mask_email, verify_password
+from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.schemas import UserNewPassword
 from src.user.auth.token_helpers import invalidate_all_user_sessions
 from src.user.cache_keys import user_cache_keys
@@ -57,7 +57,7 @@ class UpdateUserPasswordUseCase:
 
     Errors:
     - InstanceNotFoundException: if the user does not exist.
-    - AccessForbiddenException: if current_password does not match.
+    - InvalidCredentialsError: if current_password does not match.
     - InstanceProcessingException: if the new password repeats the current one.
 
     Returns:
@@ -86,7 +86,7 @@ class UpdateUserPasswordUseCase:
                     "[UpdateUserPassword] Wrong current password for %s.",
                     mask_email(user.email),
                 )
-                raise AccessForbiddenException("Current password is incorrect.")
+                raise InvalidCredentialsError("Current password is incorrect.")
 
             if data.password == data.current_password:
                 # Not a no-op: going through with it would still sign every

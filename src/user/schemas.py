@@ -21,6 +21,7 @@ class UserProfileViewModel(Base):
     email: EmailStr
     phone_number: str
     is_verified: bool
+    is_active: bool
 
 
 class UserSummaryViewModel(Base):

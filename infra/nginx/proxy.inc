@@ -4,7 +4,7 @@
 # included from inside a server block, not loaded on its own.
 
 # Errors nginx answers itself never reach the app, so its stock HTML pages would
-# break the {"error","message"} contract every other response follows: an
+# break the {"code","message"} contract every other response follows: an
 # oversized body (413) and an app that is down or too slow (502/504).
 error_page 413 = @error_payload_too_large;
 error_page 502 = @error_bad_gateway;
@@ -21,7 +21,7 @@ location @error_payload_too_large {
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
-    return 413 '{"error":"Payload too large","message":"Request body exceeds the maximum allowed size"}';
+    return 413 '{"code":"payload_too_large","message":"Request body exceeds the maximum allowed size"}';
 }
 
 location @error_bad_gateway {
@@ -29,7 +29,7 @@ location @error_bad_gateway {
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
-    return 502 '{"error":"Bad gateway","message":"The service is temporarily unreachable"}';
+    return 502 '{"code":"bad_gateway","message":"The service is temporarily unreachable"}';
 }
 
 location @error_gateway_timeout {
@@ -37,7 +37,7 @@ location @error_gateway_timeout {
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
-    return 504 '{"error":"Gateway timeout","message":"The service took too long to respond"}';
+    return 504 '{"code":"gateway_timeout","message":"The service took too long to respond"}';
 }
 
 location / {
