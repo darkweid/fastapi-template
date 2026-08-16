@@ -1,0 +1,37 @@
+# Ephemeral PostgreSQL for the integration suite (tests/integration, `make test-integration`).
+#
+# No volumes: nothing here has to survive a restart, and every run must start from an empty
+# database — the migration test asserts that the whole Alembic chain applies to a clean one.
+#
+# Its own compose project name is passed on the command line (`-p template-test-$$`, see the
+# Makefile), not written here, so two runs — a second developer, a parallel agent, CI beside a
+# local run — never share containers. Nothing is named with `container_name:` either: that key
+# bypasses the compose project and registers the name globally on the daemon, which would
+# reintroduce exactly the collision `-p` is there to prevent.
+#
+# The host port is `${POSTGRES_PORT}` with no default on purpose: an empty value makes the
+# mapping `127.0.0.1::5432`, telling Docker to pick a free port that `docker compose port`
+# reads back. `make test-integration` exports it empty so concurrent runs stay apart; CI does
+# not use this file at all (its Postgres is a GitHub Actions `services:` container).
+#
+# The image is built from infra/postgres/Dockerfile — the same definition the dev stack uses —
+# so extensions and server settings match what the application really runs against.
+services:
+  postgres:
+    build:
+      context: ..
+      dockerfile: infra/postgres/Dockerfile
+    image: template-postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/18/main
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s

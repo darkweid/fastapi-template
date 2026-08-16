@@ -168,12 +168,13 @@ Redis increment however many entries carry it.
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
+- Integration tests against a real PostgreSQL: `make test-integration` (needs Docker); both suites: `make test-all`.
 - Run `make` with no target to see every command the Makefile offers.
 
 ## Testing Layout
 - Application tests mirror `src/` under `tests/unit/src/`.
 - Shared test infrastructure lives in `tests/conftest.py`, `tests/helpers/`, `tests/fakes/`, and `tests/factories/`.
-- Reserve `tests/integration/src/` for integration coverage when a scenario requires more than unit-level wiring.
+- `tests/integration/src/` holds the tests that need a live PostgreSQL — migrations, transaction and UoW semantics, advisory locks, the SQL behind `ListQuery`, the transactional outbox. They carry the `integration` marker, which `pytest.ini` deselects by default, so `make test` stays runnable without Docker. `make test-integration` starts a throwaway database (`infra/docker-compose.test.yml`) and runs them; see `tests/TEST_GUIDE.md` for what belongs there.
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 
 ## Ports
@@ -218,6 +219,7 @@ for `app.conf` once the certificate is in place.
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report
+- `make test-integration` — integration suite against a throwaway PostgreSQL; `make test-all` — both suites
 - `make deploy-prod` — deploy on the box, building the image there
 - `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (what CD runs)
 
