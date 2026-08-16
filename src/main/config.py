@@ -2,7 +2,6 @@ from functools import lru_cache
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -21,7 +20,6 @@ class S3Config(BaseModel):
     S3_ACCESS_KEY_ID: str
     S3_SECRET_ACCESS_KEY: str
     S3_REGION_NAME: str
-    S3_SAMPLE_URL: str
     S3_PRE_SIGNED_URL_SECONDS: int = Field(300, gt=0)
     S3_ENDPOINT_URL: str | None = None
     S3_ADDRESSING_STYLE: str | None = None
@@ -178,7 +176,6 @@ class JWTConfig(BaseModel):
     # always a placeholder left over from .env.example.
     JWT_USER_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
     JWT_VERIFY_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
-    JWT_ADMIN_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
     JWT_RESET_PASSWORD_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
     ALGORITHM: Literal["HS256", "HS384", "HS512"]
@@ -251,7 +248,6 @@ class AppConfig(BaseModel):
     )
 
     PROJECT_NAME: str
-    PROJECT_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
     # Origin of the front-end that receives users arriving from an email. Links
     # are built from it and never from the request, because Host is client input
@@ -264,9 +260,6 @@ class AppConfig(BaseModel):
     # both credentials are set; unset means the app publishes no docs at all.
     DOCS_USERNAME: str = ""
     DOCS_PASSWORD: str = ""
-
-    PING_INTERVAL: int
-    CONNECTION_TTL: int
 
     model_config = ConfigDict(extra="ignore")
 
@@ -387,8 +380,6 @@ class AppConfig(BaseModel):
 
 
 class Config(BaseModel):
-    _project_root: Path | None = None
-
     app: AppConfig
     s3: S3Config
     jwt: JWTConfig
@@ -400,12 +391,6 @@ class Config(BaseModel):
     broadcasting: BroadcastingConfig
 
     model_config = ConfigDict(extra="ignore")
-
-    @property
-    def project_root(self) -> Path:
-        if self._project_root is None:
-            self._project_root = find_project_root_robust()
-        return self._project_root
 
 
 @lru_cache
@@ -435,65 +420,3 @@ def get_settings() -> Config:
 
 
 config = get_settings()
-
-
-# ----- Config utils ----- #
-def find_project_root_robust(
-    start_path: Path | None = None, max_depth: int = 10
-) -> Path:
-    """
-    A more robust version of find_project_root with configurable parameters.
-
-    Args:
-        start_path: Starting path to search from (defaults to current working directory)
-        max_depth: Maximum number of parent directories to traverse
-
-    Returns:
-        Path: The project root directory if found, otherwise the starting path
-    """
-    if start_path is None:
-        start_path = Path.cwd()
-
-    markers = {
-        ".git": 100,
-        "pyproject.toml": 90,
-        "setup.py": 80,
-        "setup.cfg": 75,
-        "requirements": 70,
-        "Pipfile": 70,
-        "poetry.lock": 70,
-        "README.md": 50,
-        "Makefile": 60,
-    }
-
-    best_match = None
-    best_score = 0
-
-    current_path = start_path
-    depth = 0
-
-    while current_path != current_path.parent and depth < max_depth:
-        score = 0
-        for marker, weight in markers.items():
-            if (current_path / marker).exists():
-                score += weight
-
-        if score > best_score:
-            best_score = score
-            best_match = current_path
-
-        current_path = current_path.parent
-        depth += 1
-
-    if best_match and best_score > 0:
-        logger.info(
-            f"Project root found: {best_match} (confidence score: {best_score})"
-        )
-        return best_match
-
-    logger.error(
-        "No project root found within %s parent directories from %s",
-        max_depth,
-        start_path,
-    )
-    return start_path

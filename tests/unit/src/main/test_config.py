@@ -1,15 +1,10 @@
-import logging
-from pathlib import Path
-
 from pydantic import ValidationError
 import pytest
 
-from src.main import config as config_module
 from src.main.config import (
     AppConfig,
     CacheConfig,
     JWTConfig,
-    find_project_root_robust,
 )
 
 
@@ -17,7 +12,6 @@ def _base_jwt_config_data() -> dict[str, object]:
     return {
         "JWT_USER_SECRET_KEY": "unit-test-user-secret-key-long-enough",
         "JWT_VERIFY_SECRET_KEY": "unit-test-verify-secret-key-long-enough",
-        "JWT_ADMIN_SECRET_KEY": "unit-test-admin-secret-key-long-enough",
         "JWT_RESET_PASSWORD_SECRET_KEY": "unit-test-reset-secret-key-long-enough",
         "ALGORITHM": "HS256",
         "ACCESS_TOKEN_EXPIRE_MINUTES": 15,
@@ -41,10 +35,7 @@ def _base_app_config_data() -> dict[str, object]:
         "CORS_EXPOSE_HEADERS": "*",
         "TRUST_PROXY_HEADERS": "true",
         "PROJECT_NAME": "app",
-        "PROJECT_SECRET_KEY": "unit-test-project-secret-key-long-enough",
         "PUBLIC_BASE_URL": "https://app.example.com",
-        "PING_INTERVAL": 10,
-        "CONNECTION_TTL": 10,
     }
 
 
@@ -123,28 +114,6 @@ def test_app_config_allows_wildcard_origin_without_credentials() -> None:
     assert app_config.CORS_ALLOWED_ORIGINS == ["*"]
 
 
-def test_find_project_root_robust_finds_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "project"
-    nested = root / "nested" / "inner"
-    nested.mkdir(parents=True)
-    (root / "Makefile").write_text("all:")
-
-    collected_logs: list[str] = []
-
-    def fake_info(message: str, *args: object, **kwargs: object) -> None:
-        collected_logs.append(message % args if args else message)
-
-    monkeypatch.setattr(config_module, "logger", logging.getLogger("config_test"))
-    monkeypatch.setattr(config_module.logger, "info", fake_info)
-
-    result = find_project_root_robust(start_path=nested, max_depth=5)
-
-    assert result == root
-    assert any("Project root found" in m for m in collected_logs)
-
-
 def test_cache_config_defaults() -> None:
     cache_config = CacheConfig()
 
@@ -174,14 +143,6 @@ def test_jwt_config_accepts_allowlisted_algorithms(algorithm: str) -> None:
     jwt_config = JWTConfig(**{**_base_jwt_config_data(), "ALGORITHM": algorithm})
 
     assert jwt_config.ALGORITHM == algorithm
-
-
-def test_app_config_rejects_short_project_secret() -> None:
-    data = _base_app_config_data()
-    data["PROJECT_SECRET_KEY"] = "short"
-
-    with pytest.raises(ValidationError):
-        AppConfig(**data)
 
 
 def test_app_config_ships_no_docs_credentials_by_default() -> None:
@@ -313,23 +274,3 @@ def test_app_config_normalizes_public_base_url_and_paths() -> None:
     assert app_config.PUBLIC_BASE_URL == "https://app.example.com"
     assert app_config.EMAIL_VERIFY_PATH == "/confirm-email"
     assert app_config.PASSWORD_RESET_PATH == "/reset-password"
-
-
-def test_find_project_root_robust_returns_start_when_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    start = tmp_path / "empty"
-    start.mkdir()
-
-    collected_errors: list[str] = []
-
-    def fake_error(message: str, *args: object, **kwargs: object) -> None:
-        collected_errors.append(message % args if args else message)
-
-    monkeypatch.setattr(config_module, "logger", logging.getLogger("config_test"))
-    monkeypatch.setattr(config_module.logger, "error", fake_error)
-
-    result = find_project_root_robust(start_path=start, max_depth=2)
-
-    assert result == start
-    assert any("No project root found" in m for m in collected_errors)
