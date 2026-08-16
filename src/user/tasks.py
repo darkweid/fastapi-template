@@ -7,7 +7,7 @@ from taskiq import TaskiqDepends
 
 from loggers import get_logger
 from src.core.database.filters import FilterCondition
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.utils.datetime_utils import get_utc_now
 from taskiq_worker.broker import broker
 from taskiq_worker.dependencies import get_tasks_session
@@ -43,7 +43,7 @@ async def cleanup_unverified_users(
     not a silent violation of the "every user-row write bumps the namespace" rule.
     """
     cutoff = get_utc_now() - UNVERIFIED_USER_MAX_AGE
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+    uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
     try:
         async with uow:
             deleted_count = await uow.users.batch_soft_delete(

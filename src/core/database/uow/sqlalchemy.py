@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
 from src.core.database.transactions import safe_begin
-from src.core.database.uow.abstract import R, UnitOfWork
+from src.core.database.uow.abstract import UnitOfWork
 
 # Type variable for repository instances
 RepositoryInstance = TypeVar("RepositoryInstance", bound=BaseRepository[Any])
@@ -17,15 +17,12 @@ logger = get_logger(__name__)
 AfterCommitHook = Callable[[], Awaitable[None]]
 
 
-class SQLAlchemyUnitOfWork(UnitOfWork[R]):
+class SQLAlchemyUnitOfWork(UnitOfWork):
     """
     SQLAlchemy implementation of the Unit of Work pattern.
 
     This implementation uses SQLAlchemy's AsyncSession for transaction management
     and allows registration of repositories.
-
-    Generics:
-        R: Repository type bound to RepositoryProtocol, to enable type hinting for repositories
     """
 
     def __init__(self, session: AsyncSession):

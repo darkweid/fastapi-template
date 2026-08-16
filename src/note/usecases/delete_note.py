@@ -5,7 +5,7 @@ from fastapi import Depends
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceNotFoundException
 from src.note.policies import ensure_note_access
 from src.user.auth.permissions.enum import Permission
@@ -46,7 +46,7 @@ class DeleteNoteUseCase:
     - None.
     """
 
-    def __init__(self, uow: ApplicationUnitOfWork[RepositoryProtocol]) -> None:
+    def __init__(self, uow: ApplicationUnitOfWork) -> None:
         self.uow = uow
 
     async def execute(self, note_id: UUID, current_user: User) -> None:
@@ -70,8 +70,6 @@ class DeleteNoteUseCase:
 
 
 def get_delete_note_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
 ) -> DeleteNoteUseCase:
     return DeleteNoteUseCase(uow=uow)

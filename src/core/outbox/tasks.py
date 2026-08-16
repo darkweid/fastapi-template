@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from taskiq import TaskiqDepends
 
 from loggers import get_logger
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.outbox.models import OutboxMessage
 from src.core.utils.datetime_utils import get_utc_now
 from taskiq_worker.broker import broker
@@ -36,7 +36,7 @@ async def outbox_sweeper(
     """Publish pending outbox rows whose after-commit publish did not happen."""
     published = 0
     failed = 0
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+    uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
     async with uow:
         batch = await uow.outbox.get_batch_for_publish(
             uow.session, limit=SWEEPER_BATCH_SIZE
@@ -81,7 +81,7 @@ async def outbox_purge(
 ) -> str:
     """Delete published outbox rows older than the retention window."""
     cutoff = get_utc_now() - timedelta(days=PUBLISHED_RETENTION_DAYS)
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+    uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
     async with uow:
         deleted = await uow.outbox.purge_published(uow.session, cutoff)
         await uow.commit()

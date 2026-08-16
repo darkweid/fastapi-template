@@ -4,7 +4,7 @@ from fastapi import Depends
 
 from loggers import get_logger
 from src.core.database.session import get_unit_of_work
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.utils.security import hash_password
 from src.user.auth.schemas import CreateUserModel
 from src.user.auth.services.email_notifier import (
@@ -47,7 +47,7 @@ class RegisterUseCase:
 
     def __init__(
         self,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         notifier: EmailNotifier,
     ) -> None:
         self.uow = uow
@@ -72,9 +72,7 @@ class RegisterUseCase:
 
 
 def get_register_use_case(
-    uow: Annotated[
-        ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
-    ],
+    uow: Annotated[ApplicationUnitOfWork, Depends(get_unit_of_work)],
     notifier: Annotated[EmailNotifier, Depends(get_verification_notifier)],
 ) -> RegisterUseCase:
     return RegisterUseCase(uow=uow, notifier=notifier)

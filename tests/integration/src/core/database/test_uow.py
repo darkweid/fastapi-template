@@ -13,7 +13,6 @@ import pytest_asyncio
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from src.core.database.uow.abstract import RepositoryProtocol
 from src.core.database.uow.application import ApplicationUnitOfWork
 from src.core.utils.security import password_hasher
 from src.user.enums import UserRole
@@ -64,7 +63,7 @@ async def test_commit_is_visible_to_another_session(
     username = f"commit-{uuid4().hex[:8]}"
 
     async with AsyncSession(integration_engine, expire_on_commit=False) as session:
-        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
         async with uow:
             created = await uow.users.create(uow.session, build_user_data(username))
             await uow.flush()
@@ -84,7 +83,7 @@ async def test_rollback_leaves_nothing_behind(
     username = f"rollback-{uuid4().hex[:8]}"
 
     async with AsyncSession(integration_engine, expire_on_commit=False) as session:
-        uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(session)
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
         async with uow:
             await uow.users.create(uow.session, build_user_data(username))
             await uow.flush()
@@ -100,7 +99,7 @@ async def test_repository_commit_inside_a_uow_is_refused(
     db_session: AsyncSession, integration_engine: AsyncEngine
 ) -> None:
     """The guard has to hold on a real session, where a stray COMMIT is irreversible."""
-    uow: ApplicationUnitOfWork[RepositoryProtocol] = ApplicationUnitOfWork(db_session)
+    uow: ApplicationUnitOfWork = ApplicationUnitOfWork(db_session)
     username = f"guard-{uuid4().hex[:8]}"
 
     async with uow:

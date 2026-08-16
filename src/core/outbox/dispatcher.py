@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from taskiq.decor import AsyncTaskiqDecoratedTask
 import uuid6
 
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.outbox.repositories import OutboxRepository
 
 
@@ -29,7 +29,7 @@ class TaskDispatcher:
 
     async def enqueue_transactional(
         self,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         task: AsyncTaskiqDecoratedTask[Any, Any],
         *args: Any,
         **kwargs: Any,

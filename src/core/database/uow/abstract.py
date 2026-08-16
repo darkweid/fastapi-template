@@ -1,30 +1,18 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, Protocol, TypeVar
+from typing import Any
 
 
-class RepositoryProtocol(Protocol):
-    """Protocol defining the structure of a repository class."""
-
-    model: ClassVar[Any]
-
-
-R = TypeVar("R", bound=RepositoryProtocol)
-
-
-class UnitOfWork(ABC, Generic[R]):
+class UnitOfWork(ABC):
     """
     Abstract Unit of Work interface that defines the contract for concrete UoW implementations.
 
     The Unit of Work pattern provides an abstraction over the transaction boundary
     and encapsulates all repositories needed for business operations within a single unit.
-
-    Generics:
-        R: Repository type bound to RepositoryProtocol, to enable type hinting for repositories
     """
 
     @abstractmethod
-    async def __aenter__(self) -> "UnitOfWork[R]":
+    async def __aenter__(self) -> "UnitOfWork":
         """Enter the context manager, starting a transaction if needed."""
 
     @abstractmethod

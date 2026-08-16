@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 from taskiq.decor import AsyncTaskiqDecoratedTask
 
 from loggers import get_logger
-from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
+from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.outbox.dependencies import get_task_dispatcher
 from src.core.outbox.dispatcher import TaskDispatcher
@@ -71,7 +71,7 @@ class EmailNotifier:
     async def send(
         self,
         *,
-        uow: ApplicationUnitOfWork[RepositoryProtocol],
+        uow: ApplicationUnitOfWork,
         user: User,
         throttle_key: str | None = None,
     ) -> None:
