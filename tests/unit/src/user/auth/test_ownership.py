@@ -79,3 +79,18 @@ async def test_editor_reads_a_foreign_summary_via_permission(
     response = await async_client.get(f"/v1/users/{foreign.id}")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_viewer_reads_own_summary_with_uppercased_uuid(
+    async_client, dependency_overrides, fake_session
+) -> None:
+    """Regression test: UUID comparison must handle case-insensitive URL params."""
+    viewer = build_user(role=UserRole.VIEWER)
+    dependency_overrides.set(get_current_user, ProvideValue(viewer))
+    dependency_overrides.set(get_user_service, ProvideValue(FakeUserService(viewer)))
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+
+    response = await async_client.get(f"/v1/users/{str(viewer.id).upper()}")
+
+    assert response.status_code == 200

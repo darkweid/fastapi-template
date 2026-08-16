@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends, Request
 
@@ -8,6 +9,22 @@ from src.user.auth.dependencies import get_current_user
 from src.user.auth.permissions.enum import Permission
 from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
 from src.user.models import User
+
+
+def _matches_user_id(candidate: str, user_id: UUID) -> bool:
+    """Compare a candidate string (from URL) with a UUID, handling case differences.
+
+    Args:
+        candidate: Raw string from the URL path parameter.
+        user_id: The UUID to compare against.
+
+    Returns:
+        True if candidate parses as a UUID matching user_id, False otherwise.
+    """
+    try:
+        return UUID(candidate) == user_id
+    except ValueError:
+        return False
 
 
 def require_self_or_permission(
@@ -31,7 +48,7 @@ def require_self_or_permission(
         current_user: Annotated[User, Depends(get_current_user)],
     ) -> User:
         object_id = request.path_params[path_param]
-        if str(current_user.id) == str(object_id):
+        if _matches_user_id(str(object_id), current_user.id):
             return current_user
         if fallback in ROLE_PERMISSIONS.get(current_user.role, set()):
             return current_user
