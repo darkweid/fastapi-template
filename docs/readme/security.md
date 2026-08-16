@@ -152,6 +152,16 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 
 **Why it matters:** Error messages are an information disclosure vector. Generic responses prevent attackers from inferring database schema, business logic, or technology stack from error output.
 
+## Request ID Propagation
+
+`src/core/request_context.py`, `src/core/middleware.py`, `loggers/__init__.py`
+
+- An inbound `X-Request-ID` is only echoed back when it matches `^[A-Za-z0-9-]{1,64}$`; anything else (empty, overlong, containing CR/LF or other characters) is replaced with a freshly generated id, so a client cannot inject arbitrary content into log lines or the response header via this header.
+- Behind Nginx the id is always the one Nginx generated (`proxy_set_header X-Request-ID $request_id;` in `infra/nginx/proxy.inc`), which already satisfies the pattern; the application-level validation is the fallback for direct access (dev, tests).
+- The id is held in a `ContextVar` for the lifetime of the request and stamped onto every log record by `RequestIDFilter`, so correlating one request's log lines never depends on trusting message text.
+
+**Why it matters:** A client-controlled header echoed unvalidated into logs or headers is a log/response injection vector (CRLF, control characters, oversized values). Validating it at the boundary keeps request correlation useful without opening that door.
+
 ## OTP Generation
 
 `src/core/utils/security.py`

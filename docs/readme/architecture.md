@@ -162,6 +162,7 @@ identifier must carry a test proving "foreign object → 404".
 │   │   ├── storage/                     # Storage adapters (S3)
 │   │   ├── utils/                       # Utility functions
 │   │   ├── middleware.py                # Application middleware setup
+│   │   ├── request_context.py           # Request-id ContextVar shared by middleware and logging
 │   │   ├── schemas.py                   # Core data validation schemas
 │   │   ├── services.py                  # Core services shared across modules
 │   │   └── validations.py               # Data validation utilities

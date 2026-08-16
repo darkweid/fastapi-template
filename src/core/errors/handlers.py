@@ -67,17 +67,12 @@ def format_log_message(
     et = (error_type or "").strip()
     err = (et[:1].upper() + et[1:]) if et else "Error"
 
-    request_id = request.headers.get("x-request-id") or getattr(
-        getattr(request, "state", object()), "request_id", None
-    )
-
-    prefix = f"[{request_id}] " if request_id else ""
-    log_msg = f"{prefix}[{err}] {msg}"
+    log_msg = f"[{err}] {msg}"
 
     if include_request_path:
         endpoint = request.url.path
         method = request.method
-        log_msg = f"{prefix}[{err}] {method} {endpoint} | {msg}"
+        log_msg = f"[{err}] {method} {endpoint} | {msg}"
 
     if additional_info:
         sensitive = {
