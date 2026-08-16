@@ -14,7 +14,7 @@ class ErrorCode(StrEnum):
     SERVICE_UNAVAILABLE = "service_unavailable"
     VALIDATION_ERROR = "validation_error"
     UNAUTHORIZED = "unauthorized"
-    TOKEN_EXPIRED = "token_expired"
+    TOKEN_EXPIRED = "token_expired"  # nosec B105
     FORBIDDEN = "forbidden"
     PERMISSION_DENIED = "permission_denied"
     CSRF_FAILED = "csrf_failed"
