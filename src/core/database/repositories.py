@@ -1,6 +1,6 @@
 from typing import Any, Generic, TypeVar, cast
 
-from sqlalchemy import Enum as SAEnum, String, func, select, update
+from sqlalchemy import Enum as SAEnum, String, Table, func, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -9,6 +9,7 @@ from sqlalchemy.sql.expression import ColumnClause
 from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
+from src.core.database.mixins import SoftDeleteMixin
 from src.core.database.query import ListQuery, SortOrder
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
@@ -317,9 +318,9 @@ class BaseRepository(Generic[T]):
 
     def _apply_for_update(self, query: Any) -> Any:
         """Limit row locking to the current model table to avoid outer-join issues."""
-        # getattr, not attribute access: SQLAlchemy's declarative stubs type
+        # cast, not plain attribute access: SQLAlchemy's declarative stubs type
         # __table__ narrowly enough that direct access loses .primary_key.columns.
-        table = getattr(self.model, "__table__")  # noqa: B009
+        table = cast(Table, self.model.__table__)
         pk_columns = tuple(
             cast("ColumnElement[Any]", column) for column in table.primary_key.columns
         )
@@ -430,12 +431,12 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
             result = await session.execute(query)
             instance: T | None = result.scalars().first()
             if instance:
-                # setattr, not attribute access: T is bound to the declarative
+                # cast, not plain attribute access: T is bound to the declarative
                 # base only, not to SoftDeleteMixin, so mypy cannot see these
                 # fields on it; _assert_softdelete_fields() guarantees they
                 # exist on the actual model at runtime.
-                setattr(instance, "is_deleted", True)  # noqa: B010
-                setattr(instance, "deleted_at", get_utc_now())  # noqa: B010
+                cast(SoftDeleteMixin, instance).is_deleted = True
+                cast(SoftDeleteMixin, instance).deleted_at = get_utc_now()
                 if commit:
                     await session.commit()
                     await session.refresh(instance)
