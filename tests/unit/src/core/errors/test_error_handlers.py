@@ -14,7 +14,7 @@ from src.core.errors.handlers import (
     handle_request_validation_exception,
     handle_validation_error,
 )
-import src.user.auth.errors  # noqa: F401 - register domain subclasses for the walk
+import src.user.auth.errors  # noqa: F401 - register domain subclasses for the walk; every new domain errors module must be imported here the same way
 
 
 class SampleModel(BaseModel):
@@ -257,3 +257,12 @@ async def test_http_exception_handler_maps_5xx_to_internal_error() -> None:
     bad_gateway = HTTPException(status_code=502, detail="Bad Gateway")
     response = await handlers.handle_http_exception(make_request(), bad_gateway)
     assert json.loads(response.body)["code"] == "internal_error"
+
+
+async def test_http_exception_handler_omits_body_for_bodyless_status() -> None:
+    # 304 (and 204/1xx) must not carry a body; a JSON error payload there
+    # would be a protocol violation.
+    not_modified = HTTPException(status_code=304)
+    response = await handlers.handle_http_exception(make_request(), not_modified)
+    assert response.status_code == 304
+    assert response.body == b""

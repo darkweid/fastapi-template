@@ -19,6 +19,7 @@ from src.user.auth.token_helpers import (
     validate_active_one_time_token,
 )
 from src.user.cache_keys import user_cache_keys
+from src.user.policies import verification_pending
 
 logger = get_logger(__name__)
 
@@ -92,7 +93,7 @@ class VerifyEmailUseCase:
                         mask_email(normalized_email),
                     )
                     return SuccessResponse(success=False)
-                if user.is_verified:
+                if not verification_pending(user):
                     await invalidate_active_one_time_token(
                         purpose="verification",
                         email=normalized_email,

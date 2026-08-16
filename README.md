@@ -38,6 +38,8 @@ Every error, from the application and from nginx alike, has one flat shape:
   `"errors": [{"field": "...", "message": "..."}]`.
 - Rate-limit errors (429) additionally carry `"retry_after"` (seconds) in the
   body and the `Retry-After` header.
+- `token_expired` (401) from the refresh endpoint means the session is over —
+  send the user to login; retrying the refresh would loop.
 - Login answers a single `invalid_credentials` code for every failure reason —
   wrong password, unknown email, blocked or unverified account — by design.
 

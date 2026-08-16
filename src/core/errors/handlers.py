@@ -1,14 +1,14 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from fastapi import Request
+from fastapi import Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import ValidationError
 import sentry_sdk
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import Response
 
 from loggers import get_logger
 from src.core.errors.codes import ErrorCode
@@ -118,7 +118,7 @@ async def handle_core_exception(request: Request, exc: CoreException) -> JSONRes
 async def handle_http_exception(
     request: Request,
     exc: StarletteHTTPException,
-) -> JSONResponse:
+) -> Response:
     """Translate framework-raised HTTPExceptions onto the error contract.
 
     FastAPI's security utilities and Starlette's router raise bare
@@ -126,6 +126,8 @@ async def handle_http_exception(
     wrong method -> 405); without this handler they would answer
     Starlette's default {"detail": ...} body and break the contract.
     """
+    if not is_body_allowed_for_status_code(exc.status_code):
+        return Response(status_code=exc.status_code, headers=exc.headers or None)
     code = _HTTP_STATUS_TO_ERROR_CODE.get(
         exc.status_code,
         (
