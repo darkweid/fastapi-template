@@ -97,7 +97,7 @@ Three-tier model:
 - `Permission` enum — 28 granular permissions (view, create, edit, delete per resource).
 - `UserRole` enum — `ADMIN`, `EDITOR`, `VIEWER`.
 - `ROLE_PERMISSIONS` matrix — maps each role to its allowed permissions.
-- `require_permission()` — FastAPI dependency that checks active + verified + permitted.
+- `require_permission()` — FastAPI dependency that checks RBAC only; account admission (active + verified) is enforced by `get_current_user`.
 
 **Why it matters:** Endpoint-level auth checks (`Depends(current_user)`) only verify identity. Permission checks verify authorization, preventing horizontal and vertical privilege escalation.
 

@@ -6,12 +6,12 @@ import pytest
 
 from src.core.database.session import get_session
 from src.core.errors.exceptions import (
-    AccessForbiddenException,
     InstanceNotFoundException,
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
 from src.user.auth.dependencies import get_current_user
+from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
@@ -99,6 +99,32 @@ async def test_get_user_info_by_id(
     payload = response.json()
     assert payload["id"] == str(target_user.id)
     assert payload["username"] == target_user.username
+
+
+@pytest.mark.asyncio
+async def test_get_user_info_by_id_denies_without_view_users_permission(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_session: FakeAsyncSession,
+) -> None:
+    # Exercises the real checker: a VIEWER role has no VIEW_USERS permission, so
+    # this proves require_permission's RBAC denial still runs and is now on the
+    # new error type - admission (blocked/unverified) is no longer its job.
+    viewer_user = build_user(role=UserRole.VIEWER)
+    target_user = build_user()
+    dependency_overrides.set(get_current_user, ProvideValue(viewer_user))
+    dependency_overrides.set(
+        get_user_service, ProvideValue(FakeUserService(target_user))
+    )
+    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+
+    response = await async_client.get(f"/v1/users/{target_user.id}")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "permission_denied",
+        "message": "Permission denied",
+    }
 
 
 @pytest.mark.asyncio
@@ -230,7 +256,7 @@ async def test_update_user_password_rejects_wrong_current_password(
         get_update_user_password_use_case,
         ProvideValue(
             FakeUpdatePasswordUseCase(
-                error=AccessForbiddenException("Current password is incorrect.")
+                error=InvalidCredentialsError("Current password is incorrect.")
             )
         ),
     )
@@ -240,7 +266,11 @@ async def test_update_user_password_rejects_wrong_current_password(
         json={"current_password": "WrongPass1!", "password": "StrongPass1!"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "invalid_credentials",
+        "message": "Current password is incorrect.",
+    }
 
 
 @pytest.mark.asyncio

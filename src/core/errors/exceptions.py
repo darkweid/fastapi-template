@@ -96,12 +96,6 @@ class AccessForbiddenException(CoreException):
     log_level = "warning"
 
 
-class PermissionDeniedException(CoreException):
-    status_code = 403
-    error_code = ErrorCode.PERMISSION_DENIED
-    log_level = "warning"
-
-
 class TooManyRequestsException(CoreException):
     status_code = 429
     error_code = ErrorCode.RATE_LIMITED

@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock
 from fastapi.routing import APIRoute
 import pytest
 
+from src.core.database.session import get_unit_of_work
 from src.core.limiter.depends import RateLimiter
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
 from src.user.auth.cookies import CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME
 from src.user.auth.dependencies import (
@@ -36,14 +38,21 @@ from tests.factories.token_factory import (
     encode_access_payload,
 )
 from tests.factories.user_factory import build_user
+from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
+from tests.fakes.redis import InMemoryRedis
 from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
-from tests.helpers.providers import ProvideValue
+from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 
 
 class FakeUseCase:
     def __init__(self, result) -> None:
         self.execute = AsyncMock(return_value=result)
+
+
+class FakeUserRepository:
+    def __init__(self, user) -> None:
+        self.get_single = AsyncMock(return_value=user)
 
 
 def _get_auth_route(*, path: str, method: str) -> APIRoute:
@@ -143,6 +152,80 @@ async def test_refresh_endpoint(
     assert body["access_token"] == "a"
     assert body["refresh_token"] is None
     assert body["csrf_token"]
+
+
+@pytest.mark.asyncio
+async def test_login_of_blocked_user_masks_the_reason(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_redis: InMemoryRedis,
+) -> None:
+    # The real LoginUserUseCase must run here (not FakeUseCase) so the assertion
+    # proves the route surfaces exactly what the use case raises for a blocked
+    # account - the same masked response as any other invalid credentials.
+    user = build_user(is_active=False)
+    uow = FakeUnitOfWork(
+        session=FakeAsyncSession(),
+        repositories={"users": FakeUserRepository(user)},
+    )
+    dependency_overrides.set(get_unit_of_work, ProvideAsyncValue(uow))
+    dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
+
+    response = await async_client.post(
+        "/v1/users/auth/login",
+        json={"email": user.email, "password": "password"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "invalid_credentials",
+        "message": "Incorrect email or password.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_refresh_of_blocked_user_reports_user_blocked(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_redis: InMemoryRedis,
+) -> None:
+    # The real GetTokensByRefreshUserUseCase must run here too: a caller who
+    # already holds a valid refresh token gets the real reason, unlike login.
+    user = build_user(is_active=False)
+    payload: JWTPayload = build_refresh_payload(str(user.id))
+    dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
+    dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
+
+    response = await async_client.post(
+        "/v1/users/auth/login/refresh",
+        headers={"Authorization": "header-refresh-token"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"code": "user_blocked", "message": "User is blocked"}
+
+
+@pytest.mark.asyncio
+async def test_refresh_of_unverified_user_reports_user_not_verified(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_redis: InMemoryRedis,
+) -> None:
+    user = build_user(is_verified=False)
+    payload: JWTPayload = build_refresh_payload(str(user.id))
+    dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
+    dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
+
+    response = await async_client.post(
+        "/v1/users/auth/login/refresh",
+        headers={"Authorization": "header-refresh-token"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "user_not_verified",
+        "message": "User is not verified",
+    }
 
 
 @pytest.mark.asyncio
