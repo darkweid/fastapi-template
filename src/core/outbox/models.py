@@ -6,11 +6,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database.base import Base
-from src.core.database.mixins import TimestampMixin, UUIDIDMixin
+from src.core.database.mixins import TimestampMixin, UUID7IDMixin
 from src.core.outbox.enums import OutboxMessageStatus
 
 
-class OutboxMessage(Base, UUIDIDMixin, TimestampMixin):
+class OutboxMessage(Base, UUID7IDMixin, TimestampMixin):
     __tablename__ = "outbox_messages"
     __table_args__ = (
         # The sweeper's only hot query: pending rows in FIFO order.
