@@ -4,11 +4,11 @@ import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
+from src.core.utils.security import DUMMY_PASSWORD_HASH
 from src.user.auth.schemas import LoginUserModel
 import src.user.auth.usecases.login as login_usecase
 from src.user.auth.usecases.login import (
     INVALID_CREDENTIALS_MESSAGE,
-    INVALID_CREDENTIALS_PASSWORD_HASH,
     LoginUserUseCase,
 )
 from src.user.cache_keys import user_cache_keys
@@ -48,7 +48,7 @@ async def test_login_rehashes_password_when_needed(
     uow = build_uow(user, fake_session)
 
     needs_rehash_mock = Mock(return_value=True)
-    hash_mock = Mock(return_value="new-hash")
+    hash_mock = AsyncMock(return_value="new-hash")
     verify_mock = AsyncMock(return_value=True)
     access_mock = AsyncMock(return_value="access")
     refresh_mock = AsyncMock(return_value="refresh")
@@ -70,7 +70,7 @@ async def test_login_rehashes_password_when_needed(
     assert result.refresh_token == "refresh"
     needs_rehash_mock.assert_called_once_with(user.password_hash)
     verify_mock.assert_awaited_once_with("plain-pass", user.password_hash)
-    hash_mock.assert_called_once_with("plain-pass")
+    hash_mock.assert_awaited_once_with("plain-pass")
     uow.users.update.assert_awaited_once_with(
         uow.session,
         {"password_hash": "new-hash"},
@@ -140,9 +140,7 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
             LoginUserModel(email="missing@example.com", password="plain-pass")
         )
 
-    verify_mock.assert_awaited_once_with(
-        "plain-pass", INVALID_CREDENTIALS_PASSWORD_HASH
-    )
+    verify_mock.assert_awaited_once_with("plain-pass", DUMMY_PASSWORD_HASH)
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_not_awaited()

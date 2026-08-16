@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from src.core.utils.security import hash_password
+from src.core.utils.security import password_hasher
 from src.user.enums import UserRole
 from src.user.models import User
 
@@ -27,7 +27,7 @@ def build_user(
         email=email,
         username=username,
         phone_number=phone_number,
-        password_hash=hash_password(password),
+        password_hash=password_hasher.hash(password),
         role=role,
         is_verified=is_verified,
         is_active=is_active,

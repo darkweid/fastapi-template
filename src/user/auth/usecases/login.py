@@ -12,6 +12,7 @@ from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import (
+    DUMMY_PASSWORD_HASH,
     hash_password,
     mask_email,
     needs_password_rehash,
@@ -28,7 +29,6 @@ from src.user.policies import (
     ensure_can_authenticate,
 )
 
-INVALID_CREDENTIALS_PASSWORD_HASH = hash_password("dummy-password")
 logger = get_logger(__name__)
 
 
@@ -90,7 +90,7 @@ class LoginUserUseCase:
                     "[LoginUser] User with email '%s' not found.",
                     mask_email(data.email),
                 )
-                await verify_password(data.password, INVALID_CREDENTIALS_PASSWORD_HASH)
+                await verify_password(data.password, DUMMY_PASSWORD_HASH)
                 raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             correct_password = await verify_password(data.password, user.password_hash)
@@ -134,9 +134,10 @@ class LoginUserUseCase:
     ) -> None:
         if not needs_password_rehash(user.password_hash):
             return
+        new_hash = await hash_password(raw_password)
         await uow.users.update(
             uow.session,
-            {"password_hash": hash_password(raw_password)},
+            {"password_hash": new_hash},
             id=user.id,
         )
 
