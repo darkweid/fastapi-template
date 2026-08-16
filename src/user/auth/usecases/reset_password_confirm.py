@@ -12,13 +12,13 @@ from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import hash_password, mask_email, normalize_email
+from src.core.utils.security import hash_password, mask_email
 from src.main.config import config
 from src.user.auth.schemas import ResetPasswordModel
+from src.user.auth.security import decode_one_time_token
 from src.user.auth.token_helpers import (
     invalidate_active_one_time_token,
     invalidate_all_user_sessions,
-    validate_active_one_time_token,
 )
 from src.user.cache_keys import user_cache_keys
 
@@ -78,68 +78,53 @@ class ResetPasswordConfirmUseCase:
     ) -> SuccessResponse:
         async with self.uow as uow:
             try:
-                payload = jwt.decode(
+                normalized_email = await decode_one_time_token(
                     data.token,
-                    config.jwt.JWT_RESET_PASSWORD_SECRET_KEY,
-                    [config.jwt.ALGORITHM],
+                    secret=config.jwt.JWT_RESET_PASSWORD_SECRET_KEY,
+                    purpose="reset_password",
+                    redis_client=self.redis_client,
+                    expected_mode="reset_password_token",
                 )
 
-                if payload.get("mode") == "reset_password_token":
-                    email = payload.get("email")
-                    if not email:
-                        logger.info("[ResetPasswordConfirm] Email not found in token.")
-                        return SuccessResponse(success=False)
-
-                    normalized_email = normalize_email(email)
-                    await validate_active_one_time_token(
-                        purpose="reset_password",
-                        email=normalized_email,
-                        jti=payload.get("jti"),
-                        redis_client=self.redis_client,
-                    )
-
-                    new_password_hash = await hash_password(data.password)
-                    user = await uow.users.update(
-                        uow.session,
-                        {"password_hash": new_password_hash},
-                        email=normalized_email,
-                    )
-                    if not user:
-                        logger.info(
-                            "[ResetPasswordConfirm] User with email %s not found.",
-                            mask_email(normalized_email),
-                        )
-                        return SuccessResponse(success=False)
-
-                    await uow.flush()
-                    await invalidate_active_one_time_token(
-                        purpose="reset_password",
-                        email=normalized_email,
-                        redis_client=self.redis_client,
-                    )
-                    await invalidate_all_user_sessions(str(user.id), self.redis_client)
-                    await self.cache.invalidate(user_cache_keys.namespace(user.id))
-                    await uow.commit()
-                    logger.debug(
-                        "[ResetPasswordConfirm] All user %s sessions invalidated.",
-                        mask_email(normalized_email),
-                    )
+                new_password_hash = await hash_password(data.password)
+                user = await uow.users.update(
+                    uow.session,
+                    {"password_hash": new_password_hash},
+                    email=normalized_email,
+                )
+                if not user:
                     logger.info(
-                        "[ResetPasswordConfirm] Successfully changed password for user "
-                        "with email %s.",
+                        "[ResetPasswordConfirm] User with email %s not found.",
                         mask_email(normalized_email),
                     )
-                    return SuccessResponse(success=True)
-                else:
-                    logger.info("[ResetPasswordConfirm] Invalid token mode.")
                     return SuccessResponse(success=False)
 
-            except jwt.ExpiredSignatureError:
-                logger.info("[ResetPasswordConfirm] Token has expired.")
-                return SuccessResponse(success=False)
+                await uow.flush()
+                await invalidate_active_one_time_token(
+                    purpose="reset_password",
+                    email=normalized_email,
+                    redis_client=self.redis_client,
+                )
+                await invalidate_all_user_sessions(str(user.id), self.redis_client)
+                await self.cache.invalidate(user_cache_keys.namespace(user.id))
+                await uow.commit()
+                logger.debug(
+                    "[ResetPasswordConfirm] All user %s sessions invalidated.",
+                    mask_email(normalized_email),
+                )
+                logger.info(
+                    "[ResetPasswordConfirm] Successfully changed password for user "
+                    "with email %s.",
+                    mask_email(normalized_email),
+                )
+                return SuccessResponse(success=True)
 
             except UnauthorizedException:
                 logger.info("[ResetPasswordConfirm] Token JTI is inactive or invalid.")
+                return SuccessResponse(success=False)
+
+            except jwt.ExpiredSignatureError:
+                logger.info("[ResetPasswordConfirm] Token has expired.")
                 return SuccessResponse(success=False)
 
             except jwt.InvalidTokenError:
