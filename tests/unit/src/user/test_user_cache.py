@@ -8,7 +8,7 @@ import httpx2
 import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
-from src.core.database.session import get_session, get_unit_of_work
+from src.core.database.session import get_unit_of_work
 from src.user.auth.dependencies import get_current_user
 from src.user.cache_keys import USER_CACHE_TAG, user_cache_keys
 from src.user.dependencies import get_user_service
@@ -52,7 +52,6 @@ async def test_summary_key_is_namespaced_per_user() -> None:
 async def test_tag_flush_drops_cached_summaries_of_every_user(
     async_client: httpx2.AsyncClient,
     dependency_overrides: DependencyOverrides,
-    fake_session: FakeAsyncSession,
     cache: InMemoryCache,
 ) -> None:
     # The tag is what a bulk write reaches for: one call clears both users, where
@@ -62,14 +61,13 @@ async def test_tag_flush_drops_cached_summaries_of_every_user(
     second_user = build_user()
     users = {first_user.id: first_user, second_user.id: second_user}
 
-    async def get_by_id(session: FakeAsyncSession, **filters: Any) -> User:
+    async def get_by_id(**filters: Any) -> User:
         return users[filters["id"]]
 
     user_service = FakeUserService(first_user)
     user_service.get_single_or_404 = AsyncMock(side_effect=get_by_id)
     dependency_overrides.set(get_current_user, ProvideValue(admin_user))
     dependency_overrides.set(get_user_service, ProvideValue(user_service))
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     await async_client.get(f"/v1/users/{first_user.id}")
     await async_client.get(f"/v1/users/{second_user.id}")
@@ -96,7 +94,6 @@ def test_namespace_collapses_non_canonical_uuid_spellings_to_one_key() -> None:
 async def test_get_user_by_id_serves_second_request_from_cache(
     async_client: httpx2.AsyncClient,
     dependency_overrides: DependencyOverrides,
-    fake_session: FakeAsyncSession,
     cache: InMemoryCache,
 ) -> None:
     admin_user = build_user(role=UserRole.ADMIN)
@@ -105,7 +102,6 @@ async def test_get_user_by_id_serves_second_request_from_cache(
     dependency_overrides.set(
         get_user_service, ProvideValue(FakeUserService(target_user))
     )
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     first = await async_client.get(f"/v1/users/{target_user.id}")
     second = await async_client.get(f"/v1/users/{target_user.id}")
@@ -128,7 +124,6 @@ async def test_profile_update_invalidates_cached_summary(
     user = build_user(role=UserRole.ADMIN)
     dependency_overrides.set(get_current_user, ProvideValue(user))
     dependency_overrides.set(get_user_service, ProvideValue(FakeUserService(user)))
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     async def apply_update(
         session: FakeAsyncSession, data: dict[str, Any], **filters: object
@@ -166,7 +161,6 @@ async def test_cache_invalidation_ignores_uuid_spelling_in_the_url(
     user = build_user(role=UserRole.ADMIN)
     dependency_overrides.set(get_current_user, ProvideValue(user))
     dependency_overrides.set(get_user_service, ProvideValue(FakeUserService(user)))
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     async def apply_update(
         session: FakeAsyncSession, data: dict[str, Any], **filters: object

@@ -2,7 +2,9 @@ from typing import Annotated
 
 from fastapi import Depends
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.database.session import get_session
 from src.core.redis.dependencies import get_redis_client
 from src.system.repositories import SystemRepository
 from src.system.services import HealthService, ReadinessService
@@ -14,8 +16,9 @@ def get_system_repository() -> SystemRepository:
 
 async def get_readiness_service(
     repository: Annotated[SystemRepository, Depends(get_system_repository)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ReadinessService:
-    return ReadinessService(repository=repository)
+    return ReadinessService(repository=repository, session=session)
 
 
 async def get_health_service(

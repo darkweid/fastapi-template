@@ -39,11 +39,12 @@ async def test_base_service_passes_list_query_to_repository() -> None:
     repository.get_paginated_list = AsyncMock(return_value=([], 0))
     service: BaseService[
         ServiceModel, ServiceModelView, ServiceModelRepository, ServiceModelView
-    ] = BaseService(repository=repository, response_schema=ServiceModelView)
+    ] = BaseService(
+        repository=repository, session=AsyncMock(), response_schema=ServiceModelView
+    )
     list_query = ListQuery(search="alpha", order_by="name", order="asc")
 
     response = await service.get_paginated_list(
-        session=AsyncMock(),
         pagination=PaginationParams(page=1, size=10),
         query=list_query,
         is_active=True,

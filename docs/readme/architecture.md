@@ -46,6 +46,11 @@ Benefits:
 **External systems (S3, Email, Queues, HTTP clients)**
 - Always at the UseCase level or in infra adapters used by a UseCase.
 
+### Routers Never Receive a DB Session
+Routers only inject the Service or UseCase they call; the session itself stops one layer earlier. No exceptions — the system probes get theirs the same way, through `get_readiness_service`, not through a session dependency on the route.
+- `BaseService.__init__(repository, session, response_schema=None)` takes the session as a constructor argument; the DI provider that builds the service (e.g. `get_user_service`, `get_readiness_service`) resolves it via `Depends(get_session)` and passes it in. Every CRUD method then forwards `self.session` to the repository — no method still accepts a `session` argument.
+- Anti-pattern: injecting `AsyncSession` into a router, or passing a session from a router into a service method.
+
 ### Repository Access
 - All DB work goes through repositories; no direct SQL in usecases/services/routers.
 - Prefer base repository methods (e.g., `get_single`) before adding custom queries; if the same filters/settings are reused 2–3 times or more, extract them into a custom repository method.

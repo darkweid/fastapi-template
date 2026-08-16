@@ -21,7 +21,7 @@ class FakeHealthService:
     def __init__(self, response: HealthCheckResponse) -> None:
         self.response = response
 
-    async def get_status(self, session) -> HealthCheckResponse:
+    async def get_status(self) -> HealthCheckResponse:
         return self.response
 
 
@@ -104,13 +104,11 @@ async def test_check_readiness_returns_503_when_database_is_down(
 async def test_check_health_endpoint(
     app: FastAPI,
     dependency_overrides: DependencyOverrides,
-    fake_session: FakeAsyncSession,
 ) -> None:
     status = HealthCheckResponse(status="degraded", postgres=True, redis=False)
     dependency_overrides.set(
         get_health_service, ProvideValue(FakeHealthService(status))
     )
-    dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
 
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(
