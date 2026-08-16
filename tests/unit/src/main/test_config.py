@@ -5,6 +5,7 @@ from src.main.config import (
     AppConfig,
     CacheConfig,
     JWTConfig,
+    S3Config,
 )
 
 
@@ -274,3 +275,12 @@ def test_app_config_normalizes_public_base_url_and_paths() -> None:
     assert app_config.PUBLIC_BASE_URL == "https://app.example.com"
     assert app_config.EMAIL_VERIFY_PATH == "/confirm-email"
     assert app_config.PASSWORD_RESET_PATH == "/reset-password"
+
+
+def test_s3_disabled_needs_no_credentials() -> None:
+    assert S3Config().S3_ENABLED is False  # no env → still constructs
+
+
+def test_s3_enabled_requires_credentials() -> None:
+    with pytest.raises(ValidationError, match="S3_ENABLED=true requires"):
+        S3Config(S3_ENABLED=True, S3_BUCKET_NAME="b")  # missing the rest

@@ -16,10 +16,11 @@ SECRET_MIN_LENGTH = 32
 
 
 class S3Config(BaseModel):
-    S3_BUCKET_NAME: str
-    S3_ACCESS_KEY_ID: str
-    S3_SECRET_ACCESS_KEY: str
-    S3_REGION_NAME: str
+    S3_ENABLED: bool = False
+    S3_BUCKET_NAME: str | None = None
+    S3_ACCESS_KEY_ID: str | None = None
+    S3_SECRET_ACCESS_KEY: str | None = None
+    S3_REGION_NAME: str | None = None
     S3_PRE_SIGNED_URL_SECONDS: int = Field(300, gt=0)
     S3_ENDPOINT_URL: str | None = None
     S3_ADDRESSING_STYLE: str | None = None
@@ -65,6 +66,24 @@ class S3Config(BaseModel):
     @classmethod
     def default_retry_mode(cls, value: str) -> str:
         return value or "standard"
+
+    @model_validator(mode="after")
+    def require_credentials_when_enabled(self) -> "S3Config":
+        if not self.S3_ENABLED:
+            return self
+        missing = [
+            name
+            for name in (
+                "S3_BUCKET_NAME",
+                "S3_ACCESS_KEY_ID",
+                "S3_SECRET_ACCESS_KEY",
+                "S3_REGION_NAME",
+            )
+            if not getattr(self, name)
+        ]
+        if missing:
+            raise ValueError(f"S3_ENABLED=true requires: {', '.join(missing)}")
+        return self
 
 
 class BroadcastingConfig(BaseModel):

@@ -134,6 +134,7 @@ async def test_dependency_context_manager(monkeypatch: pytest.MonkeyPatch) -> No
     from src.core.storage.s3 import dependencies
 
     s3_settings = SimpleNamespace(
+        S3_ENABLED=True,
         S3_BUCKET_NAME="bucket",
         S3_REGION_NAME="us-east-1",
         S3_ACCESS_KEY_ID="ak",

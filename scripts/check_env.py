@@ -29,6 +29,11 @@ FORBIDDEN_BOOLEANS = {
 # URLs that must point somewhere the outside world can reach. A deploy that
 # keeps the example value here mails every user a link to their own machine.
 PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
+
+# get_s3_adapter refuses to build a client at all while S3 is disabled, so a
+# placeholder credential sitting under this prefix costs nothing and should
+# not fail the gate - only S3_ENABLED itself is checked in that state.
+S3_KEY_PREFIX = "S3_"
 # The literals below are hostnames to match, not addresses to bind to, which is
 # what the linters read them as.
 LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # noqa: S104 # nosec B104
@@ -70,10 +75,17 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
     if missing_keys:
         problems.append(f"Missing keys in .env: {', '.join(missing_keys)}")
 
+    s3_enabled = as_bool(actual.get("S3_ENABLED", "")) is True
+
     for key, value in sorted(actual.items()):
+        skip_s3_placeholder = (
+            key.startswith(S3_KEY_PREFIX) and key != "S3_ENABLED" and not s3_enabled
+        )
         is_secret = bool(SECRET_KEY_PATTERN.search(key))
         copied_from_example = is_secret and value and value == example.get(key)
-        if copied_from_example or PLACEHOLDER_MARKER in value.lower():
+        if not skip_s3_placeholder and (
+            copied_from_example or PLACEHOLDER_MARKER in value.lower()
+        ):
             problems.append(
                 f"{key} still holds the placeholder value from .env.example"
             )

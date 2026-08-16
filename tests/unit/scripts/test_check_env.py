@@ -173,6 +173,10 @@ def test_shipped_env_example_is_rejected_as_a_deploy_config() -> None:
     """
     The example is a working local config, never a deployable one. Copying it
     unchanged has to fail loudly, and every secret in it has to be named.
+
+    S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY are deliberately absent here: the
+    example ships S3_ENABLED=false, and get_s3_adapter refuses to build a
+    client in that state, so the placeholder values are inert.
     """
     example = parse_env(REPO_ROOT / ".env.example")
 
@@ -188,11 +192,11 @@ def test_shipped_env_example_is_rejected_as_a_deploy_config() -> None:
         "JWT_USER_SECRET_KEY",
         "JWT_VERIFY_SECRET_KEY",
         "JWT_RESET_PASSWORD_SECRET_KEY",
-        "S3_ACCESS_KEY_ID",
-        "S3_SECRET_ACCESS_KEY",
         "SENTRY_DSN",
         "PUBLIC_BASE_URL",
     } <= flagged
+    assert "S3_ACCESS_KEY_ID" not in flagged
+    assert "S3_SECRET_ACCESS_KEY" not in flagged
 
 
 def test_every_secret_in_the_example_carries_the_placeholder_marker() -> None:
@@ -209,6 +213,42 @@ def test_every_secret_in_the_example_carries_the_placeholder_marker() -> None:
     ]
 
     assert unmarked == []
+
+
+def test_s3_placeholder_is_ignored_when_s3_disabled() -> None:
+    """get_s3_adapter refuses to build a client while S3 is disabled, so a
+    leftover placeholder credential in that state is harmless."""
+    example = {
+        **EXAMPLE,
+        "S3_ENABLED": "false",
+        "S3_ACCESS_KEY_ID": "example-s3-access-key-id-not-real",
+    }
+    actual = {
+        **_deployable_env(),
+        "S3_ENABLED": "false",
+        "S3_ACCESS_KEY_ID": "example-s3-access-key-id-not-real",
+    }
+
+    assert collect_problems(example, actual) == []
+
+
+def test_s3_placeholder_is_reported_when_s3_enabled() -> None:
+    example = {
+        **EXAMPLE,
+        "S3_ENABLED": "false",
+        "S3_ACCESS_KEY_ID": "example-s3-access-key-id-not-real",
+    }
+    actual = {
+        **_deployable_env(),
+        "S3_ENABLED": "true",
+        "S3_ACCESS_KEY_ID": "example-s3-access-key-id-not-real",
+    }
+
+    problems = collect_problems(example, actual)
+
+    assert problems == [
+        "S3_ACCESS_KEY_ID still holds the placeholder value from .env.example"
+    ]
 
 
 def test_parse_env_reads_quotes_comments_and_embedded_equals(tmp_path: Path) -> None:
