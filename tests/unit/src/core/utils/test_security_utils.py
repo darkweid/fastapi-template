@@ -24,6 +24,7 @@ async def test_verify_garbage_hash_returns_false() -> None:
 async def test_is_password_hash() -> None:
     assert is_password_hash(await hash_password("S3cret!pass")) is True
     assert is_password_hash("plaintext") is False
+    assert is_password_hash("$argon2garbage") is False
 
 
 async def test_needs_rehash_on_weaker_parameters() -> None:

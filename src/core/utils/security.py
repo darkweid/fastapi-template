@@ -1,8 +1,9 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import secrets
 
-from argon2 import PasswordHasher
+from argon2 import PasswordHasher, extract_parameters
 from argon2.exceptions import InvalidHashError, VerificationError
 from pydantic import EmailStr
 
@@ -16,6 +17,12 @@ password_hasher = PasswordHasher(
     parallelism=2,
 )
 
+# Every concurrent Argon2 call holds memory_cost (64 MB) for its duration.
+# A dedicated bounded executor caps hashing memory at max_workers * 64 MB
+# no matter how many requests arrive at once; the default executor would
+# allow up to min(32, cpu + 4) simultaneous hashes.
+_password_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="argon2")
+
 # Computed once at import. Login verifies against it when the user does not
 # exist, so failure timing matches a real password check; it must be a real
 # hash produced with the current parameters.
@@ -24,12 +31,18 @@ DUMMY_PASSWORD_HASH: str = password_hasher.hash("dummy-password")
 
 async def hash_password(password: str) -> str:
     """Hash a plaintext password with Argon2 off the event loop."""
-    return await asyncio.to_thread(password_hasher.hash, password)
+    return await asyncio.get_running_loop().run_in_executor(
+        _password_executor, password_hasher.hash, password
+    )
 
 
 def is_password_hash(value: str) -> bool:
-    """Check whether the given value looks like an Argon2 password hash."""
-    return value.startswith("$argon2")
+    """Check whether the given value is a structurally valid Argon2 hash."""
+    try:
+        extract_parameters(value)
+    except InvalidHashError:
+        return False
+    return True
 
 
 def needs_password_rehash(hashed_password: str) -> bool:
@@ -40,8 +53,8 @@ def needs_password_rehash(hashed_password: str) -> bool:
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash off the event loop."""
     try:
-        return await asyncio.to_thread(
-            password_hasher.verify, hashed_password, plain_password
+        return await asyncio.get_running_loop().run_in_executor(
+            _password_executor, password_hasher.verify, hashed_password, plain_password
         )
     except (VerificationError, InvalidHashError, ValueError):
         return False
