@@ -7,8 +7,7 @@ from src.core.schemas import (
 )
 from src.core.validations import (
     FULL_NAME_PATTERN,
-    PHONE_NUMBER_MIN_LENGTH,
-    PHONE_NUMBER_REGEX,
+    PHONE_NUMBER_PATTERN,
     USERNAME_VALIDATOR,
 )
 
@@ -18,7 +17,7 @@ class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Ba
     last_name: str = Field(min_length=2, max_length=30)
     email: EmailStr
     username: str
-    phone_number: str = Field(min_length=PHONE_NUMBER_MIN_LENGTH)
+    phone_number: str
     password: str
 
     @field_validator("first_name")
@@ -44,9 +43,9 @@ class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Ba
     @field_validator("phone_number")
     @classmethod
     def validate_phone_number(cls, value: str) -> str:
-        if not PHONE_NUMBER_REGEX.match(value):
+        if not PHONE_NUMBER_PATTERN.match(value):
             raise ValueError(
-                "Phone number must contain only digits (optionally starting with '+') and be 5–20 characters long."
+                "Phone number must be in E.164 format: '+' followed by 2-15 digits"
             )
         return value
 
