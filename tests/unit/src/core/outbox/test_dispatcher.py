@@ -55,6 +55,7 @@ async def test_enqueue_transactional_inserts_row_and_defers_publish() -> None:
         assert data["args"] == ["hello"]
         assert data["kwargs"] == {"flag": True}
         assert isinstance(data["id"], UUID)
+        assert data["id"].version == 7
         assert calls == []
         await uow.commit()
 

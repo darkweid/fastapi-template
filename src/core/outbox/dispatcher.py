@@ -1,10 +1,10 @@
 from functools import partial
 from typing import Any
-import uuid
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from taskiq.decor import AsyncTaskiqDecoratedTask
+import uuid6
 
 from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.outbox.repositories import OutboxRepository
@@ -36,7 +36,9 @@ class TaskDispatcher:
     ) -> None:
         # Client-side id: the hook needs it before flush, and it doubles as the
         # broker task_id so the worker-side dedup marker survives republishing.
-        message_id = uuid.uuid4()
+        # uuid7 to match the model's UUID7IDMixin default — pre-generating the
+        # id here bypasses that default, so the generator must stay in sync.
+        message_id = uuid6.uuid7()
         await uow.outbox.create(
             uow.session,
             {
