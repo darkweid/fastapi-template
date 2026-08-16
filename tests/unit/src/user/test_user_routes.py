@@ -82,6 +82,25 @@ async def test_get_user_profile(
     payload = response.json()
     assert payload["id"] == str(user.id)
     assert payload["email"] == user.email
+    assert payload["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_user_profile_exposes_blocked_state(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+) -> None:
+    """The /me admission opt-out exists so a client can inspect its account
+    state during session bootstrap; the blocked flag must be visible there."""
+    user = build_user(is_active=False)
+    dependency_overrides.set(get_authenticated_user, ProvideValue(user))
+
+    response = await async_client.get("/v1/users/me")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["is_active"] is False
+    assert payload["is_verified"] is True
 
 
 @pytest.mark.asyncio
