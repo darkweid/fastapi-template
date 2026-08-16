@@ -115,6 +115,11 @@ in the UseCase, compare the field against the caller, raise
 ownership is visible right in the path. Every endpoint that takes a foreign
 identifier must carry a test proving "foreign object → 404".
 
+`src/note/` (`policies.ensure_note_access`, used by the update/delete
+UseCases and by `GET /v1/notes/{note_id}`) is the worked example of the
+`owner_id` variant: same 404-on-mismatch rule, an optional `has_permission`
+escape hatch for roles that may reach another user's object.
+
 ---
 ## Project Layout
 ```
@@ -173,13 +178,23 @@ identifier must carry a test proving "foreign object → 404".
 │   │   ├── route_logging.py             # Utility for logging routes summary
 │   │   └── web.py                       # FastAPI application setup
 │   │
+│   ├── note/                            # Reference flat domain module - copy this to start a new one
+│   │   ├── dependencies.py              # Note DI providers
+│   │   ├── models.py                    # Note data model (ORM)
+│   │   ├── policies.py                  # Pure ownership rule (ensure_note_access)
+│   │   ├── repositories.py              # Note data repository layer
+│   │   ├── routers.py                   # Note API endpoints
+│   │   ├── schemas.py                   # Note Pydantic schemas
+│   │   ├── services.py                  # Note business logic service
+│   │   └── usecases/                    # Note-related use cases
+│   │
 │   ├── system/                          # System-level functionality
 │   │   ├── dependencies.py              # System DI providers
 │   │   ├── routers.py                   # System API endpoints (live, ready, health, time)
 │   │   ├── schemas.py                   # System Pydantic schemas
 │   │   └── services.py                  # Health check service
 │   │
-│   └── user/                            # User functionality
+│   └── user/                            # Auth infrastructure (accounts, sessions, permissions)
 │       ├── auth/                        # Authentication logic for regular users
 │       ├── dependencies.py              # User dependencies
 │       ├── models.py                    # User data models (ORM)
@@ -202,6 +217,7 @@ identifier must carry a test proving "foreign object → 404".
 │       └── src/                         # Mirrors src/ layout
 │           ├── core/                    # Core component tests
 │           ├── main/                    # Main module tests
+│           ├── note/                    # Note reference module tests
 │           ├── system/                  # System routes tests
 │           └── user/                    # User & auth tests
 │
