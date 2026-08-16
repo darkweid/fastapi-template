@@ -12,12 +12,10 @@ from src.core.database.uow import ApplicationUnitOfWork, RepositoryProtocol
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import mask_email, normalize_email
+from src.core.utils.security import mask_email
 from src.main.config import config
-from src.user.auth.token_helpers import (
-    invalidate_active_one_time_token,
-    validate_active_one_time_token,
-)
+from src.user.auth.security import decode_one_time_token
+from src.user.auth.token_helpers import invalidate_active_one_time_token
 from src.user.cache_keys import user_cache_keys
 from src.user.policies import verification_pending
 
@@ -70,19 +68,10 @@ class VerifyEmailUseCase:
     async def execute(self, token: str) -> SuccessResponse:
         async with self.uow as uow:
             try:
-                payload = jwt.decode(
-                    token, config.jwt.JWT_VERIFY_SECRET_KEY, [config.jwt.ALGORITHM]
-                )
-                email: str | None = payload.get("email")
-                if not email:
-                    logger.debug("[VerifyEmail] Email not found in token")
-                    return SuccessResponse(success=False)
-
-                normalized_email = normalize_email(email)
-                await validate_active_one_time_token(
+                normalized_email = await decode_one_time_token(
+                    token,
+                    secret=config.jwt.JWT_VERIFY_SECRET_KEY,
                     purpose="verification",
-                    email=normalized_email,
-                    jti=payload.get("jti"),
                     redis_client=self.redis_client,
                 )
 

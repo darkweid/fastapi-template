@@ -9,8 +9,8 @@ from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import build_email_throttle_key, mask_email
 from src.user.auth.schemas import ResendVerificationModel
-from src.user.auth.services.verification_notifier import (
-    VerificationNotifier,
+from src.user.auth.services.email_notifier import (
+    EmailNotifier,
     get_verification_notifier,
 )
 from src.user.policies import verification_pending
@@ -49,7 +49,7 @@ class SendVerificationUseCase:
     def __init__(
         self,
         uow: ApplicationUnitOfWork[RepositoryProtocol],
-        notifier: VerificationNotifier,
+        notifier: EmailNotifier,
     ) -> None:
         self.uow = uow
         self.notifier = notifier
@@ -72,7 +72,7 @@ class SendVerificationUseCase:
 
             throttle_key = build_email_throttle_key("resend_verification", user.email)
             try:
-                await self.notifier.send_verification(
+                await self.notifier.send(
                     uow=uow,
                     user=user,
                     throttle_key=throttle_key,
@@ -99,6 +99,6 @@ def get_send_verification_use_case(
     uow: Annotated[
         ApplicationUnitOfWork[RepositoryProtocol], Depends(get_unit_of_work)
     ],
-    notifier: Annotated[VerificationNotifier, Depends(get_verification_notifier)],
+    notifier: Annotated[EmailNotifier, Depends(get_verification_notifier)],
 ) -> SendVerificationUseCase:
     return SendVerificationUseCase(uow=uow, notifier=notifier)
