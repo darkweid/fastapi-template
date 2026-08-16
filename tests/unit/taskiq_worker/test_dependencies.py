@@ -5,10 +5,19 @@ import pytest
 
 from src.user.auth.tasks import send_verification_email_task
 from taskiq_worker.broker import broker
-from taskiq_worker.dependencies import get_tasks_redis_client
+import taskiq_worker.dependencies as tasks_dependencies
+from taskiq_worker.dependencies import close_tasks_redis_client, get_tasks_redis_client
 from tests.fakes.email import MockMailer
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.providers import ProvideAsyncValue, ProvideValue
+
+
+@pytest.fixture(autouse=True)
+def _reset_tasks_redis_singleton() -> Generator[None]:
+    """The worker Redis client is a module-level singleton; tests must not leak it."""
+    tasks_dependencies._tasks_redis_client = None
+    yield
+    tasks_dependencies._tasks_redis_client = None
 
 
 @pytest.fixture
@@ -48,7 +57,7 @@ async def test_kiq_resolves_redis_client_through_broker_dependency_injection(
 
 
 @pytest.mark.asyncio
-async def test_get_tasks_redis_client_closes_client_after_normal_use(
+async def test_get_tasks_redis_client_reuses_same_client_across_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_client = AsyncMock()
@@ -56,29 +65,32 @@ async def test_get_tasks_redis_client_closes_client_after_normal_use(
         "taskiq_worker.dependencies.create_redis_client", lambda _dsn: fake_client
     )
 
-    generator = get_tasks_redis_client()
-    client = await generator.__anext__()
-    assert client is fake_client
+    first = await get_tasks_redis_client().__anext__()
+    second = await get_tasks_redis_client().__anext__()
 
-    with pytest.raises(StopAsyncIteration):
-        await generator.__anext__()
-
-    fake_client.aclose.assert_awaited_once()
+    assert first is fake_client
+    assert second is fake_client
+    fake_client.aclose.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_get_tasks_redis_client_closes_client_when_consumer_raises(
+async def test_close_tasks_redis_client_closes_and_clears_singleton(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_client = AsyncMock()
     monkeypatch.setattr(
         "taskiq_worker.dependencies.create_redis_client", lambda _dsn: fake_client
     )
+    await get_tasks_redis_client().__anext__()
 
-    generator = get_tasks_redis_client()
-    await generator.__anext__()
-
-    with pytest.raises(RuntimeError, match="consumer failed"):
-        await generator.athrow(RuntimeError("consumer failed"))
+    await close_tasks_redis_client()
 
     fake_client.aclose.assert_awaited_once()
+    assert tasks_dependencies._tasks_redis_client is None
+
+
+@pytest.mark.asyncio
+async def test_close_tasks_redis_client_is_a_noop_without_a_client() -> None:
+    await close_tasks_redis_client()
+
+    assert tasks_dependencies._tasks_redis_client is None
