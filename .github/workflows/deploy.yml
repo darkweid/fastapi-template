@@ -1,12 +1,20 @@
 name: CD
 
 # Runs after CI succeeds on main, then deploys the image CI already built and
-# pushed to GHCR - the box never builds on the CD path.
+# pushed to GHCR - the box never builds on the CD path. workflow_dispatch adds
+# a manual escape hatch for redeploying an already-built image without waiting
+# for a new push to main.
 on:
   workflow_run:
     workflows: ["CI"]
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (blank = sha-<12> of main HEAD)"
+        required: false
+        default: ""
 
 env:
   # Deployment directory on the target server - adjust as needed for your environment
@@ -19,12 +27,15 @@ jobs:
     # context is unavailable in a job-level `if`. It is off by default so a
     # fresh fork - and this template itself - does not fail a deploy against
     # unset SSH secrets on every merge to main. Set it to `true` once the
-    # server secrets below are filled in.
+    # server secrets below are filled in. A manual dispatch always carries
+    # intent, so it skips the workflow_run conclusion/event/branch checks that
+    # exist only to filter the automatic trigger down to "CI passed on main".
     if: >-
       ${{ vars.DEPLOY_ENABLED == 'true' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.event == 'push' &&
-          github.event.workflow_run.head_branch == 'main' }}
+          (github.event_name == 'workflow_dispatch' ||
+           (github.event.workflow_run.conclusion == 'success' &&
+            github.event.workflow_run.event == 'push' &&
+            github.event.workflow_run.head_branch == 'main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Never cancelled and never parallel: two merges must not run two migrations
@@ -37,19 +48,32 @@ jobs:
       - name: Capture job start time
         run: echo "JOB_START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
-      # The exact commit CI built, so the notification and the image agree.
+      # workflow_run carries the exact commit CI validated; workflow_dispatch has
+      # no such context, so it falls back to github.sha (the tip of the ref the
+      # dispatch ran against, main by default). Computed once so checkout, the
+      # image tag and the remote deploy step all agree on the same commit.
+      - name: Resolve the commit to deploy
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout the deployed commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ steps.ref.outputs.sha }}
 
       - name: Compute image and tag
         id: meta
         run: |
           image_lower="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
-          short_sha="$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-12)"
+          short_sha="$(echo "${{ steps.ref.outputs.sha }}" | cut -c1-12)"
+          input_tag="${{ github.event.inputs.image_tag }}"
           echo "image=${image_lower}" >> "$GITHUB_OUTPUT"
-          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "tag=${input_tag:-sha-${short_sha}}" >> "$GITHUB_OUTPUT"
 
       # known_hosts comes from a secret (`ssh-keyscan <host>` once, by hand):
       # keyscanning inside the job would trust whatever answers, which is the
@@ -75,7 +99,7 @@ jobs:
           set -euo pipefail
           cd "${{ env.APP_DIR }}"
           git fetch --quiet origin main
-          git checkout --quiet ${{ github.event.workflow_run.head_sha }}
+          git checkout --quiet ${{ steps.ref.outputs.sha }}
           echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
           # The token would otherwise sit base64-encoded in ~/.docker/config.json
           # on the box until the next deploy overwrites it.
