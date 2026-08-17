@@ -468,6 +468,8 @@ async def test_reset_password_confirm_success(
     )
     cache_key = user_cache_keys.summary(user.id)
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
+    cache_invalidate_spy = AsyncMock(wraps=cache.invalidate)
+    cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
 
     use_case = ResetPasswordConfirmUseCase(
         uow=uow, redis_client=fake_redis, cache=cache
@@ -481,6 +483,8 @@ async def test_reset_password_confirm_success(
     uow.commit.assert_awaited_once()
     uow.flush.assert_awaited_once()
     assert await cache.get(cache_key) is None
+    # Pre-commit bump plus the after-commit hook's second bump.
+    assert cache_invalidate_spy.await_count == 2
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("reset_password", user.email)
@@ -699,6 +703,8 @@ async def test_verify_email_usecase_success(
     use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     cache_key = user_cache_keys.summary(user.id)
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
+    cache_invalidate_spy = AsyncMock(wraps=cache.invalidate)
+    cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
 
     token = await build_verification_token({"email": user.email}, fake_redis)
 
@@ -707,6 +713,8 @@ async def test_verify_email_usecase_success(
     assert result == SuccessResponse(success=True)
     uow.commit.assert_awaited_once()
     uow.flush.assert_not_awaited()
+    # Pre-commit bump plus the after-commit hook's second bump.
+    assert cache_invalidate_spy.await_count == 2
     assert (
         await fake_redis.exists(
             auth_redis_keys.one_time_token("verification", user.email)

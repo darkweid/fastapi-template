@@ -169,6 +169,8 @@ async def test_update_password_success(
     )
     cache_key = user_cache_keys.summary(user.id)
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
+    cache_invalidate_spy = AsyncMock(wraps=cache.invalidate)
+    cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
 
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(data=change_password_data(), user_id=user.id)
@@ -178,6 +180,8 @@ async def test_update_password_success(
     uow.flush.assert_awaited_once()
     invalidate_mock.assert_awaited_once_with(str(user.id), fake_redis)
     assert await cache.get(cache_key) is None
+    # Pre-commit bump plus the after-commit hook's second bump.
+    assert cache_invalidate_spy.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 
 from fastapi import Depends
@@ -48,7 +49,7 @@ class VerifyEmailUseCase:
     Side effects:
     - Updates user record in the database.
     - Deletes the active verification-token key from Redis after successful use.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Returns:
     - SuccessResponse: success=True if verified or already verified, False if the
@@ -101,6 +102,9 @@ class VerifyEmailUseCase:
                     email=normalized_email,
                 )
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
+                uow.add_after_commit_hook(
+                    partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+                )
                 await uow.commit()
                 await invalidate_active_one_time_token(
                     purpose="verification",

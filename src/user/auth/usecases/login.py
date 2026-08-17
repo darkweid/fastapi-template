@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 from uuid import uuid4
 
@@ -55,10 +56,10 @@ class LoginUserUseCase:
 
     Side effects:
     - Persists password hash updates when rehashing is required.
-    - Bumps the user:{id} cache namespace version - every write to the user row
-      does this unconditionally, including this one where the row is only
-      sometimes touched (the rehash branch), so no one has to remember an
-      exception to the rule.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit) -
+      every write to the user row does this unconditionally, including this one
+      where the row is only sometimes touched (the rehash branch), so no one
+      has to remember an exception to the rule.
     - Token creation handles its own caching.
 
     Errors:
@@ -114,6 +115,9 @@ class LoginUserUseCase:
             session_id = str(uuid4())
             token_data = {"sub": str(user.id)}
             await self.cache.invalidate(user_cache_keys.namespace(user.id))
+            uow.add_after_commit_hook(
+                partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+            )
             await uow.commit()
             return TokenModel(
                 access_token=await create_access_token(

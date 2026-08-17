@@ -1,10 +1,14 @@
 from pydantic import ValidationError
 import pytest
+from redis.connection import parse_url
+from sqlalchemy.engine import make_url
 
 from src.main.config import (
     AppConfig,
     CacheConfig,
     JWTConfig,
+    PostgresConfig,
+    RedisConfig,
     S3Config,
 )
 
@@ -282,3 +286,94 @@ def test_s3_disabled_needs_no_credentials() -> None:
 def test_s3_enabled_requires_credentials() -> None:
     with pytest.raises(ValidationError, match="S3_ENABLED=true requires"):
         S3Config(S3_ENABLED=True, S3_BUCKET_NAME="b")  # missing the rest
+
+
+def test_redis_dsn_escapes_special_characters_in_password() -> None:
+    raw_password = "p@ss/word%:x"
+    redis_config = RedisConfig(
+        REDIS_HOST="redis-host",
+        REDIS_PORT=6379,
+        REDIS_PASSWORD=raw_password,
+        REDIS_DATABASE="0",
+    )
+
+    parsed = parse_url(redis_config.dsn)
+
+    assert parsed["password"] == raw_password
+    assert parsed["host"] == "redis-host"
+    assert parsed["db"] == 0
+
+
+def test_postgres_dsn_escapes_special_characters_in_credentials() -> None:
+    raw_password = "p@ss/word%:x"
+    postgres_config = PostgresConfig(
+        DB_ECHO=False,
+        POSTGRES_USER="app:user",
+        POSTGRES_PASSWORD=raw_password,
+        POSTGRES_HOST="db-host",
+        POSTGRES_PORT=5432,
+        POSTGRES_DB="app",
+    )
+
+    for dsn in (postgres_config.dsn_async, postgres_config.dsn_sync):
+        url = make_url(dsn)
+        assert url.username == "app:user"
+        assert url.password == raw_password
+        assert url.host == "db-host"
+        assert url.database == "app"
+
+
+def test_postgres_rejects_question_mark_in_database_name() -> None:
+    # make_url truncates the database at '?' (query string) and does not decode
+    # the path segment, so the name can be neither passed raw nor encoded.
+    with pytest.raises(ValidationError, match="POSTGRES_DB"):
+        PostgresConfig(
+            DB_ECHO=False,
+            POSTGRES_USER="app",
+            POSTGRES_PASSWORD="secret",
+            POSTGRES_HOST="db-host",
+            POSTGRES_PORT=5432,
+            POSTGRES_DB="app?x",
+        )
+
+
+@pytest.mark.parametrize("odd_name", ["app/db", "app#1", "a@b", "a:b", "a b"])
+def test_postgres_allows_database_names_make_url_preserves(odd_name: str) -> None:
+    postgres_config = PostgresConfig(
+        DB_ECHO=False,
+        POSTGRES_USER="app",
+        POSTGRES_PASSWORD="secret",
+        POSTGRES_HOST="db-host",
+        POSTGRES_PORT=5432,
+        POSTGRES_DB=odd_name,
+    )
+
+    for dsn in (postgres_config.dsn_async, postgres_config.dsn_sync):
+        assert make_url(dsn).database == odd_name
+
+
+def test_postgres_pool_sizes_default_and_validate() -> None:
+    postgres_config = PostgresConfig(
+        DB_ECHO=False,
+        POSTGRES_USER="app",
+        POSTGRES_PASSWORD="secret",
+        POSTGRES_HOST="db-host",
+        POSTGRES_PORT=5432,
+        POSTGRES_DB="app",
+    )
+
+    assert postgres_config.DB_POOL_SIZE == 5
+    assert postgres_config.DB_MAX_OVERFLOW == 2
+    assert postgres_config.DB_TASKS_POOL_SIZE == 5
+    assert postgres_config.DB_TASKS_MAX_OVERFLOW == 15
+
+    with pytest.raises(ValidationError):
+        PostgresConfig(
+            DB_ECHO=False,
+            POSTGRES_USER="app",
+            POSTGRES_PASSWORD="secret",
+            POSTGRES_HOST="db-host",
+            POSTGRES_PORT=5432,
+            POSTGRES_DB="app",
+            DB_POOL_SIZE=0,
+        )

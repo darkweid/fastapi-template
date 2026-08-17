@@ -92,12 +92,37 @@ async def test_rate_limiter_calls_callback_on_limit(
     response = Response()
 
     rate_key = await FastAPILimiter.identifier(request)
-    key = f"{FastAPILimiter.prefix}:{rate_key}:{sample_endpoint.__name__}"
+    key = (
+        f"{FastAPILimiter.prefix}:{rate_key}:"
+        f"{sample_endpoint.__module__}.{sample_endpoint.__qualname__}"
+    )
     fake_redis.set_evalsha_result(key, 1000)
 
     await limiter(request, response)
 
     callback.assert_awaited_once_with(request, response, 1000)
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_key_qualifies_endpoint_by_module(
+    limiter_state: None,
+    fake_redis: InMemoryRedis,
+) -> None:
+    # Two modules can both expose an endpoint named `create` - a bare __name__
+    # would silently merge their buckets into one shared limit.
+    FastAPILimiter.redis = fake_redis
+    FastAPILimiter.lua_sha = await fake_redis.script_load(FastAPILimiter.lua_script)
+    limiter = RateLimiter(times=1, seconds=1, callback=AsyncMock())
+    request = build_request(path="/test", endpoint=sample_endpoint)
+
+    await limiter(request, Response())
+
+    rate_key = await FastAPILimiter.identifier(request)
+    expected_key = (
+        f"{FastAPILimiter.prefix}:{rate_key}:"
+        f"{sample_endpoint.__module__}.{sample_endpoint.__qualname__}"
+    )
+    assert fake_redis.evalsha_keys[-1] == expected_key
 
 
 @pytest.mark.asyncio
@@ -220,9 +245,10 @@ async def test_rate_limiter_fallback_evicts_oldest_window_when_capacity_reached(
 
     assert len(RateLimiter._fallback_windows) == 2
     fallback_keys = set(RateLimiter._fallback_windows)
-    assert "limiter:alpha:sample_endpoint" not in fallback_keys
-    assert "limiter:beta:sample_endpoint" in fallback_keys
-    assert "limiter:gamma:sample_endpoint" in fallback_keys
+    endpoint_name = f"{sample_endpoint.__module__}.{sample_endpoint.__qualname__}"
+    assert f"limiter:alpha:{endpoint_name}" not in fallback_keys
+    assert f"limiter:beta:{endpoint_name}" in fallback_keys
+    assert f"limiter:gamma:{endpoint_name}" in fallback_keys
     warning_mock.assert_called_once()
     assert "In-memory fallback capacity reached" in warning_mock.call_args.args[0]
     callback.assert_not_awaited()

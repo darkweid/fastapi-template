@@ -2,7 +2,7 @@ from functools import lru_cache
 import json
 import os
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -107,9 +107,11 @@ class RedisConfig(BaseModel):
 
     @property
     def dsn(self) -> str:
+        # quote(safe="") because generated passwords routinely contain @ / % :
+        # and every URL parser downstream would silently misread the DSN.
         return (
             f"redis://:"
-            f"{self.REDIS_PASSWORD}@"
+            f"{quote(self.REDIS_PASSWORD, safe='')}@"
             f"{self.REDIS_HOST}:"
             f"{self.REDIS_PORT}/"
             f"{self.REDIS_DATABASE}"
@@ -119,7 +121,7 @@ class RedisConfig(BaseModel):
     def tasks_dsn(self) -> str:
         return (
             f"redis://:"
-            f"{self.REDIS_PASSWORD}@"
+            f"{quote(self.REDIS_PASSWORD, safe='')}@"
             f"{self.REDIS_HOST}:"
             f"{self.REDIS_PORT}/"
             f"{self.REDIS_TASKS_DATABASE}"
@@ -214,13 +216,38 @@ class PostgresConfig(BaseModel):
     POSTGRES_PORT: int
     POSTGRES_DB: str
 
+    DB_POOL_SIZE: int = Field(5, gt=0)
+    DB_MAX_OVERFLOW: int = Field(2, ge=0)
+    # Tasks pool size + overflow must cover --max-async-tasks on the worker
+    # command (infra/docker-compose.yml): every concurrent task may hold a
+    # session, and an undersized pool surfaces as pool_timeout errors.
+    DB_TASKS_POOL_SIZE: int = Field(5, gt=0)
+    DB_TASKS_MAX_OVERFLOW: int = Field(15, ge=0)
+
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator("POSTGRES_DB")
+    @classmethod
+    def reject_url_breaking_database_name(cls, value: str) -> str:
+        # SQLAlchemy's make_url treats everything after '?' as the query string
+        # and does not decode the database path segment, so a name with '?' can
+        # be neither passed raw (truncated) nor percent-encoded (renamed).
+        # Every other character survives make_url unchanged and is allowed.
+        if "?" in value:
+            raise ValueError(
+                "POSTGRES_DB must not contain '?': such a name cannot be "
+                "represented in a database URL"
+            )
+        return value
 
     @property
     def dsn_async(self) -> str:
+        # quote(safe="") because generated credentials routinely contain @ / % :
+        # and every URL parser downstream would silently misread the DSN.
         return (
             f"postgresql+asyncpg://"
-            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@"
+            f"{quote(self.POSTGRES_USER, safe='')}:"
+            f"{quote(self.POSTGRES_PASSWORD, safe='')}@"
             f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/"
             f"{self.POSTGRES_DB}"
         )
@@ -229,7 +256,8 @@ class PostgresConfig(BaseModel):
     def dsn_sync(self) -> str:
         return (
             f"postgresql://"
-            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@"
+            f"{quote(self.POSTGRES_USER, safe='')}:"
+            f"{quote(self.POSTGRES_PASSWORD, safe='')}@"
             f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/"
             f"{self.POSTGRES_DB}"
         )

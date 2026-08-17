@@ -17,7 +17,8 @@ async def get_tasks_session() -> AsyncGenerator[AsyncSession]:
 _tasks_redis_client: Redis | None = None
 
 
-def _tasks_redis() -> Redis:
+def get_tasks_redis_singleton() -> Redis:
+    """One Redis client per worker process; closed by the broker shutdown hook."""
     global _tasks_redis_client
     if _tasks_redis_client is None:
         _tasks_redis_client = create_redis_client(config.redis.dsn)
@@ -25,8 +26,7 @@ def _tasks_redis() -> Redis:
 
 
 async def get_tasks_redis_client() -> AsyncGenerator[Redis]:
-    # One client per worker process; closed by the broker shutdown hook.
-    yield _tasks_redis()
+    yield get_tasks_redis_singleton()
 
 
 async def close_tasks_redis_client() -> None:

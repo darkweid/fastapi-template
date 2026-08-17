@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 from uuid import UUID
 
@@ -35,11 +36,12 @@ class UpdateUserProfileUseCase:
     1) Apply the non-empty fields to the user row.
     2) Flush pending DB changes.
     3) Invalidate the user cache namespace.
-    4) Commit the transaction.
+    4) Commit the transaction; an after-commit hook invalidates the
+       namespace a second time.
 
     Side effects:
     - Updates the user record.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Errors:
     - InstanceNotFoundException: if the user does not exist.
@@ -65,10 +67,20 @@ class UpdateUserProfileUseCase:
             if not updated_user:
                 raise InstanceNotFoundException("User not found.")
             await uow.flush()
-            # Invalidation happens before commit on purpose: a bump that outlives a
-            # rolled-back transaction only costs a cold cache, while a bump skipped
-            # after a successful commit would serve stale data.
+            # Two bumps by design. Pre-commit covers the crash direction: a bump
+            # that outlives a rolled-back transaction only costs a cold cache.
+            # The post-commit bump narrows the other race: a reader who re-cached
+            # the old row between the first bump and the commit would otherwise
+            # serve stale data until the TTL. A residual window remains - a
+            # reader that read the old row before commit and writes its cache
+            # entry after the second bump still lands stale data in the current
+            # generation. Eliminating it needs version-conditional cache writes
+            # (capture the generation at the miss, write only if unchanged);
+            # accepted as bounded-by-TTL staleness instead of that complexity.
             await self.cache.invalidate(user_cache_keys.namespace(user_id))
+            uow.add_after_commit_hook(
+                partial(self.cache.invalidate, user_cache_keys.namespace(user_id))
+            )
             await uow.commit()
             logger.debug("[UpdateUserProfile] user %s profile updated.", user_id)
             return UserProfileViewModel.model_validate(updated_user)

@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 
 from fastapi import Depends
@@ -53,7 +54,7 @@ class ResetPasswordConfirmUseCase:
     - Deletes the active reset-token key from Redis before commit to avoid
       partial-success password changes when Redis is unavailable.
     - Deletes user session keys from Redis before commit for the same reason.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Errors:
     - None (returns success=False for invalid tokens/users).
@@ -107,6 +108,9 @@ class ResetPasswordConfirmUseCase:
                 )
                 await invalidate_all_user_sessions(str(user.id), self.redis_client)
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
+                uow.add_after_commit_hook(
+                    partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+                )
                 await uow.commit()
                 logger.debug(
                     "[ResetPasswordConfirm] All user %s sessions invalidated.",

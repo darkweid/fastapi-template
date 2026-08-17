@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 from uuid import UUID
 
@@ -53,7 +54,7 @@ class UpdateUserPasswordUseCase:
     - Updates user record in database.
     - Deletes all user session keys from Redis before commit to avoid
       partial-success password changes when Redis is unavailable.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Errors:
     - InstanceNotFoundException: if the user does not exist.
@@ -103,6 +104,11 @@ class UpdateUserPasswordUseCase:
             await uow.flush()
             await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
             await self.cache.invalidate(user_cache_keys.namespace(updated_user.id))
+            uow.add_after_commit_hook(
+                partial(
+                    self.cache.invalidate, user_cache_keys.namespace(updated_user.id)
+                )
+            )
             await uow.commit()
             logger.debug(
                 "[UpdateUserPassword] %s password updated successfully.",

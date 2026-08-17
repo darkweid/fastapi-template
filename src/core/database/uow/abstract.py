@@ -17,7 +17,9 @@ class UnitOfWork(ABC):
 
     @abstractmethod
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit the context manager, committing or rolling back the transaction."""
+        """Exit the context manager. Commit is strictly explicit: leaving the
+        context without a prior `commit()` rolls back the UoW's own transaction
+        scope, exception or not."""
 
     @abstractmethod
     async def commit(self) -> None:

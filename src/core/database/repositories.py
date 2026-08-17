@@ -1,6 +1,14 @@
 from typing import Any, Generic, TypeVar, cast
 
-from sqlalchemy import Enum as SAEnum, String, Table, func, select, update
+from sqlalchemy import (
+    Enum as SAEnum,
+    String,
+    Table,
+    func,
+    inspect as sqlalchemy_inspect,
+    select,
+    update,
+)
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -254,6 +262,17 @@ class BaseRepository(Generic[T]):
         if commit:
             self._ensure_commit_allowed(session)
         self._ensure_filters_present(filters)
+        # setattr with a mistyped key would silently attach a plain Python
+        # attribute the flush ignores - the caller believes the row changed.
+        # Boundary: mapped attributes (columns and relationships) pass; hybrid
+        # properties and plain Python properties are rejected even when they
+        # have setters - a domain that needs to set one extends this guard
+        # deliberately instead of inheriting a silent hole.
+        unknown_fields = set(data) - set(sqlalchemy_inspect(self.model).attrs.keys())
+        if unknown_fields:
+            raise ValueError(
+                f"Unknown fields for {self.model.__name__}: {sorted(unknown_fields)}"
+            )
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
