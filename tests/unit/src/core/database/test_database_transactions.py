@@ -8,7 +8,6 @@ from src.core.database.transactions import (
     _string_to_int64,
     advisory_xact_lock,
     maybe_begin,
-    safe_begin,
     try_advisory_xact_lock,
 )
 from tests.fakes.db import AsyncTransactionContext, FakeAsyncSession
@@ -112,27 +111,4 @@ async def test_maybe_begin_skips_when_already_in_transaction() -> None:
 
     assert session.in_transaction() is True
     assert session.begin_called == 0
-    assert session.begin_nested_called == 0
-
-
-@pytest.mark.asyncio
-async def test_safe_begin_uses_nested_transaction_when_active() -> None:
-    session = TrackingSession(in_transaction=True)
-
-    async with safe_begin(session):
-        assert session.in_transaction() is True
-
-    assert session.begin_called == 0
-    assert session.begin_nested_called == 1
-
-
-@pytest.mark.asyncio
-async def test_safe_begin_uses_regular_transaction_when_inactive() -> None:
-    session = TrackingSession(in_transaction=False)
-
-    async with safe_begin(session):
-        assert session.in_transaction() is True
-
-    assert session.in_transaction() is False
-    assert session.begin_called == 1
     assert session.begin_nested_called == 0
