@@ -379,7 +379,7 @@ def test_verify_email_route_has_rate_limit() -> None:
     rate_limiters = _get_route_rate_limiters(route)
 
     assert len(rate_limiters) == 1
-    assert rate_limiters[0].times == 10
+    assert rate_limiters[0].times == 30
     assert rate_limiters[0].milliseconds == 15 * 60_000
 
 

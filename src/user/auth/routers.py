@@ -96,9 +96,11 @@ async def send_verification_email(
     "/verify",
     status_code=200,
     # POST, not GET: the token is a credential, and a GET would spread it into
-    # access logs, proxy caches and the Referer header. The limiter bounds
-    # brute-forcing the token space.
-    dependencies=[Depends(RateLimiter(times=10, minutes=15))],
+    # access logs, proxy caches and the Referer header. The limiter bounds an
+    # unauthenticated flood into JWT decode plus a DB round-trip (the signed
+    # token itself is not brute-forceable at any rate a limiter could stop);
+    # 30 per window keeps an office behind one NAT able to onboard a team.
+    dependencies=[Depends(RateLimiter(times=30, minutes=15))],
 )
 async def verify_email(
     data: VerifyEmailRequestModel,
