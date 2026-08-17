@@ -2,7 +2,7 @@ from functools import lru_cache
 import json
 import os
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -107,9 +107,11 @@ class RedisConfig(BaseModel):
 
     @property
     def dsn(self) -> str:
+        # quote(safe="") because generated passwords routinely contain @ / % :
+        # and every URL parser downstream would silently misread the DSN.
         return (
             f"redis://:"
-            f"{self.REDIS_PASSWORD}@"
+            f"{quote(self.REDIS_PASSWORD, safe='')}@"
             f"{self.REDIS_HOST}:"
             f"{self.REDIS_PORT}/"
             f"{self.REDIS_DATABASE}"
@@ -119,7 +121,7 @@ class RedisConfig(BaseModel):
     def tasks_dsn(self) -> str:
         return (
             f"redis://:"
-            f"{self.REDIS_PASSWORD}@"
+            f"{quote(self.REDIS_PASSWORD, safe='')}@"
             f"{self.REDIS_HOST}:"
             f"{self.REDIS_PORT}/"
             f"{self.REDIS_TASKS_DATABASE}"
@@ -218,9 +220,12 @@ class PostgresConfig(BaseModel):
 
     @property
     def dsn_async(self) -> str:
+        # quote(safe="") because generated credentials routinely contain @ / % :
+        # and every URL parser downstream would silently misread the DSN.
         return (
             f"postgresql+asyncpg://"
-            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@"
+            f"{quote(self.POSTGRES_USER, safe='')}:"
+            f"{quote(self.POSTGRES_PASSWORD, safe='')}@"
             f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/"
             f"{self.POSTGRES_DB}"
         )
@@ -229,7 +234,8 @@ class PostgresConfig(BaseModel):
     def dsn_sync(self) -> str:
         return (
             f"postgresql://"
-            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@"
+            f"{quote(self.POSTGRES_USER, safe='')}:"
+            f"{quote(self.POSTGRES_PASSWORD, safe='')}@"
             f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/"
             f"{self.POSTGRES_DB}"
         )

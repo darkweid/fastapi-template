@@ -282,3 +282,46 @@ def test_s3_disabled_needs_no_credentials() -> None:
 def test_s3_enabled_requires_credentials() -> None:
     with pytest.raises(ValidationError, match="S3_ENABLED=true requires"):
         S3Config(S3_ENABLED=True, S3_BUCKET_NAME="b")  # missing the rest
+
+
+def test_redis_dsn_escapes_special_characters_in_password() -> None:
+    from redis.connection import parse_url
+
+    from src.main.config import RedisConfig
+
+    raw_password = "p@ss/word%:x"
+    redis_config = RedisConfig(
+        REDIS_HOST="redis-host",
+        REDIS_PORT=6379,
+        REDIS_PASSWORD=raw_password,
+        REDIS_DATABASE="0",
+    )
+
+    parsed = parse_url(redis_config.dsn)
+
+    assert parsed["password"] == raw_password
+    assert parsed["host"] == "redis-host"
+    assert parsed["db"] == 0
+
+
+def test_postgres_dsn_escapes_special_characters_in_credentials() -> None:
+    from sqlalchemy.engine import make_url
+
+    from src.main.config import PostgresConfig
+
+    raw_password = "p@ss/word%:x"
+    postgres_config = PostgresConfig(
+        DB_ECHO=False,
+        POSTGRES_USER="app:user",
+        POSTGRES_PASSWORD=raw_password,
+        POSTGRES_HOST="db-host",
+        POSTGRES_PORT=5432,
+        POSTGRES_DB="app",
+    )
+
+    for dsn in (postgres_config.dsn_async, postgres_config.dsn_sync):
+        url = make_url(dsn)
+        assert url.username == "app:user"
+        assert url.password == raw_password
+        assert url.host == "db-host"
+        assert url.database == "app"
