@@ -1,3 +1,6 @@
+# The CI integration job runs a stock postgres service pinned to the same tag
+# (.github/workflows/ci.yml) - bump the two together, or CI tests one major
+# version while every compose stack runs another.
 FROM postgres:18-bookworm
 
 # Copy custom configuration and initialization scripts into the image

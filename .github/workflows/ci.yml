@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: |
           export PATH="$PWD/.venv/bin:$PATH"
-          make check-lint
+          make lint
 
   migration-heads:
     name: Migration HEADs
@@ -182,6 +182,8 @@ jobs:
     # in the other. Locally the same suite runs against the throwaway container
     # `make test-integration` starts (infra/docker-compose.test.yml); here a service
     # container is simpler, because GitHub already health-gates it before the steps run.
+    # Stock image, not infra/postgres/Dockerfile: the custom config it bakes in is not
+    # what the suite tests. Keep the tag in step with that Dockerfile's base image.
     services:
       postgres:
         image: postgres:18-bookworm
