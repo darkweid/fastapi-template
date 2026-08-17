@@ -60,6 +60,8 @@ async def test_login_rehashes_password_when_needed(
     monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
     cache_key = user_cache_keys.summary(user.id)
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
+    cache_invalidate_spy = AsyncMock(wraps=cache.invalidate)
+    cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     result = await use_case.execute(
@@ -79,6 +81,8 @@ async def test_login_rehashes_password_when_needed(
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
     assert await cache.get(cache_key) is None
+    # Pre-commit bump plus the after-commit hook's second bump.
+    assert cache_invalidate_spy.await_count == 2
 
 
 @pytest.mark.asyncio
