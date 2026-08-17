@@ -216,6 +216,14 @@ class PostgresConfig(BaseModel):
     POSTGRES_PORT: int
     POSTGRES_DB: str
 
+    DB_POOL_SIZE: int = Field(5, gt=0)
+    DB_MAX_OVERFLOW: int = Field(2, ge=0)
+    # Tasks pool size + overflow must cover --max-async-tasks on the worker
+    # command (infra/docker-compose.yml): every concurrent task may hold a
+    # session, and an undersized pool surfaces as pool_timeout errors.
+    DB_TASKS_POOL_SIZE: int = Field(5, gt=0)
+    DB_TASKS_MAX_OVERFLOW: int = Field(15, ge=0)
+
     model_config = ConfigDict(extra="ignore")
 
     @property

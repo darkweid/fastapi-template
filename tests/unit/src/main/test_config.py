@@ -1,10 +1,14 @@
 from pydantic import ValidationError
 import pytest
+from redis.connection import parse_url
+from sqlalchemy.engine import make_url
 
 from src.main.config import (
     AppConfig,
     CacheConfig,
     JWTConfig,
+    PostgresConfig,
+    RedisConfig,
     S3Config,
 )
 
@@ -285,10 +289,6 @@ def test_s3_enabled_requires_credentials() -> None:
 
 
 def test_redis_dsn_escapes_special_characters_in_password() -> None:
-    from redis.connection import parse_url
-
-    from src.main.config import RedisConfig
-
     raw_password = "p@ss/word%:x"
     redis_config = RedisConfig(
         REDIS_HOST="redis-host",
@@ -305,10 +305,6 @@ def test_redis_dsn_escapes_special_characters_in_password() -> None:
 
 
 def test_postgres_dsn_escapes_special_characters_in_credentials() -> None:
-    from sqlalchemy.engine import make_url
-
-    from src.main.config import PostgresConfig
-
     raw_password = "p@ss/word%:x"
     postgres_config = PostgresConfig(
         DB_ECHO=False,
@@ -325,3 +321,30 @@ def test_postgres_dsn_escapes_special_characters_in_credentials() -> None:
         assert url.password == raw_password
         assert url.host == "db-host"
         assert url.database == "app"
+
+
+def test_postgres_pool_sizes_default_and_validate() -> None:
+    postgres_config = PostgresConfig(
+        DB_ECHO=False,
+        POSTGRES_USER="app",
+        POSTGRES_PASSWORD="secret",
+        POSTGRES_HOST="db-host",
+        POSTGRES_PORT=5432,
+        POSTGRES_DB="app",
+    )
+
+    assert postgres_config.DB_POOL_SIZE == 5
+    assert postgres_config.DB_MAX_OVERFLOW == 2
+    assert postgres_config.DB_TASKS_POOL_SIZE == 5
+    assert postgres_config.DB_TASKS_MAX_OVERFLOW == 15
+
+    with pytest.raises(ValidationError):
+        PostgresConfig(
+            DB_ECHO=False,
+            POSTGRES_USER="app",
+            POSTGRES_PASSWORD="secret",
+            POSTGRES_HOST="db-host",
+            POSTGRES_PORT=5432,
+            POSTGRES_DB="app",
+            DB_POOL_SIZE=0,
+        )
