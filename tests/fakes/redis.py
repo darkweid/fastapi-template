@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import fnmatch
 import hashlib
 import time
@@ -34,7 +35,12 @@ def _now() -> float:
 
 class InMemoryRedis:
     def __init__(self) -> None:
+        # Wall clock behind TIME/time(): tests pin it to a fixed value so the
+        # refresh grace-window math never races the real clock. Key expiry
+        # stays on time.monotonic() and is unaffected by reassigning this.
+        self.wall_clock: Callable[[], float] = time.time
         self._store: dict[str, str] = {}
+        self._zsets: dict[str, dict[str, float]] = {}
         self._expires: dict[str, float] = {}
         self._scripts: dict[str, str] = {}
         self._evalsha_overrides: dict[str, int] = {}
@@ -65,6 +71,7 @@ class InMemoryRedis:
             return
         if _now() >= expires_at:
             self._store.pop(key, None)
+            self._zsets.pop(key, None)
             self._expires.pop(key, None)
 
     async def get(self, key: str | bytes) -> str | None:
@@ -98,8 +105,9 @@ class InMemoryRedis:
         for key in keys:
             key_norm = _normalize_key(key)
             self._purge_expired(key_norm)
-            if key_norm in self._store:
+            if key_norm in self._store or key_norm in self._zsets:
                 self._store.pop(key_norm, None)
+                self._zsets.pop(key_norm, None)
                 self._expires.pop(key_norm, None)
                 deleted += 1
         return deleted
@@ -107,20 +115,98 @@ class InMemoryRedis:
     async def exists(self, key: str | bytes) -> int:
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
-        return int(key_norm in self._store)
+        return int(key_norm in self._store or key_norm in self._zsets)
 
-    async def expire(self, key: str | bytes, seconds: int) -> bool:
+    async def expire(self, key: str | bytes, seconds: int, *, nx: bool = False) -> bool:
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
-        if key_norm not in self._store:
+        if key_norm not in self._store and key_norm not in self._zsets:
+            return False
+        if nx and key_norm in self._expires:
             return False
         self._expires[key_norm] = _now() + int(seconds)
         return True
 
+    async def incr(self, key: str | bytes) -> int:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        # Writes the store directly: set() would drop the TTL, but Redis INCR
+        # preserves it.
+        value = int(self._store.get(key_norm, "0")) + 1
+        self._store[key_norm] = str(value)
+        return value
+
+    async def zadd(self, key: str | bytes, mapping: dict[str, float]) -> int:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        target = self._zsets.setdefault(key_norm, {})
+        added = 0
+        for member, score in mapping.items():
+            member_norm = _normalize_value(member)
+            if member_norm not in target:
+                added += 1
+            target[member_norm] = float(score)
+        return added
+
+    async def zrem(self, key: str | bytes, *members: str | bytes) -> int:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        target = self._zsets.get(key_norm)
+        if target is None:
+            return 0
+        removed = 0
+        for member in members:
+            member_norm = _normalize_value(member)
+            if member_norm in target:
+                target.pop(member_norm)
+                removed += 1
+        if not target:
+            self._zsets.pop(key_norm, None)
+            self._expires.pop(key_norm, None)
+        return removed
+
+    async def zrange(self, key: str | bytes, start: int, end: int) -> list[str]:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        members = [
+            member
+            for member, _score in sorted(
+                self._zsets.get(key_norm, {}).items(),
+                key=lambda item: (item[1], item[0]),
+            )
+        ]
+        # Redis treats `end` as inclusive, with -1 meaning the last member.
+        return members[start : end + 1 if end != -1 else None]
+
+    async def zremrangebyscore(
+        self, key: str | bytes, min_score: float, max_score: float
+    ) -> int:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        target = self._zsets.get(key_norm)
+        if target is None:
+            return 0
+        doomed = [
+            member
+            for member, score in target.items()
+            if float(min_score) <= score <= float(max_score)
+        ]
+        for member in doomed:
+            target.pop(member)
+        if not target:
+            self._zsets.pop(key_norm, None)
+            self._expires.pop(key_norm, None)
+        return len(doomed)
+
+    async def zscore(self, key: str | bytes, member: str) -> float | None:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        return self._zsets.get(key_norm, {}).get(_normalize_value(member))
+
     async def ttl(self, key: str | bytes) -> int:
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
-        if key_norm not in self._store:
+        if key_norm not in self._store and key_norm not in self._zsets:
             return -2
         expires_at = self._expires.get(key_norm)
         if expires_at is None:
@@ -255,17 +341,35 @@ class InMemoryRedis:
         used_key = _normalize_key(keys_and_args[1])
         expected_jti = _normalize_value(keys_and_args[2])
         used_ttl_seconds = int(keys_and_args[3])
+        grace_seconds = int(keys_and_args[4])
 
-        if await self.exists(used_key):
+        now = int(self.wall_clock())
+
+        used_at = await self.get(used_key)
+        if used_at is not None:
+            try:
+                used_at_number: int | None = int(used_at)
+            except ValueError:
+                used_at_number = None
+            if (
+                used_at_number is not None
+                and grace_seconds > 0
+                and (now - used_at_number) <= grace_seconds
+            ):
+                return "GRACE"
             return "REUSED"
 
         stored_jti = await self.get(refresh_key)
         if stored_jti != expected_jti:
             return "INVALID"
 
-        await self.setex(used_key, used_ttl_seconds, "1")
+        await self.setex(used_key, used_ttl_seconds, str(now))
         await self.delete(refresh_key)
         return "OK"
+
+    async def time(self) -> tuple[int, int]:
+        now = self.wall_clock()
+        return int(now), int((now % 1) * 1_000_000)
 
     async def ping(self) -> bool:
         return True

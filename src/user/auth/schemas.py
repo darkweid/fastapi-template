@@ -63,6 +63,10 @@ class ResendVerificationModel(EmailNormalizationMixin, Base):
     email: EmailStr
 
 
+class VerifyEmailRequestModel(Base):
+    token: str
+
+
 class LoginUserModel(EmailNormalizationMixin, Base):
     email: EmailStr
     password: str

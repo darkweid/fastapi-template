@@ -470,6 +470,10 @@ async def test_reset_password_confirm_success(
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
     cache_invalidate_spy = AsyncMock(wraps=cache.invalidate)
     cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
+    # An attacker-filled login throttle must fall with the reset: the reset
+    # proves mailbox ownership.
+    login_failures_key = auth_redis_keys.login_failures(user.email)
+    await fake_redis.setex(login_failures_key, 600, "25")
 
     use_case = ResetPasswordConfirmUseCase(
         uow=uow, redis_client=fake_redis, cache=cache
@@ -491,6 +495,7 @@ async def test_reset_password_confirm_success(
         )
         == 0
     )
+    assert await fake_redis.exists(login_failures_key) == 0
 
 
 @pytest.mark.asyncio

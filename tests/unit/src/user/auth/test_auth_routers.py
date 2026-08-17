@@ -358,10 +358,51 @@ async def test_verify_email_endpoint(
         ProvideValue(FakeUseCase(SuccessResponse(success=True))),
     )
 
-    response = await async_client.get("/v1/users/auth/verify", params={"token": "t"})
+    response = await async_client.post("/v1/users/auth/verify", json={"token": "t"})
 
     assert response.status_code == 200
     assert response.json() == {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_verify_email_rejects_get(async_client) -> None:
+    # The token is a credential: a GET puts it in access logs, proxies and the
+    # Referer header, so only the POST form exists.
+    response = await async_client.get("/v1/users/auth/verify", params={"token": "t"})
+
+    assert response.status_code == 405
+
+
+def test_verify_email_route_has_rate_limit() -> None:
+    route = _get_auth_route(path="/verify", method="POST")
+
+    rate_limiters = _get_route_rate_limiters(route)
+
+    assert len(rate_limiters) == 1
+    assert rate_limiters[0].times == 30
+    assert rate_limiters[0].milliseconds == 15 * 60_000
+
+
+def test_logout_route_has_rate_limit() -> None:
+    route = _get_auth_route(path="/logout", method="POST")
+
+    rate_limiters = _get_route_rate_limiters(route)
+
+    assert len(rate_limiters) == 1
+    assert rate_limiters[0].times == 20
+    assert rate_limiters[0].milliseconds == 60_000
+
+
+def test_login_route_rate_limit_tolerates_shared_ips() -> None:
+    # Per-IP only: CGNAT and offices put many users behind one address, so the
+    # limit is loose here and the per-email soft throttle does the precise work.
+    route = _get_auth_route(path="/login", method="POST")
+
+    rate_limiters = _get_route_rate_limiters(route)
+
+    assert len(rate_limiters) == 1
+    assert rate_limiters[0].times == 5
+    assert rate_limiters[0].milliseconds == 60_000
 
 
 @pytest.mark.asyncio

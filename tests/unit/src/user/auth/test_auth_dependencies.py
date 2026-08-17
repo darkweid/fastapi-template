@@ -48,6 +48,10 @@ from tests.fakes.db import FakeAsyncSession
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.requests import build_request
 
+# Pinned wall clock for grace-window math; the fake's key expiry runs on
+# time.monotonic(), so freezing this cannot make keys expire mid-test.
+FROZEN_NOW = 1_755_000_000
+
 
 def encode_token(payload: dict[str, object], secret: str) -> str:
     return jwt.encode(payload, secret, config.jwt.ALGORITHM)
@@ -119,6 +123,58 @@ async def test_verify_jti_refresh_reuse_invalidates(
         auth_redis_keys.used(payload["sub"], payload["jti"]),
         60,
         "used",
+    )
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await verify_jti(token, fake_redis)
+
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+
+
+@pytest.mark.asyncio
+async def test_verify_jti_used_marker_within_grace_rejects_without_wipe(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A marker younger than the grace window is a benign double-submit, not an
+    # attack: answer the generic 401 and leave the session family alone.
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    payload = build_refresh_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
+    await fake_redis.setex(
+        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        60,
+        str(FROZEN_NOW),
+    )
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
+        await verify_jti(token, fake_redis)
+
+    invalidate_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_verify_jti_used_marker_past_grace_wipes(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    payload = build_refresh_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
+    await fake_redis.setex(
+        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        60,
+        str(FROZEN_NOW),
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(

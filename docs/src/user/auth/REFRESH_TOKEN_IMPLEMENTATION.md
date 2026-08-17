@@ -109,7 +109,7 @@ CSRF check fails → 403 (`AccessForbiddenException`).
   - Strips `Bearer` prefix if present and decodes JWT with `JWT_USER_SECRET_KEY`.
   - Extracts `jti`, `mode`, `sub` (user_id), `session_id`.
   - For refresh tokens:
-    - Checks `used:<user_id>:<jti>`; if it exists, all user sessions are invalidated and 401 is returned (“Token reuse detected”).
+    - Reads `used:<user_id>:<jti>`; a marker younger than `REFRESH_TOKEN_REUSE_GRACE_SECONDS` answers a plain 401 without a wipe (benign double-submit), an older or unreadable one invalidates all user sessions and returns 401 (“Token reuse detected”).
   - Verifies the active JTI in Redis: key `<mode_without_suffix>:<user_id>:<session_id>` must equal the token JTI; otherwise 401 (“Token invalidated or expired”).
 - Dependency returns `(user, payload)` to the use case.
 
@@ -125,10 +125,10 @@ CSRF check fails → 403 (`AccessForbiddenException`).
 - `rotate_refresh_token`:
   - `validate_token_structure` ensures `sub`, `session_id` and `jti` are present; on failure invalidates all sessions.
   - `execute_token_rotation` runs a Lua script with keys `refresh:<user_id>:<session_id>` and `used:<user_id>:<jti>`.
-    - If `used` exists → invalidate all sessions, error “Token reuse detected”.
+    - If `used` exists and is older than the grace window (or unreadable) → invalidate all sessions, error “Token reuse detected”; within the window → plain 401 without a wipe.
     - If stored JTI mismatch or missing → invalidate all sessions, error “Token invalidated or expired”.
-    - Otherwise: delete active refresh key, set `used:<user_id>:<jti>` with TTL `used_ttl_seconds`, and return `OK`.
-    - `used_ttl_seconds = min(REFRESH_TOKEN_USED_TTL_SECONDS, REFRESH_TOKEN_EXPIRE_MINUTES * 60)`; configured via `.env` (default 14 days).
+    - Otherwise: delete active refresh key, set `used:<user_id>:<jti>` to the rotation instant (Redis server clock), and return `OK`.
+    - The marker TTL equals `REFRESH_TOKEN_EXPIRE_MINUTES * 60`: the marker must cover the rotated-out token's whole possible lifetime, so there is no separate knob.
   - On success, a new refresh token is issued with the same `session_id` and new `jti`; Redis stores `refresh:<user_id>:<session_id>` with TTL `REFRESH_TOKEN_EXPIRE_MINUTES`.
 
 ## 5) New access token
@@ -136,4 +136,4 @@ CSRF check fails → 403 (`AccessForbiddenException`).
 - The use case returns both new tokens (`TokenModel`); the router then passes them through `TokenCookieResponder.apply` with the resolved transport, which either writes the refresh cookie and strips it from the body (`cookie`) or leaves the body untouched (`body`).
 
 ## 6) Invalidation helpers
-- `invalidate_all_user_sessions` deletes `access:*`, `refresh:*`, `used:*` keys for the user; used when reuse/invalid structure is detected or when rotation fails the invariants.
+- `invalidate_all_user_sessions` walks the `sessions:<user_id>` index (ZSET scored by refresh expiry) and deletes every indexed session's `access:`/`refresh:` keys; `used:*` markers are left to their TTL - the refresh keys are gone, so a replay cannot rotate. Used when reuse/invalid structure is detected or when rotation fails the invariants.

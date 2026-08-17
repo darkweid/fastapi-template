@@ -1,5 +1,7 @@
 from typing import Literal
 
+from src.core.utils.security import build_email_throttle_key
+
 OneTimeTokenPurpose = Literal["verification", "reset_password"]
 
 
@@ -15,28 +17,23 @@ class AuthRedisKeyBuilder:
     def used(self, user_id: str, jti: str) -> str:
         return f"used:{user_id}:{jti}"
 
+    def sessions(self, user_id: str) -> str:
+        """ZSET of the user's session ids, scored by refresh-lifetime expiry -
+        the index a wipe walks instead of a keyspace SCAN. A superset of live
+        sessions: stale members are pruned on the next token issuance."""
+        return f"sessions:{user_id}"
+
+    def login_failures(self, normalized_email: str) -> str:
+        """Window-scoped counter of failed logins for one email. Keyed by the
+        address's hash so SCAN/MONITOR/RDB dumps never expose raw emails."""
+        return build_email_throttle_key("login-fail", normalized_email)
+
     def one_time_token(
         self,
         purpose: OneTimeTokenPurpose,
         normalized_email: str,
     ) -> str:
         return f"one-time:{purpose}:{normalized_email}"
-
-    def access_pattern(self, user_id: str) -> str:
-        return f"access:{user_id}:*"
-
-    def refresh_pattern(self, user_id: str) -> str:
-        return f"refresh:{user_id}:*"
-
-    def used_pattern(self, user_id: str) -> str:
-        return f"used:{user_id}:*"
-
-    def all_user_patterns(self, user_id: str) -> tuple[str, str, str]:
-        return (
-            self.access_pattern(user_id),
-            self.refresh_pattern(user_id),
-            self.used_pattern(user_id),
-        )
 
     def session_key(
         self,

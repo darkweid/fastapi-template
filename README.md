@@ -55,7 +55,10 @@ Three settings govern the link (`src/main/config.py`, `AppConfig`):
   (default `/reset-password`) — the pages that receive `?token=...`.
 
 Those pages read the token out of the query string and call the API themselves:
-`GET /v1/users/auth/verify?token=...` and `PUT /v1/users/auth/password/reset/confirm`.
+`POST /v1/users/auth/verify` with body `{"token": "..."}` and
+`PUT /v1/users/auth/password/reset/confirm`. Verification is a POST on purpose —
+the token is a credential, and a GET would copy it into access logs, proxy
+caches and the `Referer` header.
 
 `scripts/check_env.py` (run by the deploy workflow) rejects a `PUBLIC_BASE_URL`
 pointing at localhost, so the example value cannot reach a deploy unnoticed.

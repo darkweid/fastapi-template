@@ -21,6 +21,7 @@ from src.user.auth.schemas import (
     ResendVerificationModel,
     ResetPasswordModel,
     SendResetPasswordRequestModel,
+    VerifyEmailRequestModel,
 )
 from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.auth.usecases.get_access_by_refresh import (
@@ -91,21 +92,32 @@ async def send_verification_email(
     return await use_case.execute(data=data)
 
 
-@router.get("/verify", status_code=200)
+@router.post(
+    "/verify",
+    status_code=200,
+    # POST, not GET: the token is a credential, and a GET would spread it into
+    # access logs, proxy caches and the Referer header. The limiter bounds an
+    # unauthenticated flood into JWT decode plus a DB round-trip (the signed
+    # token itself is not brute-forceable at any rate a limiter could stop);
+    # 30 per window keeps an office behind one NAT able to onboard a team.
+    dependencies=[Depends(RateLimiter(times=30, minutes=15))],
+)
 async def verify_email(
-    token: str,
+    data: VerifyEmailRequestModel,
     use_case: Annotated[VerifyEmailUseCase, Depends(get_verify_email_use_case)],
 ) -> SuccessResponse:
     """
-    Verifies the user's email using the provided token.
+    Verifies the user's email using the token from the verification link.
     """
-    return await use_case.execute(token=token)
+    return await use_case.execute(token=data.token)
 
 
 @router.post(
     "/login",
     response_model=TokenModel,
-    dependencies=[Depends(RateLimiter(times=2, seconds=60))],
+    # Loose on purpose: CGNAT and offices put many users behind one IP, and the
+    # per-email soft throttle in the usecase does the precise anti-stuffing work.
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 async def login_user(
     login_form_data: LoginUserModel,
@@ -175,6 +187,9 @@ async def get_access_by_refresh(
 @router.post(
     "/logout",
     response_model=SuccessResponse,
+    # Logout works with expired credentials, so it is an unauthenticated write
+    # to Redis; the limiter bounds a flood without hindering a real client.
+    dependencies=[Depends(RateLimiter(times=20, minutes=1))],
 )
 async def logout_user(
     response: Response,

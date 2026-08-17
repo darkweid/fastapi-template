@@ -15,6 +15,7 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import hash_password, mask_email
 from src.main.config import config
+from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import ResetPasswordModel
 from src.user.auth.security import decode_one_time_token
 from src.user.auth.token_helpers import (
@@ -54,6 +55,8 @@ class ResetPasswordConfirmUseCase:
     - Deletes the active reset-token key from Redis before commit to avoid
       partial-success password changes when Redis is unavailable.
     - Deletes user session keys from Redis before commit for the same reason.
+    - Clears the per-email login-failure counter (the reset proves mailbox
+      ownership, so a throttled email must not stay locked out of login).
     - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Errors:
@@ -107,6 +110,12 @@ class ResetPasswordConfirmUseCase:
                     redis_client=self.redis_client,
                 )
                 await invalidate_all_user_sessions(str(user.id), self.redis_client)
+                # A successful reset proves mailbox ownership: clear the
+                # login-failure throttle so an attacker who filled the window
+                # with wrong passwords cannot keep the real owner locked out.
+                await self.redis_client.delete(
+                    auth_redis_keys.login_failures(normalized_email)
+                )
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
                 uow.add_after_commit_hook(
                     partial(self.cache.invalidate, user_cache_keys.namespace(user.id))

@@ -20,24 +20,34 @@ from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
     """
-    Invalidates all sessions for a given user by deleting all related Redis keys.
-    Uses SCAN for non-blocking key discovery.
+    Invalidates all sessions for a given user by walking the sessions:{uid}
+    index - one ZRANGE, one DEL of the token keys and one ZREM instead of a
+    keyspace SCAN, whose cost grows with the whole database rather than with
+    this user's sessions.
+
+    used:* markers are deliberately left to their TTL: the refresh keys are
+    gone after the wipe, so a replayed rotated-out token cannot rotate anyway.
 
     Args:
         user_id: The user ID whose sessions should be invalidated
     """
-    patterns = auth_redis_keys.all_user_patterns(user_id)
+    index_key = auth_redis_keys.sessions(user_id)
+    # The shared client decodes responses, so members arrive as str; the cast
+    # narrows redis-py's union return type.
+    session_ids = cast(list[str], await redis_client.zrange(index_key, 0, -1))
 
-    for pattern in patterns:
-        cursor = 0
-        while True:
-            cursor, keys = await redis_client.scan(
-                cursor=cursor, match=pattern, count=100
-            )
-            if keys:
-                await redis_client.delete(*keys)
-            if cursor == 0:
-                break
+    token_keys: list[str] = []
+    for session_id in session_ids:
+        token_keys.append(auth_redis_keys.access(user_id, session_id))
+        token_keys.append(auth_redis_keys.refresh(user_id, session_id))
+
+    if token_keys:
+        await redis_client.delete(*token_keys)
+    if session_ids:
+        # ZREM exactly what was read, never DEL of the whole key: a session
+        # registered while this wipe runs must not vanish from the index
+        # while its token keys survive.
+        await redis_client.zrem(index_key, *session_ids)
 
 
 async def invalidate_user_session(
@@ -46,7 +56,8 @@ async def invalidate_user_session(
     redis_client: Redis,
 ) -> None:
     """
-    Invalidates a single user session by deleting its active auth keys.
+    Invalidates a single user session by deleting its active auth keys and
+    removing it from the sessions:{uid} index.
 
     Args:
         user_id: The user ID whose session should be invalidated.
@@ -57,6 +68,7 @@ async def invalidate_user_session(
         auth_redis_keys.access(user_id, session_id),
         auth_redis_keys.refresh(user_id, session_id),
     )
+    await redis_client.zrem(auth_redis_keys.sessions(user_id), session_id)
 
 
 async def store_active_one_time_token(
@@ -137,6 +149,30 @@ async def validate_token_structure(
     return user_id, session_id, jti
 
 
+async def is_within_reuse_grace(
+    used_marker: str | bytes | None, redis_client: Redis
+) -> bool:
+    """A used marker younger than the grace window marks a benign double-submit.
+
+    Takes the already-fetched marker value so the caller's existence check and
+    this age check share one GET instead of an EXISTS/GET pair that could
+    disagree between round-trips.
+    """
+    grace = config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS
+    if grace <= 0 or used_marker is None:
+        return False
+
+    try:
+        used_at_number = int(used_marker)
+    except (TypeError, ValueError):
+        return False
+
+    # The Redis server clock - the same one the rotation script stamped the
+    # marker with, so the comparison needs no clock sync between app instances.
+    seconds, _ = await redis_client.time()
+    return (int(seconds) - used_at_number) <= grace
+
+
 async def execute_token_rotation(
     user_id: str,
     session_id: str,
@@ -152,17 +188,20 @@ async def execute_token_rotation(
         jti: The JTI (JWT ID) from the token
 
     Returns:
-        str: The result of the token rotation operation ('OK', 'REUSED', or 'INVALID')
+        str: The result of the token rotation operation ('OK' - every other
+        script answer raises)
 
     Raises:
-        UnauthorizedException: If the token has been reused or is invalid
+        UnauthorizedException: If the token has been reused or is invalid.
+        A replay within the grace window answers the same generic 401 as an
+        invalid token but leaves the session family intact.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
-    used_ttl_seconds = min(
-        config.jwt.REFRESH_TOKEN_USED_TTL_SECONDS,
-        refresh_ttl_seconds,
-    )
+    # The used marker lives exactly as long as a refresh token can: shorter and
+    # a late replay reads INVALID instead of REUSED, longer buys nothing. There
+    # is no separate knob because no other value is correct.
+    used_ttl_seconds = refresh_ttl_seconds
 
     old_refresh_key = auth_redis_keys.refresh(user_id, session_id)
     used_refresh_key = auth_redis_keys.used(user_id, jti)
@@ -176,14 +215,20 @@ async def execute_token_rotation(
             used_refresh_key,
             jti,
             str(used_ttl_seconds),
+            str(config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS),
         ),
     )
 
+    if result == "GRACE":
+        # A double-submit inside the grace window: reject the request but do
+        # not treat it as theft - the family wipe would log out a user whose
+        # client merely retried a refresh over a flaky connection.
+        raise UnauthorizedException("Token invalidated or expired")
     if result == "REUSED":
         # Token reuse detected!
         await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
-    elif result == "INVALID":
+    if result == "INVALID":
         await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token invalidated or expired")
 
