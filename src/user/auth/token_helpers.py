@@ -225,7 +225,6 @@ async def execute_token_rotation(
         # client merely retried a refresh over a flaky connection.
         raise UnauthorizedException("Token invalidated or expired")
     if result == "REUSED":
-        # Token reuse detected!
         await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
     if result == "INVALID":

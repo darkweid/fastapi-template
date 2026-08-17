@@ -7,7 +7,9 @@ PRECOMMIT_CONFIG_PATH = Path(".pre-commit-config.yaml")
 DEV_REQUIREMENTS_PATH = Path("infra/requirements/dev.txt")
 MYPY_REPO_MARKER = "- repo: https://github.com/pre-commit/mirrors-mypy"
 ADDITIONAL_DEPS_MARKER = "additional_dependencies:"
-REQ_PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^#\s]+)")
+# pip-compile keeps requested extras in the lockfile line (taskiq[reload]==...);
+# the version pins the base package, so the extras group is matched and dropped.
+REQ_PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==([^#\s]+)")
 SPEC_SPLIT_RE = re.compile(r"(==|>=|<=|~=|!=|>|<)")
 
 
@@ -46,6 +48,40 @@ def extract_dep_package(dep_spec: str) -> tuple[str, str]:
     package_token = split_result[0].strip()
     base_name = package_token.split("[", 1)[0]
     return package_token, normalize_package_name(base_name)
+
+
+def sync_mypy_rev(config_text: str, versions: dict[str, str]) -> str:
+    """
+    Pins the mirrors-mypy hook rev to the mypy version from the dev lockfile.
+
+    The mirror tags releases as v<mypy version>, so a rev drifting from the
+    pinned mypy means pre-commit and the lockfile type-check with different
+    mypy releases.
+    """
+    mypy_version = versions.get("mypy")
+    if mypy_version is None:
+        raise RuntimeError("mypy is not pinned in infra/requirements/dev.txt")
+
+    lines = config_text.splitlines()
+    try:
+        mypy_repo_idx = next(
+            idx for idx, line in enumerate(lines) if line.strip() == MYPY_REPO_MARKER
+        )
+    except StopIteration as exc:
+        raise RuntimeError(
+            "mypy repo block was not found in .pre-commit-config.yaml"
+        ) from exc
+
+    for idx in range(mypy_repo_idx + 1, len(lines)):
+        stripped = lines[idx].strip()
+        if stripped.startswith("- repo: "):
+            break
+        if stripped.startswith("rev:"):
+            indent = lines[idx][: len(lines[idx]) - len(lines[idx].lstrip(" "))]
+            lines[idx] = f"{indent}rev: v{mypy_version}"
+            return "\n".join(lines) + ("\n" if config_text.endswith("\n") else "")
+
+    raise RuntimeError("rev line was not found in the mypy repo block")
 
 
 def sync_mypy_additional_dependencies(
@@ -127,13 +163,16 @@ def main() -> None:
         raise SystemExit("No pinned dependencies found in infra/requirements/dev.txt")
 
     original_config = PRECOMMIT_CONFIG_PATH.read_text(encoding="utf-8")
-    updated_config = sync_mypy_additional_dependencies(original_config, versions)
+    updated_config = sync_mypy_rev(original_config, versions)
+    updated_config = sync_mypy_additional_dependencies(updated_config, versions)
 
     if updated_config != original_config:
         PRECOMMIT_CONFIG_PATH.write_text(updated_config, encoding="utf-8")
-        print("Updated mypy additional_dependencies in .pre-commit-config.yaml")
+        print(
+            "Updated the mypy rev and additional_dependencies in .pre-commit-config.yaml"
+        )
     else:
-        print("mypy additional_dependencies are already in sync")
+        print("mypy rev and additional_dependencies are already in sync")
 
 
 if __name__ == "__main__":

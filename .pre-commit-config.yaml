@@ -51,10 +51,13 @@ repos:
     rev: v2.3.3
     hooks:
       - id: autoflake
-        args: [ --remove-all-unused-imports, --remove-unused-variables ]
+        # Import removal stays with ruff (F401), which honors noqa and __all__;
+        # autoflake's --remove-all-unused-imports would silently strip re-exports
+        # like the models/__init__.py imports Alembic autogenerate discovers.
+        args: [ --remove-unused-variables ]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
+    rev: v2.3.0
     hooks:
       - id: mypy
         args: [

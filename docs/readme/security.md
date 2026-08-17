@@ -62,10 +62,16 @@ All authentication flows log emails in masked form: `ab***@cd***`. Used consiste
 
 `src/core/limiter/depends.py`, `src/core/limiter/script.py`
 
-Redis-backed **token bucket** via Lua script:
-- Configurable per-endpoint limits (requests, time window).
+Redis-backed **fixed window** counter via Lua script:
+- Configurable per-endpoint limits (requests, time window); the counter and its
+  TTL are set together, so a window never outlives its own limit.
 - Key structure: `{prefix}:{client_ip}:{request_path}:{endpoint}`.
 - Lua script ensures atomic increment-or-reject.
+- Sensitive auth routes carry their own budgets — login is a loose 5/min per IP
+  (CGNAT puts many users behind one address) backed by a per-email soft throttle
+  inside the use case (25 failures / 15 min, cleared by a successful login or a
+  password reset); email verification accepts `POST /verify` (the token never
+  enters URLs or logs) at 30 / 15 min per IP.
 
 **In-memory fallback** activates on Redis failure:
 - Thread-safe dictionary with lock.
@@ -136,7 +142,7 @@ The five base headers are applied at both the application and Nginx levels (defe
 | `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | Disables unnecessary browser APIs |
 | `Content-Security-Policy` | `default-src 'self'; frame-ancestors 'none'` | Restricts resource loading (relaxed for Swagger/Redoc paths) |
 
-Nginx additionally sets `server_tokens off` (hides version) and `client_max_body_size 10m`.
+Nginx additionally sets `server_tokens off` (hides version) and `client_max_body_size 20m` (kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`).
 
 **Why it matters:** Headers are a zero-cost defense layer. HSTS prevents SSL stripping, CSP mitigates XSS, X-Frame-Options blocks clickjacking. Duplicating at Nginx and app level ensures coverage even if one layer is bypassed.
 
@@ -246,7 +252,7 @@ public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 `infra/nginx/app.conf`, `infra/nginx/main.conf`, `infra/nginx/proxy.inc`
 
 - `server_tokens off` — no version disclosure.
-- `client_max_body_size 10m` — prevents oversized request abuse.
+- `client_max_body_size 20m` — prevents oversized request abuse; kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`.
 - Proper proxy headers (`X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`).
 - WebSocket upgrade support with secure defaults.
 - Security headers duplicated from application layer.

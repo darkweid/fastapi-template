@@ -34,11 +34,17 @@ The goal is simple: write solid tests quickly and consistently, without tying th
 ## 3) Structure and naming
 
 - Application code from `src/` should be tested under `tests/unit/src/` with a mirrored path.
+- `tests/unit/src/note/` is the reference suite for a new domain module - the same
+  role `src/note/` plays for the code: CRUD, ownership and list-query coverage
+  with no auth-specific baggage.
 - Tests that need a live PostgreSQL live under `tests/integration/src/` with the same mirrored path; see section 6 for what qualifies.
 - Non-application test tooling and infrastructure checks should live under `tests/unit/` outside `src/`.
 - File names: `test_<feature>.py`.
 - Test names: `test_<scenario>_<expected_result>`.
-- For async tests, use `@pytest.mark.asyncio`.
+- Async tests need no marker: `pytest.ini` sets `asyncio_mode = auto`, so a bare
+  `async def test_...` runs as-is. Integration modules still declare
+  `pytestmark = pytest.mark.asyncio(loop_scope="session")` - for the loop scope,
+  not to enable async (see section 6).
 - Do not pack too many scenarios into one test.
 
 ## 4) Test design rules
@@ -159,10 +165,6 @@ Rules specific to this suite:
 ## 7) Minimal unit test template
 
 ```python
-import pytest
-
-
-@pytest.mark.asyncio
 async def test_execute_with_valid_input_returns_expected_result(fake_uow):
     # Given
     usecase = ...
@@ -179,10 +181,6 @@ async def test_execute_with_valid_input_returns_expected_result(fake_uow):
 ## 8) Minimal API test template
 
 ```python
-import pytest
-
-
-@pytest.mark.asyncio
 async def test_get_resource_returns_200(async_client_with_fakes):
     # When
     response = await async_client_with_fakes.get("/v1/resource")

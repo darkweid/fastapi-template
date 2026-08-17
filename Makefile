@@ -12,7 +12,6 @@ COMPOSE_TEST = infra/docker-compose.test.yml
 
 # Container names
 APP_CONTAINER = app
-WORKER_CONTAINER = worker
 
 # Requirements management
 REQ_DIR = infra/requirements
@@ -44,7 +43,7 @@ run: ## Build and start the prod-like stack
 run-dev: ## Build and start the dev stack with autoreload
 	$(DOCKER_COMPOSE_DEV) up --build -d
 # nginx resolves the app upstream once at startup, so a rebuilt app container leaves it serving 502 until nginx restarts
-	docker restart template-nginx
+	$(DOCKER_COMPOSE_DEV) restart nginx
 
 .PHONY: down
 down: ## Stop and remove the containers
@@ -120,16 +119,6 @@ create-admin: ## Bootstrap the first admin (env: ADMIN_EMAIL, ADMIN_PASSWORD)
 # -e without a value re-requests it from the host process running this recipe.
 	$(DOCKER_COMPOSE_EXEC) -e ADMIN_EMAIL -e ADMIN_PASSWORD -e ADMIN_FIRST_NAME -e ADMIN_LAST_NAME -e ADMIN_USERNAME -e ADMIN_PHONE $(APP_CONTAINER) python -m scripts.create_admin
 
-##@ Worker
-
-.PHONY: worker
-worker: ## Start the task worker
-	$(DOCKER_COMPOSE) up -d $(WORKER_CONTAINER)
-
-.PHONY: stop-worker
-stop-worker: ## Stop the task worker
-	$(DOCKER_COMPOSE) stop $(WORKER_CONTAINER)
-
 ##@ Logs
 
 .PHONY: logs
@@ -141,10 +130,6 @@ logs: ## Follow logs for every service, or one: make logs s=app
 .PHONY: lint
 lint: ## Run every pre-commit hook
 	pre-commit run --all-files
-
-.PHONY: check-lint
-check-lint: ## Run the pre-commit hooks of the push stage
-	pre-commit run --all-files --hook-stage push --verbose
 
 .PHONY: test
 test: ## Run the tests, excluding the integration suite (no Docker needed)

@@ -10,7 +10,7 @@
 
 ### CI (`.github/workflows/ci.yml`)
 - Caching: venv by `infra/requirements.txt` hash, pre-commit, deps.
-- Quality: `make check-lint`, Alembic head check.
+- Quality: `make lint`, Alembic head check.
 - Tests: generates `.env` from example and runs `make test-cov`.
 - Security: separate `bandit`, `pip-audit`, and `gitleaks` jobs run security checks.
 - Dependency audit uses pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` instead of floating installs.

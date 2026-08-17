@@ -1,11 +1,12 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
 .Python
 .env
 .venv
-*.log
+**/*.log
+logs/
 .git
 
 # Runtime code only: tests run on the host, so keep dev tooling, tests, docs,

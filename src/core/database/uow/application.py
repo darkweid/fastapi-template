@@ -67,8 +67,6 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork):
         """Get the NoteRepository."""
         return self._get_repository(NoteRepository)
 
-    # Add more repository properties as needed
-
 
 async def get_uow(session: AsyncSession) -> ApplicationUnitOfWork:
     """

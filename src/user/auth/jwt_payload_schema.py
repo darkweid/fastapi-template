@@ -10,4 +10,4 @@ class JWTPayload(TypedDict):
         "access_token", "refresh_token", "verification_token", "reset_password_token"
     ]
     jti: NotRequired[str]  # JWT ID for token tracking
-    session_id: NotRequired[str]  # Session identifier
+    session_id: NotRequired[str]

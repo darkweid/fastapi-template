@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
@@ -273,7 +273,6 @@ async def get_access_by_refresh_token(
         "Could not validate credentials",
     )
 
-    # verify_jti also validates the token and throws appropriate exceptions
     payload = await verify_jti(credentials.token, redis_client)
 
     try:
@@ -371,9 +370,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
 
     if mode not in {"access_token", "refresh_token"}:
         raise UnauthorizedException("Invalid token structure")
-    session_mode = cast(Literal["access_token", "refresh_token"], mode)
 
-    # Check for reuse
     if mode == "refresh_token":
         used_marker = await redis_client.get(auth_redis_keys.used(user_id, jti))
 
@@ -387,8 +384,7 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
                 "Token reuse detected. All sessions invalidated."
             )
 
-    # Check active tokens
-    active_key = auth_redis_keys.session_key(session_mode, user_id, session_id)
+    active_key = auth_redis_keys.session_key(mode, user_id, session_id)
     stored_jti = await redis_client.get(active_key)
 
     stored_jti_str = (

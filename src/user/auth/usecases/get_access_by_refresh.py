@@ -68,7 +68,6 @@ class GetTokensByRefreshUserUseCase:
             )
         ensure_can_use_session(user)
 
-        # Use rotation helper to handle the previous token safely
         new_refresh_token = await rotate_refresh_token(
             old_token_payload, self.redis_client
         )
