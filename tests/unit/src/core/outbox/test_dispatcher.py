@@ -87,16 +87,28 @@ async def test_publish_hook_marks_row_published() -> None:
     )  # noqa: SLF001
 
 
-async def test_enqueue_transactional_rejects_non_json_arguments() -> None:
+@pytest.mark.parametrize(
+    "bad_args,bad_kwargs",
+    [
+        ((uuid4(),), {}),  # not serializable at all
+        ((float("nan"),), {}),  # dumps would emit the invalid-JSON token NaN
+        ((), {"mapping": {1: "x"}}),  # int key coerced to "1" on republish
+        (((1, 2),), {}),  # nested tuple becomes a list on republish
+    ],
+)
+async def test_enqueue_transactional_rejects_non_json_arguments(
+    bad_args: tuple, bad_kwargs: dict
+) -> None:
     # Arguments live in a JSONB outbox row: a UUID would raise deep inside the
-    # INSERT flush - the guard fails at the call site and names the task.
+    # INSERT flush, and coercible values would make the sweeper republish a
+    # different payload - the guard fails at the call site and names the task.
     _broker, _calls, probe = make_broker_and_probe()
     dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
     uow, outbox_repo, _row = make_uow_with_outbox()
 
     async with uow:
         with pytest.raises(TypeError, match="outbox_probe"):
-            await dispatcher.enqueue_transactional(uow, probe, uuid4())
+            await dispatcher.enqueue_transactional(uow, probe, *bad_args, **bad_kwargs)
         outbox_repo.create.assert_not_awaited()
         await uow.rollback()
 

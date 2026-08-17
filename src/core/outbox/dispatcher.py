@@ -38,14 +38,25 @@ class TaskDispatcher:
         **kwargs: Any,
     ) -> None:
         # Arguments are stored in a JSONB outbox row; a non-JSON value (UUID,
-        # datetime, model) would otherwise fail deep inside the INSERT flush.
+        # datetime, NaN, model) would otherwise fail deep inside the INSERT
+        # flush. The round-trip check additionally rejects values JSON merely
+        # coerces (int dict keys, nested tuples): the inline publish would send
+        # the original while a sweeper republish sends the coerced form - one
+        # task, two different payloads.
+        payload = {"args": list(args), "kwargs": kwargs}
         try:
-            json.dumps({"args": list(args), "kwargs": kwargs})
+            encoded_payload = json.dumps(payload, allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise TypeError(
                 f"Arguments for task '{task.task_name}' must be JSON-serializable "
                 f"(they are stored in a JSONB outbox row): {exc}"
             ) from exc
+        if json.loads(encoded_payload) != payload:
+            raise TypeError(
+                f"Arguments for task '{task.task_name}' must survive a JSON "
+                "round-trip unchanged (a sweeper republish sends the stored "
+                "JSONB form): avoid int dict keys and nested tuples"
+            )
         # Client-side id: the hook needs it before flush, and it doubles as the
         # broker task_id so the worker-side dedup marker survives republishing.
         # uuid7 to match the model's UUID7IDMixin default — pre-generating the
