@@ -226,6 +226,21 @@ class PostgresConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @field_validator("POSTGRES_DB")
+    @classmethod
+    def reject_url_breaking_database_name(cls, value: str) -> str:
+        # Credentials are percent-encoded in the DSN, but SQLAlchemy's make_url
+        # does not decode the database path segment, so encoding the name here
+        # would silently connect to a differently-named database. Failing fast
+        # is the only honest option for these characters.
+        forbidden = set("/?#@: ")
+        if any(character in forbidden for character in value):
+            raise ValueError(
+                "POSTGRES_DB must not contain '/', '?', '#', '@', ':' or spaces: "
+                "such a name cannot be represented in a database URL"
+            )
+        return value
+
     @property
     def dsn_async(self) -> str:
         # quote(safe="") because generated credentials routinely contain @ / % :

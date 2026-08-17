@@ -323,6 +323,21 @@ def test_postgres_dsn_escapes_special_characters_in_credentials() -> None:
         assert url.database == "app"
 
 
+@pytest.mark.parametrize("bad_name", ["app/db", "app?x", "app#1", "a@b", "a:b", "a b"])
+def test_postgres_rejects_url_breaking_database_name(bad_name: str) -> None:
+    # make_url does not decode the database path segment, so such a name can
+    # be neither passed raw (misparsed) nor percent-encoded (renamed).
+    with pytest.raises(ValidationError, match="POSTGRES_DB"):
+        PostgresConfig(
+            DB_ECHO=False,
+            POSTGRES_USER="app",
+            POSTGRES_PASSWORD="secret",
+            POSTGRES_HOST="db-host",
+            POSTGRES_PORT=5432,
+            POSTGRES_DB=bad_name,
+        )
+
+
 def test_postgres_pool_sizes_default_and_validate() -> None:
     postgres_config = PostgresConfig(
         DB_ECHO=False,
