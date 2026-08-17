@@ -143,7 +143,7 @@ redis==8.1.0
     #   taskiq-redis
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.67.1
+sentry-sdk==2.68.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -183,7 +183,7 @@ urllib3==2.7.0
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.52.1
+uvicorn==0.52.3
     # via
     #   -r base.in
     #   uvicorn-worker
