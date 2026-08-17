@@ -7,10 +7,8 @@ from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceNotFoundException
-from src.note.policies import ensure_note_access
+from src.note.policies import ensure_note_manage_access
 from src.note.schemas import NoteUpdateModel, NoteViewModel
-from src.user.auth.permissions.enum import Permission
-from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
 from src.user.models import User
 
 logger = get_logger(__name__)
@@ -61,10 +59,7 @@ class UpdateNoteUseCase:
             note = await uow.notes.get_single(uow.session, id=note_id)
             if note is None:
                 raise InstanceNotFoundException("Note not found.")
-            has_permission = Permission.MANAGE_NOTES in ROLE_PERMISSIONS.get(
-                current_user.role, set()
-            )
-            ensure_note_access(note, current_user.id, has_permission=has_permission)
+            ensure_note_manage_access(note, current_user.id, current_user.role)
 
             updated_note = await uow.notes.update(uow.session, update_data, id=note_id)
             if updated_note is None:

@@ -6,15 +6,13 @@ from fastapi import APIRouter, Depends, Query
 from src.core.database.filters import FilterCondition
 from src.core.pagination import ListQueryParams, PaginatedResponse
 from src.note.dependencies import get_note_service
-from src.note.policies import ensure_note_access
+from src.note.policies import ensure_note_view_access
 from src.note.schemas import NoteCreateModel, NoteUpdateModel, NoteViewModel
 from src.note.services import NoteService
 from src.note.usecases.create_note import CreateNoteUseCase, get_create_note_use_case
 from src.note.usecases.delete_note import DeleteNoteUseCase, get_delete_note_use_case
 from src.note.usecases.update_note import UpdateNoteUseCase, get_update_note_use_case
 from src.user.auth.dependencies import get_current_user
-from src.user.auth.permissions.enum import Permission
-from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
 from src.user.models import User
 
 router = APIRouter()
@@ -58,10 +56,7 @@ async def get_note(
     Returns a single note by its identifier.
     """
     note = await note_service.get_single_or_404(id=note_id)
-    has_permission = Permission.VIEW_NOTES in ROLE_PERMISSIONS.get(
-        current_user.role, set()
-    )
-    ensure_note_access(note, current_user.id, has_permission=has_permission)
+    ensure_note_view_access(note, current_user.id, current_user.role)
     return NoteViewModel.model_validate(note)
 
 
