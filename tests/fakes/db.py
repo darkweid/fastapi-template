@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 
 class AsyncTransactionContext:
+    """Stands in for AsyncSessionTransaction: awaitable like the real
+    `session.begin()` / `begin_nested()`, usable as an async CM."""
+
     def __init__(self, session: FakeAsyncSession) -> None:
         self._session = session
         self._was_in_transaction = session.in_transaction()
+        self.nested = self._was_in_transaction
 
-    async def __aenter__(self) -> AsyncTransactionContext:
+    async def start(self) -> AsyncTransactionContext:
         self._session.set_in_transaction(True)
         return self
+
+    def __await__(self) -> Generator[Any, None, AsyncTransactionContext]:
+        return self.start().__await__()
+
+    async def __aenter__(self) -> AsyncTransactionContext:
+        return await self.start()
 
     async def __aexit__(
         self,
@@ -23,6 +33,13 @@ class AsyncTransactionContext:
         if not self._was_in_transaction:
             self._session.set_in_transaction(False)
         return None
+
+    async def rollback(self) -> None:
+        # Forward to the session mock so tests can keep asserting on
+        # `session.rollback`; scope granularity is proven at integration level.
+        await self._session.rollback()
+        if not self._was_in_transaction:
+            self._session.set_in_transaction(False)
 
 
 class FakeAsyncSession:
@@ -38,6 +55,11 @@ class FakeAsyncSession:
         # Mirrors real `AsyncSession.info`: a plain dict the UoW uses to mark
         # itself active for the repository commit guard.
         self.info: dict[str, Any] = {}
+        # Mirror the real session's pending-state views, consulted by the UoW's
+        # forgotten-commit warning on clean exit.
+        self.dirty: set[Any] = set()
+        self.new: set[Any] = set()
+        self.deleted: set[Any] = set()
 
     def in_transaction(self) -> bool:
         return self._in_transaction

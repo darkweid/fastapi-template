@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from src.core.database.uow.application import ApplicationUnitOfWork, get_uow
@@ -122,6 +124,43 @@ async def test_sqlalchemy_uow_aexit_skips_rollback_when_completed() -> None:
     await uow.__aenter__()
     await uow.commit()
     await uow.__aexit__(RuntimeError, RuntimeError("fail"), None)
+
+    session.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_clean_exit_without_commit_rolls_back() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+
+    async with uow:
+        pass
+
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    assert uow.completed is True
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_clean_exit_skips_after_commit_hooks() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+    hook = AsyncMock()
+
+    async with uow:
+        uow.add_after_commit_hook(hook)
+
+    hook.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_commit_then_clean_exit_does_not_roll_back() -> None:
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+
+    async with uow:
+        await uow.commit()
 
     session.rollback.assert_not_awaited()
 

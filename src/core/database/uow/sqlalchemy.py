@@ -1,12 +1,10 @@
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
 from typing import Any, Self, TypeVar
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
-from src.core.database.transactions import safe_begin
 from src.core.database.uow.abstract import UnitOfWork
 
 # Type variable for repository instances
@@ -23,6 +21,9 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     This implementation uses SQLAlchemy's AsyncSession for transaction management
     and allows registration of repositories.
+
+    Commit is strictly explicit: leaving the context without calling commit()
+    rolls the transaction back, whether the block raised or returned normally.
     """
 
     def __init__(self, session: AsyncSession):
@@ -33,7 +34,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
             session: The SQLAlchemy AsyncSession to use for database operations
         """
         self._session = session
-        self._exit_stack = AsyncExitStack()  # noqa
+        self._transaction: AsyncSessionTransaction | None = None
         self._is_completed = False
         self._after_commit_hooks: list[AfterCommitHook] = []
 
@@ -41,17 +42,31 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
         """
         Enter the context manager and start a transaction.
 
+        Keeps a handle on the transaction it opened (a SAVEPOINT when the
+        session is already in one - the normal case for authenticated requests,
+        where the auth dependency's SELECT has autobegun on the shared request
+        session), so rollback can target exactly this UoW's scope instead of
+        the whole session transaction.
+
         Returns:
             self: The UnitOfWork instance
         """
-        await self._exit_stack.__aenter__()
-        await self._exit_stack.enter_async_context(safe_begin(self._session))
+        if self._session.in_transaction():
+            self._transaction = await self._session.begin_nested()
+        else:
+            self._transaction = await self._session.begin()
         self._session.info["uow_active"] = True
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """
-        Exit the context manager and close the session.
+        Exit the context manager.
+
+        Any exit without a prior commit() rolls back. Without this, a clean
+        exit's outcome would depend on invisible context: a fresh session's
+        `begin()` block commits on clean exit, while a shared request session
+        (every authenticated route) releases the SAVEPOINT and discards the
+        work later at session close.
 
         Args:
             exc_type: Exception type if an exception was raised
@@ -59,11 +74,21 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
             exc_tb: Exception traceback if an exception was raised
         """
         try:
-            if exc_type is not None and not self._is_completed:
+            if not self._is_completed:
+                if exc_type is None and self._has_pending_changes():
+                    logger.warning(
+                        "UnitOfWork exited cleanly without commit() while "
+                        "changes were pending; rolling back."
+                    )
                 await self.rollback()
-            await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
         finally:
+            self._transaction = None
             self._session.info.pop("uow_active", None)
+
+    def _has_pending_changes(self) -> bool:
+        # Best-effort forgotten-commit detection: already-flushed changes are
+        # not visible in these collections, so silence proves nothing.
+        return bool(self._session.dirty or self._session.new or self._session.deleted)
 
     def _ensure_not_completed(self) -> None:
         if self._is_completed:
@@ -88,13 +113,22 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def rollback(self) -> None:
         """
-        Rollback the transaction.
+        Rollback this UoW's transaction scope.
+
+        Rolls back only the transaction this UoW opened: on the nested path
+        that is the SAVEPOINT, so uncommitted work the caller staged on the
+        shared session before entering the UoW survives. Without the handle
+        (rollback outside the context), the whole session transaction is
+        rolled back.
 
         Raises:
             RuntimeError: If the unit of work has already been completed
         """
         self._ensure_not_completed()
-        await self._session.rollback()
+        if self._transaction is not None:
+            await self._transaction.rollback()
+        else:
+            await self._session.rollback()
         self._is_completed = True
         self._after_commit_hooks = []
 

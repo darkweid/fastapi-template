@@ -8,6 +8,7 @@ The `src/core/database/uow/` package keeps DB work transactional and coordinates
 - Transaction management: groups multiple DB operations to succeed or fail together.
 - Repository coordination: single transaction boundary for multiple repositories.
 - Clean API design: consistent interface (`commit`, `rollback`) for callers.
+- Exit contract: leaving the UoW context without an explicit `commit()` rolls the transaction back - commit is never implicit.
 
 Implementations:
 - `UnitOfWork`: abstract contract (`uow/abstract.py`).
