@@ -529,6 +529,19 @@ async def test_base_repository_update_updates_instance_and_commits() -> None:
 
 
 @pytest.mark.asyncio
+async def test_base_repository_update_rejects_unknown_fields() -> None:
+    # A typo in a data key must fail loudly instead of setattr silently
+    # attaching a plain attribute the flush then ignores.
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+
+    with pytest.raises(ValueError, match="nmae"):
+        await repo.update(session=session, data={"nmae": "new"}, id=1)
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_base_repository_update_returns_none_when_not_found() -> None:
     repo = RepositoryModelRepository()
     session = RepositorySession()
