@@ -7,10 +7,8 @@ from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceNotFoundException
-from src.note.policies import ensure_note_access
+from src.note.policies import ensure_note_manage_access
 from src.note.schemas import NoteUpdateModel, NoteViewModel
-from src.user.auth.permissions.enum import Permission
-from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
 from src.user.models import User
 
 logger = get_logger(__name__)
@@ -23,7 +21,7 @@ class UpdateNoteUseCase:
     Inputs:
     - note_id: UUID of the note to update.
     - data: NoteUpdateModel with the fields to change; an omitted field is
-      left untouched.
+      left untouched (exclude_unset), an explicit null fails schema validation.
     - current_user: the caller, used for the ownership/permission check.
 
     Validations:
@@ -56,15 +54,12 @@ class UpdateNoteUseCase:
     async def execute(
         self, note_id: UUID, data: NoteUpdateModel, current_user: User
     ) -> NoteViewModel:
-        update_data = data.model_dump(exclude_none=True)
+        update_data = data.model_dump(exclude_unset=True)
         async with self.uow as uow:
             note = await uow.notes.get_single(uow.session, id=note_id)
             if note is None:
                 raise InstanceNotFoundException("Note not found.")
-            has_permission = Permission.MANAGE_NOTES in ROLE_PERMISSIONS.get(
-                current_user.role, set()
-            )
-            ensure_note_access(note, current_user.id, has_permission=has_permission)
+            ensure_note_manage_access(note, current_user.id, current_user.role)
 
             updated_note = await uow.notes.update(uow.session, update_data, id=note_id)
             if updated_note is None:
