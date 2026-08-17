@@ -21,7 +21,7 @@ class UpdateNoteUseCase:
     Inputs:
     - note_id: UUID of the note to update.
     - data: NoteUpdateModel with the fields to change; an omitted field is
-      left untouched.
+      left untouched (exclude_unset), an explicit null fails schema validation.
     - current_user: the caller, used for the ownership/permission check.
 
     Validations:
@@ -54,7 +54,7 @@ class UpdateNoteUseCase:
     async def execute(
         self, note_id: UUID, data: NoteUpdateModel, current_user: User
     ) -> NoteViewModel:
-        update_data = data.model_dump(exclude_none=True)
+        update_data = data.model_dump(exclude_unset=True)
         async with self.uow as uow:
             note = await uow.notes.get_single(uow.session, id=note_id)
             if note is None:

@@ -12,10 +12,20 @@ class UserProfileUpdateModel(Base):
     last_name: str | None = Field(None, min_length=2, max_length=30)
     username: str | None = Field(None, min_length=3, max_length=50)
 
+    @field_validator("first_name", "last_name", "username")
+    @classmethod
+    def reject_explicit_null(cls, value: str | None) -> str:
+        # PATCH uses exclude_unset semantics: an omitted field never reaches this
+        # validator (defaults are not validated), so None here is always an
+        # explicit null - and all three columns are non-nullable.
+        if value is None:
+            raise ValueError("Field cannot be null")
+        return value
+
     @field_validator("first_name", "last_name")
     @classmethod
-    def validate_name(cls, value: str | None) -> str | None:
-        if value is not None and not FULL_NAME_PATTERN.match(value):
+    def validate_name(cls, value: str) -> str:
+        if not FULL_NAME_PATTERN.match(value):
             raise ValueError(
                 "Name must contain latin letters, with single spaces, "
                 "hyphens or apostrophes between parts"

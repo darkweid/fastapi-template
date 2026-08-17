@@ -21,12 +21,11 @@ class UpdateUserProfileUseCase:
 
     Inputs:
     - data: UserProfileUpdateModel with the fields to change. A field left unset
-      is skipped rather than cleared; an explicit `null` is likewise skipped, not
-      rejected, since the schema has no way to tell "omitted" from "set to null"
-      apart from Pydantic's own unset-tracking, which this UseCase does not use.
-      An entirely empty body is a no-op write: it still updates zero columns,
-      still flushes, and still bumps the cache namespace. Both are the safe
-      direction - a spurious bump costs a cold cache, not a stale read.
+      is skipped (exclude_unset); an explicit `null` fails schema validation,
+      because every updatable column here is non-nullable. An entirely empty
+      body is a no-op write: it still updates zero columns, still flushes, and
+      still bumps the cache namespace - a spurious bump costs a cold cache, not
+      a stale read.
     - user_id: UUID of the user being updated.
 
     Validations:
@@ -60,7 +59,7 @@ class UpdateUserProfileUseCase:
     async def execute(
         self, data: UserProfileUpdateModel, user_id: UUID
     ) -> UserProfileViewModel:
-        update_data = data.model_dump(exclude_none=True)
+        update_data = data.model_dump(exclude_unset=True)
         async with self.uow as uow:
             updated_user = await uow.users.update(uow.session, update_data, id=user_id)
             if not updated_user:
