@@ -416,6 +416,9 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         **filters: Any,
     ) -> T | None:
         """Update a record where is_deleted flag is False, using the filters."""
+        # Guard before the setdefault below: seeding is_deleted first would make
+        # the base-class filter check pass for a filter-less call.
+        self._ensure_filters_present(filters)
         filters.setdefault("is_deleted", False)
         return await super().update(session, data, commit, **filters)
 
@@ -423,6 +426,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
         """Soft delete a record, using the filters."""
+        self._ensure_filters_present(filters)
         if commit:
             self._ensure_commit_allowed(session)
         filters.setdefault("is_deleted", False)
