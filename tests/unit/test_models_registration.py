@@ -26,9 +26,12 @@ MODELS_INIT = REPO_ROOT / "models" / "__init__.py"
 
 
 def _modules_imported_by_models_package() -> set[str]:
+    # Only unconditional module-level imports count: an import inside
+    # `if TYPE_CHECKING:`, a function body or any other branch is not
+    # guaranteed to run when Alembic imports the package.
     tree = ast.parse(MODELS_INIT.read_text())
     imported: set[str] = set()
-    for node in ast.walk(tree):
+    for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
         elif isinstance(node, ast.Import):
