@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 from uuid import uuid4
 
@@ -114,6 +115,9 @@ class LoginUserUseCase:
             session_id = str(uuid4())
             token_data = {"sub": str(user.id)}
             await self.cache.invalidate(user_cache_keys.namespace(user.id))
+            uow.add_after_commit_hook(
+                partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+            )
             await uow.commit()
             return TokenModel(
                 access_token=await create_access_token(

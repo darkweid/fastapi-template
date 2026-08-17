@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 
 from fastapi import Depends
@@ -107,6 +108,9 @@ class ResetPasswordConfirmUseCase:
                 )
                 await invalidate_all_user_sessions(str(user.id), self.redis_client)
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
+                uow.add_after_commit_hook(
+                    partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+                )
                 await uow.commit()
                 logger.debug(
                     "[ResetPasswordConfirm] All user %s sessions invalidated.",

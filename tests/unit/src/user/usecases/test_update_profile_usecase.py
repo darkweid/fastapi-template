@@ -45,6 +45,29 @@ async def test_profile_update_bumps_cache_namespace(
 
 
 @pytest.mark.asyncio
+async def test_profile_update_bumps_cache_before_and_after_commit(
+    fake_session: FakeAsyncSession, cache: InMemoryCache
+) -> None:
+    # Pre-commit bump covers the crash direction; the post-commit bump closes
+    # the race where a reader re-caches stale data between bump and commit.
+    user = build_user()
+    users_repo = FakeUsersRepository(updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    invalidate_spy = AsyncMock(wraps=cache.invalidate)
+    cache.invalidate = invalidate_spy  # type: ignore[method-assign]
+    use_case = UpdateUserProfileUseCase(uow=uow, cache=cache)
+
+    await use_case.execute(
+        data=UserProfileUpdateModel(first_name="Grace"), user_id=user.id
+    )
+
+    namespace = f"user:{user.id}"
+    assert invalidate_spy.await_count == 2
+    for call in invalidate_spy.await_args_list:
+        assert call.args == (namespace,)
+
+
+@pytest.mark.asyncio
 async def test_missing_user_raises_not_found(
     fake_session: FakeAsyncSession, cache: InMemoryCache
 ) -> None:

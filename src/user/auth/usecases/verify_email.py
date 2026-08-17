@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 
 from fastapi import Depends
@@ -101,6 +102,9 @@ class VerifyEmailUseCase:
                     email=normalized_email,
                 )
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
+                uow.add_after_commit_hook(
+                    partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+                )
                 await uow.commit()
                 await invalidate_active_one_time_token(
                     purpose="verification",

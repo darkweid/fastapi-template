@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Annotated
 from uuid import UUID
 
@@ -103,6 +104,11 @@ class UpdateUserPasswordUseCase:
             await uow.flush()
             await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
             await self.cache.invalidate(user_cache_keys.namespace(updated_user.id))
+            uow.add_after_commit_hook(
+                partial(
+                    self.cache.invalidate, user_cache_keys.namespace(updated_user.id)
+                )
+            )
             await uow.commit()
             logger.debug(
                 "[UpdateUserPassword] %s password updated successfully.",
