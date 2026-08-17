@@ -618,6 +618,28 @@ def test_soft_delete_repository_requires_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_soft_delete_repository_update_requires_filters() -> None:
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+
+    with pytest.raises(ValueError):
+        await repo.update(session=session, data={"name": "new"})
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_delete_requires_filters() -> None:
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+
+    with pytest.raises(ValueError):
+        await repo.delete(session=session)
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_repository_marks_instance_and_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
