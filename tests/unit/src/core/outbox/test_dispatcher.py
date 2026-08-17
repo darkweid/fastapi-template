@@ -1,3 +1,4 @@
+import enum
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -87,6 +88,10 @@ async def test_publish_hook_marks_row_published() -> None:
     )  # noqa: SLF001
 
 
+class _Color(enum.StrEnum):
+    RED = "red"
+
+
 @pytest.mark.parametrize(
     "bad_args,bad_kwargs",
     [
@@ -94,6 +99,8 @@ async def test_publish_hook_marks_row_published() -> None:
         ((float("nan"),), {}),  # dumps would emit the invalid-JSON token NaN
         ((), {"mapping": {1: "x"}}),  # int key coerced to "1" on republish
         (((1, 2),), {}),  # nested tuple becomes a list on republish
+        ((_Color.RED,), {}),  # StrEnum == its str, but republish sends plain str
+        ((), {"mapping": {_Color.RED: "x"}}),  # enum dict key decays the same way
     ],
 )
 async def test_enqueue_transactional_rejects_non_json_arguments(

@@ -323,10 +323,9 @@ def test_postgres_dsn_escapes_special_characters_in_credentials() -> None:
         assert url.database == "app"
 
 
-@pytest.mark.parametrize("bad_name", ["app/db", "app?x", "app#1", "a@b", "a:b", "a b"])
-def test_postgres_rejects_url_breaking_database_name(bad_name: str) -> None:
-    # make_url does not decode the database path segment, so such a name can
-    # be neither passed raw (misparsed) nor percent-encoded (renamed).
+def test_postgres_rejects_question_mark_in_database_name() -> None:
+    # make_url truncates the database at '?' (query string) and does not decode
+    # the path segment, so the name can be neither passed raw nor encoded.
     with pytest.raises(ValidationError, match="POSTGRES_DB"):
         PostgresConfig(
             DB_ECHO=False,
@@ -334,8 +333,23 @@ def test_postgres_rejects_url_breaking_database_name(bad_name: str) -> None:
             POSTGRES_PASSWORD="secret",
             POSTGRES_HOST="db-host",
             POSTGRES_PORT=5432,
-            POSTGRES_DB=bad_name,
+            POSTGRES_DB="app?x",
         )
+
+
+@pytest.mark.parametrize("odd_name", ["app/db", "app#1", "a@b", "a:b", "a b"])
+def test_postgres_allows_database_names_make_url_preserves(odd_name: str) -> None:
+    postgres_config = PostgresConfig(
+        DB_ECHO=False,
+        POSTGRES_USER="app",
+        POSTGRES_PASSWORD="secret",
+        POSTGRES_HOST="db-host",
+        POSTGRES_PORT=5432,
+        POSTGRES_DB=odd_name,
+    )
+
+    for dsn in (postgres_config.dsn_async, postgres_config.dsn_sync):
+        assert make_url(dsn).database == odd_name
 
 
 def test_postgres_pool_sizes_default_and_validate() -> None:

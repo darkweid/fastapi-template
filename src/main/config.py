@@ -229,15 +229,14 @@ class PostgresConfig(BaseModel):
     @field_validator("POSTGRES_DB")
     @classmethod
     def reject_url_breaking_database_name(cls, value: str) -> str:
-        # Credentials are percent-encoded in the DSN, but SQLAlchemy's make_url
-        # does not decode the database path segment, so encoding the name here
-        # would silently connect to a differently-named database. Failing fast
-        # is the only honest option for these characters.
-        forbidden = set("/?#@: ")
-        if any(character in forbidden for character in value):
+        # SQLAlchemy's make_url treats everything after '?' as the query string
+        # and does not decode the database path segment, so a name with '?' can
+        # be neither passed raw (truncated) nor percent-encoded (renamed).
+        # Every other character survives make_url unchanged and is allowed.
+        if "?" in value:
             raise ValueError(
-                "POSTGRES_DB must not contain '/', '?', '#', '@', ':' or spaces: "
-                "such a name cannot be represented in a database URL"
+                "POSTGRES_DB must not contain '?': such a name cannot be "
+                "represented in a database URL"
             )
         return value
 

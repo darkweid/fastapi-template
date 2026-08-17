@@ -11,6 +11,38 @@ from src.core.database.uow import ApplicationUnitOfWork
 from src.core.outbox.repositories import OutboxRepository
 
 
+def _survives_json_round_trip(original: Any, decoded: Any) -> bool:
+    """
+    Type-strict deep equality between a value and its JSON round-trip.
+
+    Plain `==` is not enough: a `StrEnum` compares equal to its string, an
+    `IntEnum` to its int, and dict subclasses to plain dicts - yet the inline
+    publish would send the original object while a sweeper republish sends the
+    decoded primitive from the JSONB row.
+    """
+    if type(original) is not type(decoded):
+        return False
+    if type(original) is dict:
+        if len(original) != len(decoded):
+            return False
+        return all(
+            type(original_key) is type(decoded_key)
+            and original_key == decoded_key
+            and _survives_json_round_trip(original_value, decoded_value)
+            for (original_key, original_value), (decoded_key, decoded_value) in zip(
+                original.items(), decoded.items(), strict=True
+            )
+        )
+    if type(original) is list:
+        if len(original) != len(decoded):
+            return False
+        return all(
+            _survives_json_round_trip(original_item, decoded_item)
+            for original_item, decoded_item in zip(original, decoded, strict=True)
+        )
+    return bool(original == decoded)
+
+
 class TaskDispatcher:
     """Single entry point for enqueueing background tasks.
 
@@ -51,11 +83,11 @@ class TaskDispatcher:
                 f"Arguments for task '{task.task_name}' must be JSON-serializable "
                 f"(they are stored in a JSONB outbox row): {exc}"
             ) from exc
-        if json.loads(encoded_payload) != payload:
+        if not _survives_json_round_trip(payload, json.loads(encoded_payload)):
             raise TypeError(
                 f"Arguments for task '{task.task_name}' must survive a JSON "
                 "round-trip unchanged (a sweeper republish sends the stored "
-                "JSONB form): avoid int dict keys and nested tuples"
+                "JSONB form): avoid enums, int dict keys and nested tuples"
             )
         # Client-side id: the hook needs it before flush, and it doubles as the
         # broker task_id so the worker-side dedup marker survives republishing.

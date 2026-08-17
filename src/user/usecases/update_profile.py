@@ -69,9 +69,14 @@ class UpdateUserProfileUseCase:
             await uow.flush()
             # Two bumps by design. Pre-commit covers the crash direction: a bump
             # that outlives a rolled-back transaction only costs a cold cache.
-            # The post-commit bump closes the other race: a reader who re-cached
+            # The post-commit bump narrows the other race: a reader who re-cached
             # the old row between the first bump and the commit would otherwise
-            # serve stale data until the TTL.
+            # serve stale data until the TTL. A residual window remains - a
+            # reader that read the old row before commit and writes its cache
+            # entry after the second bump still lands stale data in the current
+            # generation. Eliminating it needs version-conditional cache writes
+            # (capture the generation at the miss, write only if unchanged);
+            # accepted as bounded-by-TTL staleness instead of that complexity.
             await self.cache.invalidate(user_cache_keys.namespace(user_id))
             uow.add_after_commit_hook(
                 partial(self.cache.invalidate, user_cache_keys.namespace(user_id))
