@@ -133,7 +133,7 @@ services:
 
   nginx:
     container_name: template-nginx
-    image: nginx:1.29.7
+    image: nginx:1.31.3
     restart: always
     volumes:
       - ./nginx/main.conf:/etc/nginx/conf.d/00-main.conf:ro
@@ -160,7 +160,7 @@ services:
 
   redis:
     container_name: template-redis
-    image: 'redis:7.4'
+    image: 'redis:8.10'
     restart: unless-stopped
     env_file: ../.env
     healthcheck:
