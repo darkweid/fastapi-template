@@ -37,6 +37,9 @@ logger = get_logger(__name__)
 # Soft per-email throttle: window-scoped counter, no permanent lockout. The
 # threshold is far above any legitimate retry pattern, so only distributed
 # credential stuffing reaches it; per-IP limiting alone cannot see that attack.
+# Deliberate trade-off: anyone who knows the email can fill the window with
+# wrong passwords and block login for its remainder. The escape hatch is the
+# password-reset flow, which proves mailbox ownership and clears the counter.
 LOGIN_FAILURES_LIMIT = 25
 LOGIN_FAILURES_WINDOW_SECONDS = 15 * 60
 
@@ -169,11 +172,14 @@ class LoginUserUseCase:
         )
 
     async def _register_login_failure(self, failures_key: str) -> None:
-        failures = await self.redis_client.incr(failures_key)
-        # INCR creates the key without a TTL; arm the window exactly once, on
-        # the first failure, so later failures never push the reset forward.
-        if failures == 1:
-            await self.redis_client.expire(failures_key, LOGIN_FAILURES_WINDOW_SECONDS)
+        await self.redis_client.incr(failures_key)
+        # NX arms the window only when the key has no TTL yet, so later
+        # failures never push the reset forward - and unlike an "only on the
+        # first INCR" guard, a crash between INCR and EXPIRE cannot strand a
+        # persistent counter: the next failure arms it.
+        await self.redis_client.expire(
+            failures_key, LOGIN_FAILURES_WINDOW_SECONDS, nx=True
+        )
 
     async def _rehash_password_if_needed(
         self,

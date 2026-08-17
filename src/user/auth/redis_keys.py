@@ -1,5 +1,7 @@
 from typing import Literal
 
+from src.core.utils.security import build_email_throttle_key
+
 OneTimeTokenPurpose = Literal["verification", "reset_password"]
 
 
@@ -21,8 +23,9 @@ class AuthRedisKeyBuilder:
         return f"sessions:{user_id}"
 
     def login_failures(self, normalized_email: str) -> str:
-        """Window-scoped counter of failed logins for one email."""
-        return f"login-fail:{normalized_email}"
+        """Window-scoped counter of failed logins for one email. Keyed by the
+        address's hash so SCAN/MONITOR/RDB dumps never expose raw emails."""
+        return build_email_throttle_key("login-fail", normalized_email)
 
     def one_time_token(
         self,

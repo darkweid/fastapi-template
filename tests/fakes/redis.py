@@ -117,10 +117,12 @@ class InMemoryRedis:
         self._purge_expired(key_norm)
         return int(key_norm in self._store or key_norm in self._sets)
 
-    async def expire(self, key: str | bytes, seconds: int) -> bool:
+    async def expire(self, key: str | bytes, seconds: int, *, nx: bool = False) -> bool:
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         if key_norm not in self._store and key_norm not in self._sets:
+            return False
+        if nx and key_norm in self._expires:
             return False
         self._expires[key_norm] = _now() + int(seconds)
         return True

@@ -101,6 +101,60 @@ async def test_wrong_password_increments_the_counter_and_arms_the_window(
 
 
 @pytest.mark.asyncio
+async def test_throttled_counter_without_ttl_reports_the_full_window(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
+) -> None:
+    # A stranded persistent counter (crash between INCR and EXPIRE) must not
+    # produce a nonsensical negative Retry-After.
+    user = build_user()
+    uow = build_uow(user, fake_session)
+    monkeypatch.setattr(login_usecase, "verify_password", AsyncMock(return_value=True))
+    await fake_redis.set(
+        auth_redis_keys.login_failures("user@example.com"),
+        str(LOGIN_FAILURES_LIMIT),
+    )
+
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+
+    with pytest.raises(TooManyRequestsException) as exc_info:
+        await use_case.execute(
+            login_usecase.LoginUserModel(
+                email="user@example.com", password="plain-pass"
+            )
+        )
+
+    assert exc_info.value.retry_after == LOGIN_FAILURES_WINDOW_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_later_failures_do_not_push_the_window_forward(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
+) -> None:
+    user = build_user()
+    uow = build_uow(user, fake_session)
+    verify_mock = AsyncMock(return_value=False)
+    monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
+    failures_key = auth_redis_keys.login_failures("user@example.com")
+    await fake_redis.setex(failures_key, 600, "3")
+
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+
+    with pytest.raises(InstanceProcessingException, match=INVALID_CREDENTIALS_MESSAGE):
+        await use_case.execute(
+            login_usecase.LoginUserModel(email="user@example.com", password="wrong")
+        )
+
+    assert await fake_redis.get(failures_key) == "4"
+    assert await fake_redis.ttl(failures_key) == 600
+
+
+@pytest.mark.asyncio
 async def test_unknown_email_also_increments_the_counter(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
