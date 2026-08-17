@@ -38,6 +38,11 @@ class FakeAsyncSession:
         # Mirrors real `AsyncSession.info`: a plain dict the UoW uses to mark
         # itself active for the repository commit guard.
         self.info: dict[str, Any] = {}
+        # Mirror the real session's pending-state views, consulted by the UoW's
+        # forgotten-commit warning on clean exit.
+        self.dirty: set[Any] = set()
+        self.new: set[Any] = set()
+        self.deleted: set[Any] = set()
 
     def in_transaction(self) -> bool:
         return self._in_transaction

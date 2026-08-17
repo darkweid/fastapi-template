@@ -23,6 +23,9 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     This implementation uses SQLAlchemy's AsyncSession for transaction management
     and allows registration of repositories.
+
+    Commit is strictly explicit: leaving the context without calling commit()
+    rolls the transaction back, whether the block raised or returned normally.
     """
 
     def __init__(self, session: AsyncSession):
@@ -51,7 +54,13 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """
-        Exit the context manager and close the session.
+        Exit the context manager.
+
+        Any exit without a prior commit() rolls back. Without this, a clean
+        exit's outcome would depend on invisible context: a fresh session's
+        `begin()` block commits on clean exit, while a shared request session
+        (every authenticated route) releases the SAVEPOINT and discards the
+        work later at session close.
 
         Args:
             exc_type: Exception type if an exception was raised
@@ -59,11 +68,21 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
             exc_tb: Exception traceback if an exception was raised
         """
         try:
-            if exc_type is not None and not self._is_completed:
+            if not self._is_completed:
+                if exc_type is None and self._has_pending_changes():
+                    logger.warning(
+                        "UnitOfWork exited cleanly without commit() while "
+                        "changes were pending; rolling back."
+                    )
                 await self.rollback()
             await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
         finally:
             self._session.info.pop("uow_active", None)
+
+    def _has_pending_changes(self) -> bool:
+        # Best-effort forgotten-commit detection: already-flushed changes are
+        # not visible in these collections, so silence proves nothing.
+        return bool(self._session.dirty or self._session.new or self._session.deleted)
 
     def _ensure_not_completed(self) -> None:
         if self._is_completed:
