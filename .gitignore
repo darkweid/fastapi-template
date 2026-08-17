@@ -140,9 +140,9 @@ cython_debug/
 .idea/
 .DS_Store
 
-# Dev Markdown Documents
-*.md
-!README.md
+# Dev Markdown Documents (repo root only - docs under docs/, tests/, infra/ are tracked)
+/*.md
+!/README.md
 
 # AI Agents Settings
 .codex
@@ -157,3 +157,4 @@ CLAUDE.md
 AGENTS.md
 review.md
 refactor_todo.md
+/fable_review.html
