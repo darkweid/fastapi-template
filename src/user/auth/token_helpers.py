@@ -20,24 +20,30 @@ from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
     """
-    Invalidates all sessions for a given user by deleting all related Redis keys.
-    Uses SCAN for non-blocking key discovery.
+    Invalidates all sessions for a given user by walking the sessions:{uid}
+    index - one SMEMBERS and one DEL instead of a keyspace SCAN, whose cost
+    grows with the whole database rather than with this user's sessions.
+
+    used:* markers are deliberately left to their TTL: the refresh keys are
+    gone after the wipe, so a replayed rotated-out token cannot rotate anyway.
 
     Args:
         user_id: The user ID whose sessions should be invalidated
     """
-    patterns = auth_redis_keys.all_user_patterns(user_id)
+    index_key = auth_redis_keys.sessions(user_id)
+    session_ids = await redis_client.smembers(index_key)
 
-    for pattern in patterns:
-        cursor = 0
-        while True:
-            cursor, keys = await redis_client.scan(
-                cursor=cursor, match=pattern, count=100
-            )
-            if keys:
-                await redis_client.delete(*keys)
-            if cursor == 0:
-                break
+    keys_to_delete: list[str] = [index_key]
+    for raw_session_id in session_ids:
+        session_id = (
+            raw_session_id.decode("utf-8")
+            if isinstance(raw_session_id, bytes)
+            else raw_session_id
+        )
+        keys_to_delete.append(auth_redis_keys.access(user_id, session_id))
+        keys_to_delete.append(auth_redis_keys.refresh(user_id, session_id))
+
+    await redis_client.delete(*keys_to_delete)
 
 
 async def invalidate_user_session(
@@ -46,7 +52,8 @@ async def invalidate_user_session(
     redis_client: Redis,
 ) -> None:
     """
-    Invalidates a single user session by deleting its active auth keys.
+    Invalidates a single user session by deleting its active auth keys and
+    removing it from the sessions:{uid} index.
 
     Args:
         user_id: The user ID whose session should be invalidated.
@@ -57,6 +64,7 @@ async def invalidate_user_session(
         auth_redis_keys.access(user_id, session_id),
         auth_redis_keys.refresh(user_id, session_id),
     )
+    await redis_client.srem(auth_redis_keys.sessions(user_id), session_id)
 
 
 async def store_active_one_time_token(

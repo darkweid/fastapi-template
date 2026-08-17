@@ -60,6 +60,16 @@ async def _issue_token(
     if redis_key is not None:
         await redis_client.set(redis_key, jti, ex=ttl_minutes * 60)
 
+    if redis_key is not None and session_id is not None:
+        # Register the session in the per-user index so a wipe can find every
+        # session without a keyspace SCAN. The index TTL always covers the
+        # refresh lifetime - the longest-lived credential of any session.
+        index_key = auth_redis_keys.sessions(sub)
+        await redis_client.sadd(index_key, session_id)
+        await redis_client.expire(
+            index_key, config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+        )
+
     return str(encoded_jwt), jti
 
 

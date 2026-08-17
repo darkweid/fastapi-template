@@ -15,28 +15,17 @@ class AuthRedisKeyBuilder:
     def used(self, user_id: str, jti: str) -> str:
         return f"used:{user_id}:{jti}"
 
+    def sessions(self, user_id: str) -> str:
+        """SET of the user's live session ids - the index a wipe walks instead
+        of a keyspace SCAN."""
+        return f"sessions:{user_id}"
+
     def one_time_token(
         self,
         purpose: OneTimeTokenPurpose,
         normalized_email: str,
     ) -> str:
         return f"one-time:{purpose}:{normalized_email}"
-
-    def access_pattern(self, user_id: str) -> str:
-        return f"access:{user_id}:*"
-
-    def refresh_pattern(self, user_id: str) -> str:
-        return f"refresh:{user_id}:*"
-
-    def used_pattern(self, user_id: str) -> str:
-        return f"used:{user_id}:*"
-
-    def all_user_patterns(self, user_id: str) -> tuple[str, str, str]:
-        return (
-            self.access_pattern(user_id),
-            self.refresh_pattern(user_id),
-            self.used_pattern(user_id),
-        )
 
     def session_key(
         self,
