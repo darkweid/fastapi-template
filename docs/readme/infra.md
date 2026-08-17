@@ -68,6 +68,7 @@ cp .env.example .env   # main env
 make run-dev          # dev images + autoreload, exposes 8000 via nginx
 # or:
 make run              # prod-like build
+make migrate          # required on first run - the stack never migrates itself
 ```
 
 Open:

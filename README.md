@@ -185,6 +185,7 @@ Redis increment however many entries carry it.
 - S3 is off by default (`S3_ENABLED=false`); set it to `true` and fill `S3_BUCKET_NAME`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_REGION_NAME` to use file storage. `LOG_LEVEL` and `LOG_JSON` are read from the process environment (containers get them via `env_file`; a bare local run without them falls back to `INFO`/`false`).
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
+- Apply migrations: `make migrate` — required on the first run and after pulling new revisions. Nothing migrates automatically outside the server deploy script; until this runs, any DB-touching request fails with `relation "users" does not exist`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
 - Integration tests against a real PostgreSQL: `make test-integration` (needs Docker); both suites: `make test-all`.
 - Run `make` with no target to see every command the Makefile offers.
@@ -249,7 +250,7 @@ for `app.conf` once the certificate is in place.
 `make create-admin` runs `scripts/create_admin.py` inside the app container. It
 creates the first admin user, or — if an account with that email already
 exists — promotes it to `role=admin` and marks it active/verified without
-touching its stored password.
+touching its stored password. Requires migrations applied first (`make migrate`).
 
 Required env:
 - `ADMIN_EMAIL`
