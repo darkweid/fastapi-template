@@ -129,11 +129,13 @@ escape hatch for roles that may reach another user's object.
 │   │   ├── Dockerfile                   # Production Dockerfile (multi-stage build)
 │   │   └── Dockerfile.dev               # Development Dockerfile with hot-reload
 │   ├── docker-compose.override.yml      # Docker Compose overrides for development
+│   ├── docker-compose.test.yml          # Throwaway PostgreSQL for the integration suite
 │   ├── docker-compose.yml               # Docker Compose configuration
 │   ├── nginx/                           # Nginx configuration
-│   │   ├── app.conf                     # App reverse-proxy config
-│   │   ├── main.conf                    # Shared proxy settings (upgrade headers, etc.)
-│   │   └── dev-nginx.conf               # Dev-only reverse-proxy config
+│   │   ├── app.conf                     # App reverse-proxy server (http)
+│   │   ├── main.conf                    # Top-level nginx settings
+│   │   ├── proxy.inc                    # Shared proxy settings and JSON error pages
+│   │   └── tls.conf.example             # TLS drop-in replacement for app.conf
 │   ├── postgres/                        # PostgreSQL configuration
 │   │   ├── Dockerfile                   # Dockerfile for PostgreSQL
 │   │   └── postgresql.conf              # PostgreSQL configuration
@@ -159,15 +161,19 @@ escape hatch for roles that may reach another user's object.
 │
 ├── src/                                 # Application source code
 │   ├── core/                            # Core components shared across the application
-│   │   ├── database/                    # Database connection and ORM setup
+│   │   ├── cache/                       # Cache protocol, key builders, route caching
+│   │   ├── database/                    # Database connection, UoW and ORM setup
 │   │   ├── email_service/               # Email service functionality
 │   │   ├── errors/                      # Error handling
 │   │   ├── limiter/                     # Rate limiting functionality
+│   │   ├── outbox/                      # Transactional outbox for taskiq enqueue
+│   │   ├── pagination/                  # PaginationParams and ListQueryParams
 │   │   ├── patterns/                    # Design patterns
-│   │   ├── redis/                       # Redis caching system + limiter init
+│   │   ├── redis/                       # Redis clients + limiter init
 │   │   ├── storage/                     # Storage adapters (S3)
 │   │   ├── utils/                       # Utility functions
 │   │   ├── middleware.py                # Application middleware setup
+│   │   ├── proxy_headers.py             # TrustedProxyHeadersMiddleware (X-Forwarded-* handling)
 │   │   ├── request_context.py           # Request-id ContextVar shared by middleware and logging
 │   │   ├── schemas.py                   # Core data validation schemas
 │   │   ├── services.py                  # Core services shared across modules

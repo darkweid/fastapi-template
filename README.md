@@ -175,6 +175,22 @@ Redis increment however many entries carry it.
 - `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
 
+## After the Fork
+A few places carry this template's own identity; change them once, right after
+forking:
+
+- Compose project and container names: `name: fastapi-template` and the
+  `template-*` container/image names in `infra/docker-compose.yml` and
+  `infra/docker-compose.override.yml`.
+- `PROJECT_NAME` in `.env` — the Swagger/OpenAPI title.
+- The badge URLs at the top of this README point at the template repository —
+  replace the owner/repo or drop the badges.
+- `LICENSE` — replace the copyright holder, or remove the file for a private
+  project.
+- GHCR needs no setup: the `build-and-push` job authenticates with the default
+  `GITHUB_TOKEN` and pushes `ghcr.io/<owner>/<repo>` automatically on a push to
+  `main`.
+
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
 - Create and activate a local virtualenv:
@@ -183,6 +199,7 @@ Redis increment however many entries carry it.
   source .venv/bin/activate
   python -m pip install --upgrade pip pip-tools
   make req-sync-dev
+  pre-commit install
   ```
 - Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
 - S3 is off by default (`S3_ENABLED=false`); set it to `true` and fill `S3_BUCKET_NAME`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_REGION_NAME` to use file storage. `LOG_LEVEL` and `LOG_JSON` are read from the process environment (containers get them via `env_file`; a bare local run without them falls back to `INFO`/`false`).
