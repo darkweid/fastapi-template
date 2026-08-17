@@ -7,7 +7,6 @@ from loggers import get_logger
 from src.core.database.repositories import BaseRepository
 from src.core.database.uow.abstract import UnitOfWork
 
-# Type variable for repository instances
 RepositoryInstance = TypeVar("RepositoryInstance", bound=BaseRepository[Any])
 
 logger = get_logger(__name__)

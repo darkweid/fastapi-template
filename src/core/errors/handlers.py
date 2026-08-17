@@ -16,7 +16,6 @@ from src.core.errors.exceptions import CoreException
 
 response_logger = get_logger("app.request.error_response", plain_format=True)
 
-# Type for exception handler
 HandlerCallable = Callable[[Request, Exception], Awaitable[Response]]
 
 _HTTP_STATUS_TO_ERROR_CODE = {
@@ -57,13 +56,11 @@ def format_log_message(
     Returns:
         Formatted log message
     """
-    # Normalize message text and length
     raw_msg = message or "No additional details available"
     msg = " ".join(raw_msg.split())
     if len(msg) > 500:
         msg = msg[:497] + "..."
 
-    # Safely capitalize an error type
     et = (error_type or "").strip()
     err = (et[:1].upper() + et[1:]) if et else "Error"
 

@@ -17,7 +17,6 @@ async def on_redis_startup(app: FastAPI, connection_url: str) -> None:
     if isinstance(ping_result, Awaitable):
         await ping_result
     else:
-        # For sync-returning clients, just check truthiness
         if not ping_result:
             raise RuntimeError("Redis ping failed during startup")
     app.state.redis_client = redis_client

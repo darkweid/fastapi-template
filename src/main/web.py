@@ -58,10 +58,8 @@ def get_application() -> FastAPI:
             trusted_hosts=config.app.TRUST_PROXY_HOSTS,
         )
 
-    # Register custom middlewares
     register_middlewares(application)
 
-    # CORS
     application.add_middleware(
         CORSMiddleware,  # noqa
         allow_origins=config.app.CORS_ALLOWED_ORIGINS,
@@ -71,14 +69,11 @@ def get_application() -> FastAPI:
         expose_headers=config.app.CORS_EXPOSE_HEADERS,
     )
 
-    # Custom exceptions
     include_exceptions_handlers(application)
 
-    # Routers
     include_routers(application)
     log_routes_summary(application, include_debug_list=config.app.DEBUG)
 
-    # Sentry middleware for error tracking
     application.add_middleware(SentryAsgiMiddleware)
 
     return application

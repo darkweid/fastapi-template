@@ -65,7 +65,6 @@ class EmailService:
     ) -> None:
         normalized = self._normalize_and_validate_recipients(recipients)
         try:
-            # Handle both BaseModel and dict types
             template_data = (
                 template_body
                 if isinstance(template_body, dict)

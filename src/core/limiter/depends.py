@@ -213,5 +213,4 @@ class RateLimiter:
             )
             await self.callback(request, response, pexpire)
 
-        # Explicitly return None to ensure FastAPI continues to the next dependency
         return None

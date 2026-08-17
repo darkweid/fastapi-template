@@ -155,14 +155,12 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
         UnauthorizedException: If the token is invalid, has been reused, or has other security issues
     """
 
-    # Extract and validate token fields
     user_id, old_session_id, old_jti = await validate_token_structure(
         old_payload, redis_client
     )
 
     await execute_token_rotation(user_id, old_session_id, old_jti, redis_client)
 
-    # Rotate the refresh token within the same logical session.
     token, _ = await _issue_token(
         sub=user_id,
         mode="refresh_token",

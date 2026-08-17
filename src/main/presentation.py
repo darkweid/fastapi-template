@@ -15,8 +15,6 @@ from src.core.errors.handlers import (
 )
 from src.note import routers as note_routers
 from src.system import routers as system_routers
-
-# Import routers here
 from src.user import routers as user_routers
 
 EXCEPTION_HANDLERS: tuple[tuple[type[Exception], HandlerCallable], ...] = (
