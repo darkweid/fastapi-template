@@ -11,6 +11,7 @@ from src.core.database.uow import ApplicationUnitOfWork
 from src.core.utils.security import password_hasher
 from src.user.enums import UserRole
 from src.user.models import User
+from src.user.repositories import UserRepository
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -54,3 +55,23 @@ async def test_clean_exit_without_commit_discards_savepoint_work(
 
     found = await db_session.scalar(select(User).where(User.username == tag))
     assert found is None
+
+
+async def test_clean_exit_rolls_back_only_the_uow_savepoint(
+    db_session: AsyncSession,
+) -> None:
+    # Work the caller staged on the shared session before entering the UoW
+    # must survive the UoW's implicit rollback: only the SAVEPOINT goes.
+    outer_tag = f"uow-outer-{uuid4().hex[:12]}"
+    inner_tag = f"uow-inner-{uuid4().hex[:12]}"
+    await UserRepository().create(db_session, data=_user_data(outer_tag))
+    await db_session.flush()
+
+    uow = ApplicationUnitOfWork(db_session)
+    async with uow:
+        await uow.users.create(uow.session, data=_user_data(inner_tag))
+
+    outer = await db_session.scalar(select(User).where(User.username == outer_tag))
+    inner = await db_session.scalar(select(User).where(User.username == inner_tag))
+    assert outer is not None
+    assert inner is None

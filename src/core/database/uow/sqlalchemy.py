@@ -1,12 +1,10 @@
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
 from typing import Any, Self, TypeVar
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
-from src.core.database.transactions import safe_begin
 from src.core.database.uow.abstract import UnitOfWork
 
 # Type variable for repository instances
@@ -36,7 +34,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
             session: The SQLAlchemy AsyncSession to use for database operations
         """
         self._session = session
-        self._exit_stack = AsyncExitStack()  # noqa
+        self._transaction: AsyncSessionTransaction | None = None
         self._is_completed = False
         self._after_commit_hooks: list[AfterCommitHook] = []
 
@@ -44,11 +42,19 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
         """
         Enter the context manager and start a transaction.
 
+        Keeps a handle on the transaction it opened (a SAVEPOINT when the
+        session is already in one - the normal case for authenticated requests,
+        where the auth dependency's SELECT has autobegun on the shared request
+        session), so rollback can target exactly this UoW's scope instead of
+        the whole session transaction.
+
         Returns:
             self: The UnitOfWork instance
         """
-        await self._exit_stack.__aenter__()
-        await self._exit_stack.enter_async_context(safe_begin(self._session))
+        if self._session.in_transaction():
+            self._transaction = await self._session.begin_nested()
+        else:
+            self._transaction = await self._session.begin()
         self._session.info["uow_active"] = True
         return self
 
@@ -75,8 +81,8 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
                         "changes were pending; rolling back."
                     )
                 await self.rollback()
-            await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
         finally:
+            self._transaction = None
             self._session.info.pop("uow_active", None)
 
     def _has_pending_changes(self) -> bool:
@@ -107,13 +113,22 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def rollback(self) -> None:
         """
-        Rollback the transaction.
+        Rollback this UoW's transaction scope.
+
+        Rolls back only the transaction this UoW opened: on the nested path
+        that is the SAVEPOINT, so uncommitted work the caller staged on the
+        shared session before entering the UoW survives. Without the handle
+        (rollback outside the context), the whole session transaction is
+        rolled back.
 
         Raises:
             RuntimeError: If the unit of work has already been completed
         """
         self._ensure_not_completed()
-        await self._session.rollback()
+        if self._transaction is not None:
+            await self._transaction.rollback()
+        else:
+            await self._session.rollback()
         self._is_completed = True
         self._after_commit_hooks = []
 
