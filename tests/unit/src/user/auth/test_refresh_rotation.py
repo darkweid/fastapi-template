@@ -86,13 +86,112 @@ async def test_used_marker_ttl_tracks_the_refresh_token_lifetime(
 
 
 @pytest.mark.asyncio
+async def test_rotation_stores_a_unix_timestamp_in_the_used_marker(
+    fake_redis: InMemoryRedis,
+) -> None:
+    # The marker value is the rotation instant: the grace check compares it
+    # against the Redis server clock, so anything else breaks the window math.
+    payload = _base_payload()
+    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    await fake_redis.set(
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+    await rotate_refresh_token(payload, fake_redis)
+
+    used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
+    assert await fake_redis.get(used_key) == "1755000000"
+
+
+@pytest.mark.asyncio
+async def test_second_rotation_within_grace_rejects_without_family_wipe(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given: the same refresh token is submitted twice within the grace window
+    (a network retry / double-submit, not an attack).
+    When: the second rotation runs.
+    Then: it is rejected with the generic invalid-token answer, and the
+    session family is NOT wiped.
+    """
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    payload = _base_payload()
+    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    await fake_redis.set(
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    await rotate_refresh_token(payload, fake_redis)
+
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+
+    with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
+        await rotate_refresh_token(payload, fake_redis)
+
+    invalidate_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_replay_after_the_grace_window_wipes_the_family(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    payload = _base_payload()
+    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    await fake_redis.set(
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    await rotate_refresh_token(payload, fake_redis)
+
+    fake_redis.wall_clock = lambda: 1_755_000_011.0
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await rotate_refresh_token(payload, fake_redis)
+
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+
+
+@pytest.mark.asyncio
+async def test_zero_grace_disables_the_window(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 0)
+    payload = _base_payload()
+    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    await fake_redis.set(
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    await rotate_refresh_token(payload, fake_redis)
+
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await rotate_refresh_token(payload, fake_redis)
+
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+
+
+@pytest.mark.asyncio
 async def test_rotate_refresh_token_reuse_detected(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Given: used marker for the incoming refresh jti already exists.
+    Given: used marker for the incoming refresh jti already exists, with a
+    non-numeric value (legacy or corrupted marker - no timestamp to compare).
     When: refresh token rotation is executed for that payload.
-    Then: UnauthorizedException is raised and all sessions for the user are invalidated.
+    Then: the grace window cannot apply, UnauthorizedException is raised and
+    all sessions for the user are invalidated.
     """
     payload = _base_payload()
     await fake_redis.setex(

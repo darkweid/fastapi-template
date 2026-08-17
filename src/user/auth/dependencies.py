@@ -20,7 +20,10 @@ from src.user.auth.cookies import (
 from src.user.auth.errors import TokenExpiredError
 from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.redis_keys import auth_redis_keys
-from src.user.auth.token_helpers import invalidate_all_user_sessions
+from src.user.auth.token_helpers import (
+    invalidate_all_user_sessions,
+    is_within_reuse_grace,
+)
 from src.user.dependencies import get_user_repository
 from src.user.models import User
 from src.user.policies import ensure_can_use_session
@@ -376,7 +379,10 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         is_used = await redis_client.exists(used_key)
 
         if is_used:
-            # Token reuse detected!
+            # Inside the grace window this is a benign double-submit, not
+            # theft: reject the request but keep the session family alive.
+            if await is_within_reuse_grace(user_id, jti, redis_client):
+                raise UnauthorizedException("Token invalidated or expired")
             await invalidate_all_user_sessions(user_id, redis_client)
             raise UnauthorizedException(
                 "Token reuse detected. All sessions invalidated."

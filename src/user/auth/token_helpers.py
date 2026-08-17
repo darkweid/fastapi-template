@@ -145,6 +145,27 @@ async def validate_token_structure(
     return user_id, session_id, jti
 
 
+async def is_within_reuse_grace(user_id: str, jti: str, redis_client: Redis) -> bool:
+    """A used marker younger than the grace window marks a benign double-submit."""
+    grace = config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS
+    if grace <= 0:
+        return False
+
+    used_at = await redis_client.get(auth_redis_keys.used(user_id, jti))
+    if used_at is None:
+        return False
+
+    try:
+        used_at_number = int(used_at)
+    except (TypeError, ValueError):
+        return False
+
+    # The Redis server clock - the same one the rotation script stamped the
+    # marker with, so the comparison needs no clock sync between app instances.
+    seconds, _ = await redis_client.time()
+    return (int(seconds) - used_at_number) <= grace
+
+
 async def execute_token_rotation(
     user_id: str,
     session_id: str,
@@ -160,10 +181,13 @@ async def execute_token_rotation(
         jti: The JTI (JWT ID) from the token
 
     Returns:
-        str: The result of the token rotation operation ('OK', 'REUSED', or 'INVALID')
+        str: The result of the token rotation operation ('OK' - every other
+        script answer raises)
 
     Raises:
-        UnauthorizedException: If the token has been reused or is invalid
+        UnauthorizedException: If the token has been reused or is invalid.
+        A replay within the grace window answers the same generic 401 as an
+        invalid token but leaves the session family intact.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
@@ -184,14 +208,20 @@ async def execute_token_rotation(
             used_refresh_key,
             jti,
             str(used_ttl_seconds),
+            str(config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS),
         ),
     )
 
+    if result == "GRACE":
+        # A double-submit inside the grace window: reject the request but do
+        # not treat it as theft - the family wipe would log out a user whose
+        # client merely retried a refresh over a flaky connection.
+        raise UnauthorizedException("Token invalidated or expired")
     if result == "REUSED":
         # Token reuse detected!
         await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
-    elif result == "INVALID":
+    if result == "INVALID":
         await invalidate_all_user_sessions(user_id, redis_client)
         raise UnauthorizedException("Token invalidated or expired")
 

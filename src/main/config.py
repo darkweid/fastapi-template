@@ -203,6 +203,11 @@ class JWTConfig(BaseModel):
     VERIFICATION_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     RESET_PASSWORD_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
 
+    # How long after a rotation a replay of the rotated-out refresh token is
+    # treated as a benign double-submit (plain 401) instead of theft (family
+    # wipe). 0 disables the window and makes every replay a wipe.
+    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(10, ge=0)
+
     model_config = ConfigDict(extra="ignore")
 
 

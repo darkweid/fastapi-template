@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import fnmatch
 import hashlib
 import time
@@ -34,6 +35,10 @@ def _now() -> float:
 
 class InMemoryRedis:
     def __init__(self) -> None:
+        # Wall clock behind TIME/time(): tests pin it to a fixed value so the
+        # refresh grace-window math never races the real clock. Key expiry
+        # stays on time.monotonic() and is unaffected by reassigning this.
+        self.wall_clock: Callable[[], float] = time.time
         self._store: dict[str, str] = {}
         self._sets: dict[str, set[str]] = {}
         self._expires: dict[str, float] = {}
@@ -292,17 +297,35 @@ class InMemoryRedis:
         used_key = _normalize_key(keys_and_args[1])
         expected_jti = _normalize_value(keys_and_args[2])
         used_ttl_seconds = int(keys_and_args[3])
+        grace_seconds = int(keys_and_args[4])
 
-        if await self.exists(used_key):
+        now = int(self.wall_clock())
+
+        used_at = await self.get(used_key)
+        if used_at is not None:
+            try:
+                used_at_number: int | None = int(used_at)
+            except ValueError:
+                used_at_number = None
+            if (
+                used_at_number is not None
+                and grace_seconds > 0
+                and (now - used_at_number) <= grace_seconds
+            ):
+                return "GRACE"
             return "REUSED"
 
         stored_jti = await self.get(refresh_key)
         if stored_jti != expected_jti:
             return "INVALID"
 
-        await self.setex(used_key, used_ttl_seconds, "1")
+        await self.setex(used_key, used_ttl_seconds, str(now))
         await self.delete(refresh_key)
         return "OK"
+
+    async def time(self) -> tuple[int, int]:
+        now = self.wall_clock()
+        return int(now), int((now % 1) * 1_000_000)
 
     async def ping(self) -> bool:
         return True

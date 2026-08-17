@@ -133,6 +133,58 @@ async def test_verify_jti_refresh_reuse_invalidates(
 
 
 @pytest.mark.asyncio
+async def test_verify_jti_used_marker_within_grace_rejects_without_wipe(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A marker younger than the grace window is a benign double-submit, not an
+    # attack: answer the generic 401 and leave the session family alone.
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    payload = build_refresh_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    await fake_redis.setex(
+        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        60,
+        "1755000000",
+    )
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
+        await verify_jti(token, fake_redis)
+
+    invalidate_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_verify_jti_used_marker_past_grace_wipes(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    payload = build_refresh_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    fake_redis.wall_clock = lambda: 1_755_000_011.0
+    await fake_redis.setex(
+        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        60,
+        "1755000000",
+    )
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        invalidate_mock,
+    )
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await verify_jti(token, fake_redis)
+
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+
+
+@pytest.mark.asyncio
 async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> None:
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
