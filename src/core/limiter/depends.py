@@ -199,7 +199,10 @@ class RateLimiter:
             raise RuntimeError("FastAPILimiter must be initialized before use.")
 
         rate_key = await self.identifier(request)
-        endpoint_name = request.scope["endpoint"].__name__
+        # module.qualname, not bare __name__: two routers both naming an
+        # endpoint `create` must not share one rate-limit bucket.
+        endpoint = request.scope["endpoint"]
+        endpoint_name = f"{endpoint.__module__}.{endpoint.__qualname__}"
         key = f"{FastAPILimiter.prefix}:{rate_key}:{endpoint_name}"
         logger.debug(f"RateLimiter key: {key}")
         pexpire = await self._check_limit(key)

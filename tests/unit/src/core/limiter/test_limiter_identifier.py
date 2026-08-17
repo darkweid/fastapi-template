@@ -69,4 +69,5 @@ async def test_unique_forwarded_for_per_request_shares_one_limit_window(
         )
         await limiter(request, response)
 
-    assert fake_redis.evalsha_keys == ["limiter:127.0.0.1:/test:sample_endpoint"] * 3
+    endpoint_name = f"{sample_endpoint.__module__}.{sample_endpoint.__qualname__}"
+    assert fake_redis.evalsha_keys == [f"limiter:127.0.0.1:/test:{endpoint_name}"] * 3
