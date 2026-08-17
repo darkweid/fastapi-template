@@ -20,6 +20,10 @@ class AuthRedisKeyBuilder:
         of a keyspace SCAN."""
         return f"sessions:{user_id}"
 
+    def login_failures(self, normalized_email: str) -> str:
+        """Window-scoped counter of failed logins for one email."""
+        return f"login-fail:{normalized_email}"
+
     def one_time_token(
         self,
         purpose: OneTimeTokenPurpose,

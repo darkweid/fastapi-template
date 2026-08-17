@@ -125,6 +125,15 @@ class InMemoryRedis:
         self._expires[key_norm] = _now() + int(seconds)
         return True
 
+    async def incr(self, key: str | bytes) -> int:
+        key_norm = _normalize_key(key)
+        self._purge_expired(key_norm)
+        # Writes the store directly: set() would drop the TTL, but Redis INCR
+        # preserves it.
+        value = int(self._store.get(key_norm, "0")) + 1
+        self._store[key_norm] = str(value)
+        return value
+
     async def sadd(self, key: str | bytes, *members: str | bytes) -> int:
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
