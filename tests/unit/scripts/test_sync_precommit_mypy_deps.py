@@ -19,6 +19,11 @@ CONFIG = """repos:
         additional_dependencies:
           - pydantic==2.0.0
           - sqlalchemy==2.0.0
+
+  - repo: https://github.com/myint/autoflake
+    rev: v2.3.3
+    hooks:
+      - id: autoflake
 """
 
 
@@ -36,8 +41,9 @@ def test_rev_is_rewritten_to_the_dev_lockfile_mypy_version() -> None:
     updated = sync_mypy_rev(CONFIG, {"mypy": "2.3.0"})
 
     assert "rev: v2.3.0" in updated
-    # The other repo's rev must stay untouched.
+    # Repos before and after the mypy block must keep their own revs.
     assert "rev: 25.9.0" in updated
+    assert "rev: v2.3.3" in updated
 
 
 def test_rev_already_in_sync_leaves_the_config_unchanged() -> None:
