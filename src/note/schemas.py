@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import Field, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from src.core.schemas import Base
 
@@ -12,8 +14,14 @@ class NoteCreateModel(Base):
 
 
 class NoteUpdateModel(Base):
-    title: str | None = Field(None, min_length=1, max_length=255)
-    content: str | None = None
+    # SkipJsonSchema[None] keeps the field optional at runtime while removing
+    # the null branch from the OpenAPI contract - the validator below rejects
+    # an explicit null, so the schema must not advertise it. Constraints sit
+    # inside the str branch so they never apply to the None default.
+    title: (
+        Annotated[str, Field(min_length=1, max_length=255)] | SkipJsonSchema[None]
+    ) = None
+    content: str | SkipJsonSchema[None] = None
 
     @field_validator("title", "content")
     @classmethod

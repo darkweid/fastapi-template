@@ -17,3 +17,12 @@ def test_profile_update_rejects_explicit_null(field: str) -> None:
 def test_profile_update_omitted_field_stays_unset() -> None:
     model = UserProfileUpdateModel.model_validate({"username": "new-name"})
     assert model.model_dump(exclude_unset=True) == {"username": "new-name"}
+
+
+def test_profile_update_schema_does_not_advertise_null() -> None:
+    # The validator answers 422 to an explicit null, so the OpenAPI contract
+    # must not tell generated SDKs that null is acceptable.
+    schema = UserProfileUpdateModel.model_json_schema()
+    for field in ("first_name", "last_name", "username"):
+        field_schema = schema["properties"][field]
+        assert "null" not in str(field_schema), field_schema
