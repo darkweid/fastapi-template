@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import pytest
 from taskiq import InMemoryBroker
 
 from src.core.outbox.dispatcher import TaskDispatcher
@@ -84,6 +85,20 @@ async def test_publish_hook_marks_row_published() -> None:
     assert (
         dispatcher._outbox_repository.mark_published.await_args.args[1] == row.id
     )  # noqa: SLF001
+
+
+async def test_enqueue_transactional_rejects_non_json_arguments() -> None:
+    # Arguments live in a JSONB outbox row: a UUID would raise deep inside the
+    # INSERT flush - the guard fails at the call site and names the task.
+    _broker, _calls, probe = make_broker_and_probe()
+    dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
+    uow, outbox_repo, _row = make_uow_with_outbox()
+
+    async with uow:
+        with pytest.raises(TypeError, match="outbox_probe"):
+            await dispatcher.enqueue_transactional(uow, probe, uuid4())
+        outbox_repo.create.assert_not_awaited()
+        await uow.rollback()
 
 
 async def test_rollback_discards_publish() -> None:

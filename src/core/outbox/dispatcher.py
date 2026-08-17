@@ -1,4 +1,5 @@
 from functools import partial
+import json
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +17,8 @@ class TaskDispatcher:
     `enqueue` fires immediately; `enqueue_transactional` stores the task as an
     outbox row inside the caller's transaction and publishes it best-effort
     after commit (the sweeper guarantees delivery if that publish fails).
+    Transactional arguments must be JSON-serializable - pass `str(uuid)`, ISO
+    datetimes and plain dicts, not model instances.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -34,6 +37,15 @@ class TaskDispatcher:
         *args: Any,
         **kwargs: Any,
     ) -> None:
+        # Arguments are stored in a JSONB outbox row; a non-JSON value (UUID,
+        # datetime, model) would otherwise fail deep inside the INSERT flush.
+        try:
+            json.dumps({"args": list(args), "kwargs": kwargs})
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"Arguments for task '{task.task_name}' must be JSON-serializable "
+                f"(they are stored in a JSONB outbox row): {exc}"
+            ) from exc
         # Client-side id: the hook needs it before flush, and it doubles as the
         # broker task_id so the worker-side dedup marker survives republishing.
         # uuid7 to match the model's UUID7IDMixin default — pre-generating the
