@@ -54,7 +54,6 @@ def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(security.config.jwt, "ALGORITHM", "HS256")
     monkeypatch.setattr(security.config.jwt, "ACCESS_TOKEN_EXPIRE_MINUTES", 5)
     monkeypatch.setattr(security.config.jwt, "REFRESH_TOKEN_EXPIRE_MINUTES", 10)
-    monkeypatch.setattr(security.config.jwt, "REFRESH_TOKEN_USED_TTL_SECONDS", 100)
     monkeypatch.setattr(security.config.jwt, "VERIFICATION_TOKEN_EXPIRE_MINUTES", 5)
     monkeypatch.setattr(security.config.jwt, "RESET_PASSWORD_TOKEN_EXPIRE_MINUTES", 5)
 

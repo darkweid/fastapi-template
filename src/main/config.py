@@ -200,7 +200,6 @@ class JWTConfig(BaseModel):
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
-    REFRESH_TOKEN_USED_TTL_SECONDS: int = Field(1_209_600, gt=0)
     VERIFICATION_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     RESET_PASSWORD_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
 

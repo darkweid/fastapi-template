@@ -159,10 +159,10 @@ async def execute_token_rotation(
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
-    used_ttl_seconds = min(
-        config.jwt.REFRESH_TOKEN_USED_TTL_SECONDS,
-        refresh_ttl_seconds,
-    )
+    # The used marker lives exactly as long as a refresh token can: shorter and
+    # a late replay reads INVALID instead of REUSED, longer buys nothing. There
+    # is no separate knob because no other value is correct.
+    used_ttl_seconds = refresh_ttl_seconds
 
     old_refresh_key = auth_redis_keys.refresh(user_id, session_id)
     used_refresh_key = auth_redis_keys.used(user_id, jti)

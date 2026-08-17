@@ -25,7 +25,6 @@ def _base_payload() -> dict[str, str | int]:
 
 @pytest.fixture(autouse=True)
 def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_USED_TTL_SECONDS", 100)
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_EXPIRE_MINUTES", 10)
     monkeypatch.setattr(config.jwt, "JWT_USER_SECRET_KEY", TEST_JWT_USER_SECRET_KEY)
     monkeypatch.setattr(config.jwt, "ALGORITHM", "HS256")
@@ -62,6 +61,28 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
     assert await fake_redis.exists(used_key) == 1
     assert await fake_redis.exists(old_refresh_key) == 1
     assert await fake_redis.get(old_refresh_key) == decoded["jti"]
+
+
+@pytest.mark.asyncio
+async def test_used_marker_ttl_tracks_the_refresh_token_lifetime(
+    fake_redis: InMemoryRedis,
+) -> None:
+    # The marker must cover the rotated-out token's whole remaining lifetime:
+    # shorter, and a replayed copy after marker expiry reads as INVALID instead
+    # of REUSED; longer buys nothing because the token itself has expired.
+    payload = _base_payload()
+    await fake_redis.set(
+        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+    await rotate_refresh_token(payload, fake_redis)
+
+    used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
+    assert (
+        await fake_redis.ttl(used_key) == config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+    )
 
 
 @pytest.mark.asyncio
