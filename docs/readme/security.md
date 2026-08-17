@@ -20,12 +20,12 @@ Key compromise is isolated: leaking the reset-password key does not allow forgin
 `src/user/auth/rotate_refresh_token.lua`, `src/user/auth/token_helpers.py`
 
 Every refresh request atomically (via Lua script):
-1. Checks if the presented JTI was already consumed (`REUSED`).
+1. Checks if the presented JTI was already consumed - within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` of the rotation that consumed it the replay is treated as a benign double-submit (`GRACE`, plain 401, no wipe); later it is `REUSED`.
 2. Validates the JTI matches the stored active token (`INVALID`).
-3. Marks the old JTI as used with a 14-day TTL.
+3. Marks the old JTI as used, stamped with the rotation instant, with a TTL equal to the refresh token lifetime.
 4. Deletes the active refresh key.
 
-If a consumed token is presented again, **all user sessions are invalidated immediately**. This detects stolen refresh tokens: an attacker replaying a token that the legitimate client already rotated triggers a full session wipe.
+If a consumed token is presented again past the grace window, **all user sessions are invalidated immediately**. This detects stolen refresh tokens: an attacker replaying a token that the legitimate client already rotated triggers a full session wipe.
 
 **Why it matters:** Without reuse detection, a stolen refresh token grants indefinite access. Token family tracking turns a silent compromise into a detectable event.
 
@@ -83,7 +83,7 @@ Sessions are Redis-backed with a key structure: `{token_type}:{user_id}:{session
 
 - Each login creates a unique `session_id` (UUID4), enabling multi-device support.
 - `invalidate_user_session()` — single device logout.
-- `invalidate_all_user_sessions()` — full account logout using non-blocking `SCAN`.
+- `invalidate_all_user_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
 - Logout endpoint supports both modes via `terminate_all_sessions` flag.
 
 **Why it matters:** Stateless JWT alone cannot be revoked. Redis-backed JTI tracking adds revocation capability while preserving JWT's stateless verification for normal requests.
