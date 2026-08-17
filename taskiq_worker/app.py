@@ -16,7 +16,10 @@ from src.main.sentry import init_sentry
 import src.user.auth.tasks  # noqa: F401
 import src.user.tasks  # noqa: F401
 from taskiq_worker.broker import broker
-from taskiq_worker.dependencies import _tasks_redis, close_tasks_redis_client
+from taskiq_worker.dependencies import (
+    close_tasks_redis_client,
+    get_tasks_redis_singleton,
+)
 
 init_sentry()
 
@@ -28,7 +31,7 @@ async def on_worker_startup(_: TaskiqState) -> None:
     # and TTLs are what make the keys shared; the client is the worker's own.
     set_cache(
         RedisCache(
-            redis_client=_tasks_redis(),
+            redis_client=get_tasks_redis_singleton(),
             serializer=JsonSerializer(),
             prefix=config.cache.CACHE_KEY_PREFIX,
             default_ttl=config.cache.CACHE_DEFAULT_TTL,

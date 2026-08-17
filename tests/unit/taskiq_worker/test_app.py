@@ -1,11 +1,19 @@
+from collections.abc import Iterator
 import json
 import os
 import subprocess
 import sys
 
+import pytest
+from taskiq import TaskiqState
 from taskiq.schedule_sources import LabelScheduleSource
 
+from src.core.cache.redis_cache import RedisCache
+from src.core.cache.runtime import get_cache_instance, reset_cache
+from src.main.config import config
+import taskiq_worker.app as worker_app
 from taskiq_worker.scheduler import scheduler
+from tests.fakes.redis import InMemoryRedis
 
 EXPECTED_TASKS = {
     "cleanup_unverified_users",
@@ -53,3 +61,40 @@ def test_app_registers_every_task() -> None:
 
 def test_scheduler_reads_labels_from_broker() -> None:
     assert any(isinstance(source, LabelScheduleSource) for source in scheduler.sources)
+
+
+@pytest.fixture
+def clean_cache_singleton() -> Iterator[None]:
+    reset_cache()
+    yield
+    reset_cache()
+
+
+async def test_worker_startup_wires_the_shared_cache(
+    clean_cache_singleton: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_redis = InMemoryRedis()
+    monkeypatch.setattr(worker_app, "get_tasks_redis_singleton", lambda: fake_redis)
+
+    await worker_app.on_worker_startup(TaskiqState())
+
+    cache = get_cache_instance()
+    assert isinstance(cache, RedisCache)
+    # Same prefix as the API's on_cache_startup - that is what makes the keys
+    # shared between the two processes.
+    assert cache._prefix == config.cache.CACHE_KEY_PREFIX  # noqa: SLF001
+
+
+async def test_worker_shutdown_resets_the_cache_singleton(
+    clean_cache_singleton: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_redis = InMemoryRedis()
+    monkeypatch.setattr(worker_app, "get_tasks_redis_singleton", lambda: fake_redis)
+    await worker_app.on_worker_startup(TaskiqState())
+
+    await worker_app.on_worker_shutdown(TaskiqState())
+
+    with pytest.raises(RuntimeError, match="Cache is not initialized"):
+        get_cache_instance()
