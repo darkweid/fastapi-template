@@ -1,6 +1,12 @@
 from src.user.auth.permissions.enum import Permission
 from src.user.enums import UserRole
 
+
+def has_permission(role: UserRole, permission: Permission) -> bool:
+    """Single RBAC lookup for every guard: the role grants the permission or not."""
+    return permission in ROLE_PERMISSIONS.get(role, set())
+
+
 ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
     # Admin - full system access for user-related functions
     UserRole.ADMIN: {

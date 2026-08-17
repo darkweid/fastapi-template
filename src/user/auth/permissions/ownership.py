@@ -7,7 +7,7 @@ from fastapi import Depends, Request
 from src.core.errors.exceptions import InstanceNotFoundException
 from src.user.auth.dependencies import get_current_user
 from src.user.auth.permissions.enum import Permission
-from src.user.auth.permissions.role_matrix import ROLE_PERMISSIONS
+from src.user.auth.permissions.role_matrix import has_permission
 from src.user.models import User
 
 
@@ -50,7 +50,7 @@ def require_self_or_permission(
         object_id = request.path_params[path_param]
         if _matches_user_id(str(object_id), current_user.id):
             return current_user
-        if fallback in ROLE_PERMISSIONS.get(current_user.role, set()):
+        if has_permission(current_user.role, fallback):
             return current_user
         raise InstanceNotFoundException("User not found.")
 
