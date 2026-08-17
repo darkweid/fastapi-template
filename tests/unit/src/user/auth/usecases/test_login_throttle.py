@@ -107,15 +107,14 @@ async def test_throttled_counter_without_ttl_reports_the_full_window(
     fake_redis: InMemoryRedis,
     cache: InMemoryCache,
 ) -> None:
-    # A stranded persistent counter (crash between INCR and EXPIRE) must not
-    # produce a nonsensical negative Retry-After.
+    # A stranded persistent counter (crash between INCR and EXPIRE) never
+    # reaches _register_login_failure again - the gate rejects first - so the
+    # gate itself must arm the window, or the lockout becomes permanent.
     user = build_user()
     uow = build_uow(user, fake_session)
     monkeypatch.setattr(login_usecase, "verify_password", AsyncMock(return_value=True))
-    await fake_redis.set(
-        auth_redis_keys.login_failures("user@example.com"),
-        str(LOGIN_FAILURES_LIMIT),
-    )
+    failures_key = auth_redis_keys.login_failures("user@example.com")
+    await fake_redis.set(failures_key, str(LOGIN_FAILURES_LIMIT))
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
@@ -127,6 +126,7 @@ async def test_throttled_counter_without_ttl_reports_the_full_window(
         )
 
     assert exc_info.value.retry_after == LOGIN_FAILURES_WINDOW_SECONDS
+    assert await fake_redis.ttl(failures_key) == LOGIN_FAILURES_WINDOW_SECONDS
 
 
 @pytest.mark.asyncio

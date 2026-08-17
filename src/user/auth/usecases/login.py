@@ -162,13 +162,17 @@ class LoginUserUseCase:
             return
 
         retry_after = await self.redis_client.ttl(failures_key)
+        if retry_after < 0:
+            # A counter stranded without a TTL (crash between INCR and EXPIRE)
+            # never reaches _register_login_failure again - this gate rejects
+            # first - so the gate must arm the window or the lockout is permanent.
+            await self.redis_client.expire(
+                failures_key, LOGIN_FAILURES_WINDOW_SECONDS, nx=True
+            )
+            retry_after = LOGIN_FAILURES_WINDOW_SECONDS
         raise TooManyRequestsException(
             "Too many failed login attempts. Try again later.",
-            # ttl() answers a negative number for a missing or persistent key;
-            # either way the honest fallback is the full window.
-            retry_after=(
-                retry_after if retry_after > 0 else LOGIN_FAILURES_WINDOW_SECONDS
-            ),
+            retry_after=retry_after,
         )
 
     async def _register_login_failure(self, failures_key: str) -> None:
