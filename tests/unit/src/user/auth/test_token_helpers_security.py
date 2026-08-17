@@ -17,6 +17,10 @@ TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
 TEST_JWT_VERIFY_SECRET_KEY = "test-jwt-verify-secret-key-not-real"
 TEST_JWT_RESET_SECRET_KEY = "test-jwt-reset-secret-key-not-real"
 
+# Pinned wall clock for index-score assertions; the fake's key expiry runs on
+# time.monotonic(), so freezing this cannot make keys expire mid-test.
+FROZEN_NOW = 1_755_000_000
+
 
 def access_jti_key(user_id: str, session_id: str) -> str:
     return auth_redis_keys.access(user_id, session_id)
@@ -346,7 +350,9 @@ async def test_invalidate_all_user_sessions(fake_redis: InMemoryRedis) -> None:
     await fake_redis.set(access_jti_key("1", "s2"), "x", ex=60)
     await fake_redis.set(refresh_jti_key("1", "s2"), "x", ex=60)
     await fake_redis.set(used_refresh_key("1", "j1"), "x", ex=60)
-    await fake_redis.sadd(auth_redis_keys.sessions("1"), "s1", "s2")
+    await fake_redis.zadd(
+        auth_redis_keys.sessions("1"), {"s1": FROZEN_NOW + 60, "s2": FROZEN_NOW + 60}
+    )
 
     async def scan_forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("invalidate_all_user_sessions must not SCAN")
@@ -376,14 +382,16 @@ async def test_invalidate_user_session_removes_only_target_session(
     await fake_redis.set(refresh_jti_key("1", "s1"), "x", ex=60)
     await fake_redis.set(access_jti_key("1", "s2"), "y", ex=60)
     await fake_redis.set(refresh_jti_key("1", "s2"), "y", ex=60)
-    await fake_redis.sadd(auth_redis_keys.sessions("1"), "s1", "s2")
+    await fake_redis.zadd(
+        auth_redis_keys.sessions("1"), {"s1": FROZEN_NOW + 60, "s2": FROZEN_NOW + 60}
+    )
     await token_helpers.invalidate_user_session("1", "s1", fake_redis)
 
     assert await fake_redis.exists(access_jti_key("1", "s1")) == 0
     assert await fake_redis.exists(refresh_jti_key("1", "s1")) == 0
     assert await fake_redis.exists(access_jti_key("1", "s2")) == 1
     assert await fake_redis.exists(refresh_jti_key("1", "s2")) == 1
-    assert await fake_redis.smembers(auth_redis_keys.sessions("1")) == {"s2"}
+    assert await fake_redis.zrange(auth_redis_keys.sessions("1"), 0, -1) == ["s2"]
 
 
 @pytest.mark.asyncio
@@ -449,8 +457,8 @@ async def test_invalidate_all_user_sessions_keeps_other_users_keys(
     await fake_redis.set(refresh_jti_key("1", "a1"), "x", ex=60)
     await fake_redis.set(access_jti_key("2", "a2"), "x", ex=60)
     await fake_redis.set(refresh_jti_key("2", "a2"), "x", ex=60)
-    await fake_redis.sadd(auth_redis_keys.sessions("1"), "a1")
-    await fake_redis.sadd(auth_redis_keys.sessions("2"), "a2")
+    await fake_redis.zadd(auth_redis_keys.sessions("1"), {"a1": FROZEN_NOW + 60})
+    await fake_redis.zadd(auth_redis_keys.sessions("2"), {"a2": FROZEN_NOW + 60})
 
     await token_helpers.invalidate_all_user_sessions("1", fake_redis)
 
@@ -458,7 +466,7 @@ async def test_invalidate_all_user_sessions_keeps_other_users_keys(
     assert await fake_redis.exists(refresh_jti_key("1", "a1")) == 0
     assert await fake_redis.exists(access_jti_key("2", "a2")) == 1
     assert await fake_redis.exists(refresh_jti_key("2", "a2")) == 1
-    assert await fake_redis.smembers(auth_redis_keys.sessions("2")) == {"a2"}
+    assert await fake_redis.zrange(auth_redis_keys.sessions("2"), 0, -1) == ["a2"]
 
 
 @pytest.mark.asyncio
@@ -467,6 +475,9 @@ async def test_issued_tokens_register_the_session_in_the_index(
 ) -> None:
     # The sessions:{uid} index is what lets a wipe find every session without
     # a keyspace SCAN, so issuance must register and refresh it.
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
+    refresh_ttl_seconds = security.config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+
     await security.create_refresh_token(
         {"sub": "user-1"}, redis_client=fake_redis, session_id="session-1"
     )
@@ -475,9 +486,29 @@ async def test_issued_tokens_register_the_session_in_the_index(
     )
 
     index_key = auth_redis_keys.sessions("user-1")
-    assert await fake_redis.smembers(index_key) == {"session-1"}
-    # The index must live at least as long as the longest-lived credential.
+    assert await fake_redis.zrange(index_key, 0, -1) == ["session-1"]
+    # The member's score is the moment its refresh lifetime ends - the prune
+    # cutoff a later issuance applies.
     assert (
-        await fake_redis.ttl(index_key)
-        == security.config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+        await fake_redis.zscore(index_key, "session-1")
+        == FROZEN_NOW + refresh_ttl_seconds
     )
+    # The index must live at least as long as the longest-lived credential.
+    assert await fake_redis.ttl(index_key) == refresh_ttl_seconds
+
+
+@pytest.mark.asyncio
+async def test_issuance_prunes_index_members_past_their_refresh_lifetime(
+    fake_redis: InMemoryRedis,
+) -> None:
+    # Without the prune the index would gain one member per login forever:
+    # nothing else removes a session whose refresh token silently expired.
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
+    index_key = auth_redis_keys.sessions("user-1")
+    await fake_redis.zadd(index_key, {"expired-session": FROZEN_NOW - 1})
+
+    await security.create_refresh_token(
+        {"sub": "user-1"}, redis_client=fake_redis, session_id="session-1"
+    )
+
+    assert await fake_redis.zrange(index_key, 0, -1) == ["session-1"]

@@ -21,8 +21,9 @@ from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
     """
     Invalidates all sessions for a given user by walking the sessions:{uid}
-    index - one SMEMBERS and one DEL instead of a keyspace SCAN, whose cost
-    grows with the whole database rather than with this user's sessions.
+    index - one ZRANGE, one DEL of the token keys and one ZREM instead of a
+    keyspace SCAN, whose cost grows with the whole database rather than with
+    this user's sessions.
 
     used:* markers are deliberately left to their TTL: the refresh keys are
     gone after the wipe, so a replayed rotated-out token cannot rotate anyway.
@@ -31,19 +32,22 @@ async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> Non
         user_id: The user ID whose sessions should be invalidated
     """
     index_key = auth_redis_keys.sessions(user_id)
-    session_ids = await redis_client.smembers(index_key)
+    # The shared client decodes responses, so members arrive as str; the cast
+    # narrows redis-py's union return type.
+    session_ids = cast(list[str], await redis_client.zrange(index_key, 0, -1))
 
-    keys_to_delete: list[str] = [index_key]
-    for raw_session_id in session_ids:
-        session_id = (
-            raw_session_id.decode("utf-8")
-            if isinstance(raw_session_id, bytes)
-            else raw_session_id
-        )
-        keys_to_delete.append(auth_redis_keys.access(user_id, session_id))
-        keys_to_delete.append(auth_redis_keys.refresh(user_id, session_id))
+    token_keys: list[str] = []
+    for session_id in session_ids:
+        token_keys.append(auth_redis_keys.access(user_id, session_id))
+        token_keys.append(auth_redis_keys.refresh(user_id, session_id))
 
-    await redis_client.delete(*keys_to_delete)
+    if token_keys:
+        await redis_client.delete(*token_keys)
+    if session_ids:
+        # ZREM exactly what was read, never DEL of the whole key: a session
+        # registered while this wipe runs must not vanish from the index
+        # while its token keys survive.
+        await redis_client.zrem(index_key, *session_ids)
 
 
 async def invalidate_user_session(
@@ -64,7 +68,7 @@ async def invalidate_user_session(
         auth_redis_keys.access(user_id, session_id),
         auth_redis_keys.refresh(user_id, session_id),
     )
-    await redis_client.srem(auth_redis_keys.sessions(user_id), session_id)
+    await redis_client.zrem(auth_redis_keys.sessions(user_id), session_id)
 
 
 async def store_active_one_time_token(

@@ -18,8 +18,9 @@ class AuthRedisKeyBuilder:
         return f"used:{user_id}:{jti}"
 
     def sessions(self, user_id: str) -> str:
-        """SET of the user's live session ids - the index a wipe walks instead
-        of a keyspace SCAN."""
+        """ZSET of the user's session ids, scored by refresh-lifetime expiry -
+        the index a wipe walks instead of a keyspace SCAN. A superset of live
+        sessions: stale members are pruned on the next token issuance."""
         return f"sessions:{user_id}"
 
     def login_failures(self, normalized_email: str) -> str:

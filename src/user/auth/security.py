@@ -62,13 +62,20 @@ async def _issue_token(
 
     if redis_key is not None and session_id is not None:
         # Register the session in the per-user index so a wipe can find every
-        # session without a keyspace SCAN. The index TTL always covers the
-        # refresh lifetime - the longest-lived credential of any session.
+        # session without a keyspace SCAN. Members are scored by the moment
+        # their refresh lifetime ends and stale ones are pruned here, on
+        # issuance - nothing else removes a session whose refresh token
+        # silently expired, so without the prune the index would only grow.
+        # The index TTL always covers the refresh lifetime - the
+        # longest-lived credential of any session.
         index_key = auth_redis_keys.sessions(sub)
-        await redis_client.sadd(index_key, session_id)
-        await redis_client.expire(
-            index_key, config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+        index_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+        now_seconds, _ = await redis_client.time()
+        await redis_client.zremrangebyscore(index_key, 0, int(now_seconds))
+        await redis_client.zadd(
+            index_key, {session_id: int(now_seconds) + index_ttl_seconds}
         )
+        await redis_client.expire(index_key, index_ttl_seconds)
 
     return str(encoded_jwt), jti
 
