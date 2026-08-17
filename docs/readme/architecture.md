@@ -127,7 +127,7 @@ escape hatch for roles that may reach another user's object.
 ├── infra/                               # Infrastructure and deployment assets
 │   ├── docker/                          # Docker configuration files
 │   │   ├── Dockerfile                   # Production Dockerfile (multi-stage build)
-│   │   └── Dockerfile.dev               # Development Dockerfile with hot-reload
+│   │   └── dev.Dockerfile               # Development Dockerfile with hot-reload (dependabot-discoverable name)
 │   ├── docker-compose.override.yml      # Docker Compose overrides for development
 │   ├── docker-compose.test.yml          # Throwaway PostgreSQL for the integration suite
 │   ├── docker-compose.yml               # Docker Compose configuration
