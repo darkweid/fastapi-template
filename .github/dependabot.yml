@@ -65,6 +65,15 @@ updates:
     commit-message:
       prefix: "Chore:"
       include: "scope"
+    # The Python minor line is a deliberate choice shared with the CI matrix
+    # (.github/workflows/*.yml pin python-version) and the wheels available for
+    # the locked dependencies, so it moves by hand in one commit, never by a bot.
+    # Base-image rebuilds inside the line (security patches) still come through.
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
     groups:
       docker-images:
         patterns:
