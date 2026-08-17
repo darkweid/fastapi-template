@@ -56,10 +56,10 @@ class LoginUserUseCase:
 
     Side effects:
     - Persists password hash updates when rehashing is required.
-    - Bumps the user:{id} cache namespace version - every write to the user row
-      does this unconditionally, including this one where the row is only
-      sometimes touched (the rehash branch), so no one has to remember an
-      exception to the rule.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit) -
+      every write to the user row does this unconditionally, including this one
+      where the row is only sometimes touched (the rehash branch), so no one
+      has to remember an exception to the rule.
     - Token creation handles its own caching.
 
     Errors:

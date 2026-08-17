@@ -264,6 +264,10 @@ class BaseRepository(Generic[T]):
         self._ensure_filters_present(filters)
         # setattr with a mistyped key would silently attach a plain Python
         # attribute the flush ignores - the caller believes the row changed.
+        # Boundary: mapped attributes (columns and relationships) pass; hybrid
+        # properties and plain Python properties are rejected even when they
+        # have setters - a domain that needs to set one extends this guard
+        # deliberately instead of inheriting a silent hole.
         unknown_fields = set(data) - set(sqlalchemy_inspect(self.model).attrs.keys())
         if unknown_fields:
             raise ValueError(

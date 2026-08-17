@@ -49,7 +49,7 @@ class VerifyEmailUseCase:
     Side effects:
     - Updates user record in the database.
     - Deletes the active verification-token key from Redis after successful use.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Returns:
     - SuccessResponse: success=True if verified or already verified, False if the

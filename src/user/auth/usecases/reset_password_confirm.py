@@ -54,7 +54,7 @@ class ResetPasswordConfirmUseCase:
     - Deletes the active reset-token key from Redis before commit to avoid
       partial-success password changes when Redis is unavailable.
     - Deletes user session keys from Redis before commit for the same reason.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Errors:
     - None (returns success=False for invalid tokens/users).

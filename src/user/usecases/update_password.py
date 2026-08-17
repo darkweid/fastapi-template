@@ -54,7 +54,7 @@ class UpdateUserPasswordUseCase:
     - Updates user record in database.
     - Deletes all user session keys from Redis before commit to avoid
       partial-success password changes when Redis is unavailable.
-    - Bumps the user:{id} cache namespace version.
+    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
 
     Errors:
     - InstanceNotFoundException: if the user does not exist.
