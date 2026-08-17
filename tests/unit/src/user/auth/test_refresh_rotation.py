@@ -12,6 +12,10 @@ from tests.fakes.redis import InMemoryRedis
 
 TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
 
+# Pinned wall clock for grace-window math; the fake's key expiry runs on
+# time.monotonic(), so freezing this cannot make keys expire mid-test.
+FROZEN_NOW = 1_755_000_000
+
 
 def _base_payload() -> dict[str, str | int]:
     return {
@@ -92,7 +96,7 @@ async def test_rotation_stores_a_unix_timestamp_in_the_used_marker(
     # The marker value is the rotation instant: the grace check compares it
     # against the Redis server clock, so anything else breaks the window math.
     payload = _base_payload()
-    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
         auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
@@ -102,7 +106,7 @@ async def test_rotation_stores_a_unix_timestamp_in_the_used_marker(
     await rotate_refresh_token(payload, fake_redis)
 
     used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
-    assert await fake_redis.get(used_key) == "1755000000"
+    assert await fake_redis.get(used_key) == str(FROZEN_NOW)
 
 
 @pytest.mark.asyncio
@@ -118,7 +122,7 @@ async def test_second_rotation_within_grace_rejects_without_family_wipe(
     """
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
     payload = _base_payload()
-    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
         auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
@@ -141,7 +145,7 @@ async def test_replay_after_the_grace_window_wipes_the_family(
 ) -> None:
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
     payload = _base_payload()
-    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
         auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
@@ -149,7 +153,7 @@ async def test_replay_after_the_grace_window_wipes_the_family(
     )
     await rotate_refresh_token(payload, fake_redis)
 
-    fake_redis.wall_clock = lambda: 1_755_000_011.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
 
@@ -165,7 +169,7 @@ async def test_zero_grace_disables_the_window(
 ) -> None:
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 0)
     payload = _base_payload()
-    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
         auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),

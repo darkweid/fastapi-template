@@ -205,8 +205,11 @@ class JWTConfig(BaseModel):
 
     # How long after a rotation a replay of the rotated-out refresh token is
     # treated as a benign double-submit (plain 401) instead of theft (family
-    # wipe). 0 disables the window and makes every replay a wipe.
-    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(10, ge=0)
+    # wipe). 0 disables the window and makes every replay a wipe. The cost of
+    # the window: when a thief rotates first and the owner's replay lands
+    # inside it, the theft goes undetected and only the owner is logged out -
+    # keep it seconds-short, hence the hard upper bound.
+    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(10, ge=0, le=60)
 
     model_config = ConfigDict(extra="ignore")
 

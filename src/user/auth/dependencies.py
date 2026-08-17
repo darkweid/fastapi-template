@@ -375,13 +375,12 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
 
     # Check for reuse
     if mode == "refresh_token":
-        used_key = auth_redis_keys.used(user_id, jti)
-        is_used = await redis_client.exists(used_key)
+        used_marker = await redis_client.get(auth_redis_keys.used(user_id, jti))
 
-        if is_used:
+        if used_marker is not None:
             # Inside the grace window this is a benign double-submit, not
             # theft: reject the request but keep the session family alive.
-            if await is_within_reuse_grace(user_id, jti, redis_client):
+            if await is_within_reuse_grace(used_marker, redis_client):
                 raise UnauthorizedException("Token invalidated or expired")
             await invalidate_all_user_sessions(user_id, redis_client)
             raise UnauthorizedException(

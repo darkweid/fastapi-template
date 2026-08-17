@@ -149,18 +149,21 @@ async def validate_token_structure(
     return user_id, session_id, jti
 
 
-async def is_within_reuse_grace(user_id: str, jti: str, redis_client: Redis) -> bool:
-    """A used marker younger than the grace window marks a benign double-submit."""
-    grace = config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS
-    if grace <= 0:
-        return False
+async def is_within_reuse_grace(
+    used_marker: str | bytes | None, redis_client: Redis
+) -> bool:
+    """A used marker younger than the grace window marks a benign double-submit.
 
-    used_at = await redis_client.get(auth_redis_keys.used(user_id, jti))
-    if used_at is None:
+    Takes the already-fetched marker value so the caller's existence check and
+    this age check share one GET instead of an EXISTS/GET pair that could
+    disagree between round-trips.
+    """
+    grace = config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS
+    if grace <= 0 or used_marker is None:
         return False
 
     try:
-        used_at_number = int(used_at)
+        used_at_number = int(used_marker)
     except (TypeError, ValueError):
         return False
 

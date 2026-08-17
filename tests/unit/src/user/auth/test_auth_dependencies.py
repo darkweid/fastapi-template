@@ -48,6 +48,10 @@ from tests.fakes.db import FakeAsyncSession
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.requests import build_request
 
+# Pinned wall clock for grace-window math; the fake's key expiry runs on
+# time.monotonic(), so freezing this cannot make keys expire mid-test.
+FROZEN_NOW = 1_755_000_000
+
 
 def encode_token(payload: dict[str, object], secret: str) -> str:
     return jwt.encode(payload, secret, config.jwt.ALGORITHM)
@@ -141,11 +145,11 @@ async def test_verify_jti_used_marker_within_grace_rejects_without_wipe(
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
-    fake_redis.wall_clock = lambda: 1_755_000_000.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.setex(
         auth_redis_keys.used(payload["sub"], payload["jti"]),
         60,
-        "1755000000",
+        str(FROZEN_NOW),
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
@@ -166,11 +170,11 @@ async def test_verify_jti_used_marker_past_grace_wipes(
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
-    fake_redis.wall_clock = lambda: 1_755_000_011.0
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
     await fake_redis.setex(
         auth_redis_keys.used(payload["sub"], payload["jti"]),
         60,
-        "1755000000",
+        str(FROZEN_NOW),
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
