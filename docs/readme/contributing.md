@@ -8,7 +8,7 @@
 
 ## CI/CD Pipelines (GitHub Actions)
 
-### CI (`.github/workflows/ci.yml`)
+### CI (`.github/workflows/_ci.yml`, called by `prod_ci.yml` / `stage_ci.yml`)
 - Caching: venv by `infra/requirements.txt` hash, pre-commit, deps.
 - Quality: `make lint`, Alembic head check.
 - Tests: generates `.env` from example and runs `make test-cov`.
@@ -19,8 +19,8 @@
 
 - On a push to `main` (never on a pull request) the `build-and-push` job builds `infra/docker/Dockerfile` and pushes it to GHCR as `sha-<12>` plus `latest`, with buildx layer caching and an `org.opencontainers.image.revision` label. The image is built here so a broken Dockerfile fails in CI, not halfway through a production deploy.
 
-### CD (`.github/workflows/deploy.yml`)
-- Off until you opt in: the job is gated on the repository **variable** `DEPLOY_ENABLED=true` (a variable, not a secret — `secrets` cannot be read in a job-level `if`). Without it a fresh fork would fail a deploy against unset SSH secrets on every merge to `main`.
+### CD (`.github/workflows/_deploy.yml`, called by `prod_deploy.yml` / `stage_deploy.yml`)
+- Off until you opt in: each caller is gated on its own repository **variable** — `PROD_DEPLOY_ENABLED=true` for `main`, `STAGE_DEPLOY_ENABLED=true` for `stage`. These are variables, not secrets: the `secrets` context cannot be read in a job-level `if`, and an environment's variables are only resolved after the job starts, so a gate stored there would silently evaluate to empty. Without them a fresh fork would fail a deploy against unset SSH secrets on every merge.
 - Runs after CI succeeds on a push to `main`, and pulls the exact `sha-` image that run produced — the box never builds.
 - On the server it checks out the deployed commit and runs `infra/deploy/deploy.sh` with `BUILD=0`: validate `.env`, pull the image, start Postgres/Redis, apply migrations, then roll `app`, `worker`, `scheduler` and restart nginx. A failed migration aborts the deploy with the previous containers still serving.
 - `concurrency: deploy` with `cancel-in-progress: false` — two merges never run two migrations at once.
@@ -44,13 +44,20 @@
 - If posting a "superseded" comment fails, the workflow still proceeds to close the superseded PR.
 
 ### Required Secrets
-CI and Release need none of these: both authenticate to GHCR with the automatic `GITHUB_TOKEN`. Everything below belongs to the CD path, and CD stays skipped until `DEPLOY_ENABLED` is set.
+CI and Release need none of the deployment secrets: both authenticate to GHCR with the automatic `GITHUB_TOKEN`. Everything below belongs to the CD path, and CD stays skipped until its `*_DEPLOY_ENABLED` variable is set.
 
-- DEPLOY_ENABLED — repository *variable* (`Settings -> Secrets and variables -> Actions -> Variables`), set to `true` to arm CD.
+**Repository variables** (`Settings -> Secrets and variables -> Actions -> Variables`):
+- PROD_DEPLOY_ENABLED, STAGE_DEPLOY_ENABLED — set to `true` to arm the matching CD caller.
+
+**Repository secrets** (shared by both environments):
+- GITLEAKS_LICENSE — required because the repository is owned by an organization; the action refuses to scan without it. Add the same value under `Settings -> Secrets and variables -> Dependabot`, or Gitleaks fails on every Dependabot pull request: Dependabot events do not receive ordinary Actions secrets.
+- ALERT_BOT_TOKEN, ALERT_CHAT_ID — Telegram notifications. One chat serves both environments; the message carries the environment in its first line.
+
+**Per-environment** (`Settings -> Environments`, one `production` and one `staging`):
 - SSH_PRIVATE_KEY, SERVER_IP, SSH_USER — server access.
 - SSH_KNOWN_HOSTS — output of `ssh-keyscan <server-ip>`, generated once by hand and verified against the host's own key.
 - GHCR_USER, GHCR_PULL_TOKEN — the server's pull credentials for GHCR (a classic PAT with `read:packages`). The package is private by default; make it public only if the application image may be world-readable.
-- ALERT_BOT_TOKEN, ALERT_CHAT_ID — Telegram notifications.
+- APP_DIR (variable, not secret) — the checkout directory on that box, e.g. `/root/app`.
 - PRECOMMIT_BOT_TOKEN (optional but recommended) — token for creating autoupdate PRs so downstream workflows can run reliably.
 - Production `.env` must exist on the target server.
 
