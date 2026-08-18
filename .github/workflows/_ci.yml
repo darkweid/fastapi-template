@@ -14,6 +14,12 @@ on:
         description: "Moving tag pushed next to the immutable sha-<12> tag: latest for production, stage for staging"
         type: string
         required: true
+    # Declared explicitly rather than `secrets: inherit` in the callers: CI runs
+    # third-party actions against every push and pull request, and only needs the
+    # automatic GITHUB_TOKEN plus this one licensing secret - not the deploy secrets.
+    secrets:
+      GITLEAKS_LICENSE:
+        required: false
 
 permissions:
   contents: read

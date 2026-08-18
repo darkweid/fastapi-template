@@ -25,7 +25,10 @@ jobs:
       # A pull request validates code; it must not publish an image.
       push_image: ${{ github.event_name == 'push' }}
       moving_tag: latest
-    secrets: inherit
+    # Not `secrets: inherit`: CI runs third-party actions on every push and pull
+    # request, so it gets only the one secret _ci.yml actually declares.
+    secrets:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
     permissions:
       contents: read
       packages: write

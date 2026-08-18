@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
 
+# The job authenticates to the box over SSH and to GHCR with its own PAT, so the
+# workflow token needs nothing but checkout.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy
@@ -108,7 +113,23 @@ jobs:
       # keyscanning inside the job would trust whatever answers, which is the
       # same hole as StrictHostKeyChecking=no.
       - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SERVER_IP: ${{ secrets.SERVER_IP }}
         run: |
+          # An unset value here would otherwise surface as an opaque ssh failure
+          # further down; check emptiness only, never print the value itself.
+          missing=""
+          [ -z "$SSH_PRIVATE_KEY" ] && missing="${missing}SSH_PRIVATE_KEY "
+          [ -z "$SSH_KNOWN_HOSTS" ] && missing="${missing}SSH_KNOWN_HOSTS "
+          [ -z "$SSH_USER" ] && missing="${missing}SSH_USER "
+          [ -z "$SERVER_IP" ] && missing="${missing}SERVER_IP "
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secret(s) for the ${{ inputs.environment }} environment: ${missing}(Settings -> Environments)."
+            exit 1
+          fi
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
           chmod 600 ~/.ssh/id_deploy_key
@@ -173,8 +194,13 @@ jobs:
             DURATION_HUMAN="${DURATION} sec"
           fi
 
-          COMMIT_MSG=$(git log -1 --pretty=format:'%s' 2>/dev/null || echo 'unknown')
-          AUTHOR=$(git log -1 --pretty=format:'%an' 2>/dev/null || echo 'unknown')
+          # Commit message and author are free-form user input and can legally contain
+          # <, > or &; unescaped, either breaks the HTML payload and Telegram rejects
+          # the whole message with 400 - losing exactly the FAILED alert this step
+          # exists for. PROJECT can never contain HTML but is sanitized too, for
+          # consistency with everything else that reaches the message.
+          COMMIT_MSG=$(sanitize_html "$(git log -1 --pretty=format:'%s' 2>/dev/null || echo 'unknown')")
+          AUTHOR=$(sanitize_html "$(git log -1 --pretty=format:'%an' 2>/dev/null || echo 'unknown')")
           PROJECT=$(sanitize_html "${{ github.repository }}")
           PIPELINE_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
@@ -188,7 +214,9 @@ jobs:
           🔗 <b>Pipeline</b>: <a href=\"${PIPELINE_URL}\">Open</a>
           📝 <b>Commit</b>: ${COMMIT_MSG}"
 
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.ALERT_BOT_TOKEN }}/sendMessage" \
+          # --fail-with-body: a message Telegram rejects (e.g. still-malformed HTML)
+          # now fails this step loudly instead of curl -s swallowing the 400 body.
+          curl -s --fail-with-body -X POST "https://api.telegram.org/bot${{ secrets.ALERT_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.ALERT_CHAT_ID }}" \
             --data-urlencode "parse_mode=HTML" \
             --data-urlencode "text=${MESSAGE}"

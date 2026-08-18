@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of main HEAD)"
+        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of the dispatched commit)"
         required: false
         default: ""
 
