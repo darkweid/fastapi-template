@@ -217,13 +217,16 @@ forking:
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 
 ## Ports
-Only Nginx is published to the host; the rest stay internal to `app-network`.
-Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
-`docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
+Nginx is the only service published on all interfaces. Postgres is published on
+`127.0.0.1` in every environment, so a database client can reach it over an SSH
+tunnel (`ssh -L 5432:127.0.0.1:5432 <host>`); the rest stay internal to
+`app-network`, with Redis and the app re-exposed on `127.0.0.1` in dev
+(`make run-dev`) only — see `docs/readme/security.md` → *Host Port Exposure
+(Docker & UFW)*.
 
 - Nginx: 80 / 443 → app:8001 — **public** (`0.0.0.0`); dev publishes 8000 instead
 - App direct: 8001 — internal (dev: `127.0.0.1`)
-- Postgres: 5432 — internal (dev: `127.0.0.1`)
+- Postgres: 5432 — `127.0.0.1` everywhere (SSH tunnel only)
 - Redis: 6379 — internal (dev: `127.0.0.1`)
 
 On a server, close everything else with `infra/firewall/` (UFW plus a

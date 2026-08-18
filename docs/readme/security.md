@@ -212,15 +212,18 @@ effect** on a container-published port: it is reachable from the internet even
 when UFW reports the port as blocked.
 
 **What the template does:**
-- The base (production) compose file publishes **only Nginx (`80` and `443`)** to
-  the host. Postgres, Redis, and the app stay off the host — they communicate
-  over the internal `app-network` bridge by service name (`postgres:5432`,
-  `redis:6379`, `app:8001`), so they are unreachable from outside the host
-  regardless of firewall state.
-- The dev overlay (`docker-compose.override.yml`, local-only) re-exposes those
-  backing services bound to `127.0.0.1` for debugging and host-side integration
-  tests. Loopback binds are not reachable from the network, so the iptables
-  bypass does not apply.
+- The base (production) compose file publishes **Nginx (`80` and `443`)** on all
+  interfaces and **Postgres (`5432`) on `127.0.0.1` only**. Redis and the app stay
+  off the host entirely — services talk to each other over the internal
+  `app-network` bridge by service name (`postgres:5432`, `redis:6379`,
+  `app:8001`).
+- The Postgres loopback bind exists so an operator can reach the database through
+  an SSH tunnel (`ssh -L 5432:127.0.0.1:5432 <host>`) without the port ever being
+  reachable from the network. A loopback bind is not routable from outside the
+  host, so the iptables bypass above does not apply to it.
+- The dev overlay (`docker-compose.override.yml`, local-only) adds the same kind
+  of loopback bind for Redis and for the app, for debugging and host-side
+  integration tests.
 
 **The remaining public ports (Nginx, `80`/`443`):** these are the intended front
 door and are published on `0.0.0.0` by design. Because of the bypass above, UFW

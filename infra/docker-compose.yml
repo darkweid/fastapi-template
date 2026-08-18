@@ -37,6 +37,12 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./postgres/postgresql.conf:/custom-config/postgresql.conf:ro
+    # Loopback only, in every environment: an operator reaches the database over
+    # an SSH tunnel (`ssh -L 5432:127.0.0.1:5432 <host>`), and nothing outside the
+    # box can. Never bind a backing service to 0.0.0.0 - Docker writes the DOCKER
+    # iptables chain and would bypass UFW. See docs/readme/security.md.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
     networks:
       - app-network
     deploy:

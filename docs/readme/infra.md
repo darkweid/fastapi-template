@@ -10,14 +10,15 @@ never bound to a host interface in production.
 |---|---|---|
 | Nginx | 80 / 443 | **Public** (`0.0.0.0`) — proxies to `app:8001`; dev publishes `8000` instead |
 | App | 8001 | Internal only (dev: `127.0.0.1:8001` for direct access) |
-| Postgres | 5432 | Internal only (dev: `127.0.0.1:5432`) |
+| Postgres | 5432 | `127.0.0.1:5432` in every environment — reachable through an SSH tunnel only |
 | Redis | 6379 | Internal only (dev: `127.0.0.1:6379`) |
 
-Backing-service host ports live **only** in `docker-compose.override.yml` (dev)
-and are bound to `127.0.0.1`. `make run` / `make up` (base file) publish nothing
-but Nginx. This avoids exposing data stores to the internet via the Docker
-iptables/UFW bypass — see `docs/readme/security.md` → *Host Port Exposure
-(Docker & UFW)*.
+Every host port other than Nginx's is bound to `127.0.0.1`: Postgres in the base
+file (so an operator can attach a database client over `ssh -L 5432:127.0.0.1:5432
+<host>`), Redis and the direct app port in `docker-compose.override.yml` (dev).
+Nothing is ever published on `0.0.0.0` but Nginx, which is what keeps the data
+stores off the internet despite the Docker iptables/UFW bypass — see
+`docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
 
 Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requirements).
 
