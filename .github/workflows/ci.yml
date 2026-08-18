@@ -320,6 +320,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action requires a license for repositories owned by an
+          # organization; without it the action exits before scanning.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   # Builds the image once, here, so a broken Dockerfile fails in CI instead of
   # on the production box mid-deploy. CD then pulls this exact sha tag.
