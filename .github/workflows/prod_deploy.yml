@@ -1,0 +1,36 @@
+# Production CD: runs after CI (prod) succeeds on main, then deploys the image
+# CI already built and pushed to GHCR.
+#
+# workflow_run always executes the version of this file that sits on the default
+# branch. Edits made on any other branch take effect only once they are merged
+# into main - unlike the CI callers, whose push trigger uses the file from their
+# own branch.
+name: CD (prod)
+
+on:
+  workflow_run:
+    workflows: ["CI (prod)"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of main HEAD)"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    # PROD_DEPLOY_ENABLED is a repository variable, not a secret and not an
+    # environment variable: the `secrets` context is unavailable in a job-level
+    # `if`, and an environment's variables are only resolved once the job has
+    # started - reading one here would silently evaluate to empty and disable the
+    # deploy for good. It is off by default so a fresh fork - and this template
+    # itself - does not fail a deploy against unset SSH secrets on every merge.
+    if: ${{ vars.PROD_DEPLOY_ENABLED == 'true' }}
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment: production
+      branch: main
+      image_tag: ${{ inputs.image_tag || '' }}
+    secrets: inherit

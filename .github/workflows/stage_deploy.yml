@@ -1,0 +1,31 @@
+# Staging CD: runs after CI (stage) succeeds on the stage branch, then deploys
+# the image that run pushed to GHCR.
+#
+# workflow_run always executes the version of this file that sits on the default
+# branch. Edits made on the stage branch take effect only once they are merged
+# into main.
+name: CD (stage)
+
+on:
+  workflow_run:
+    workflows: ["CI (stage)"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of the dispatched commit)"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    # See prod_deploy.yml: the gate has to be a repository variable, because
+    # neither secrets nor environment variables are readable in a job-level `if`.
+    if: ${{ vars.STAGE_DEPLOY_ENABLED == 'true' }}
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment: staging
+      branch: stage
+      image_tag: ${{ inputs.image_tag || '' }}
+    secrets: inherit
