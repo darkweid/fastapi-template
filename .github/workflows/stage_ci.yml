@@ -1,0 +1,30 @@
+# Staging CI: identical checks, a different branch, and a moving tag that never
+# collides with the one production deploys from.
+name: CI (stage)
+
+on:
+  push:
+    branches: [stage]
+  pull_request:
+    branches: [stage]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_ci.yml
+    with:
+      push_image: ${{ github.event_name == 'push' }}
+      moving_tag: stage
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read

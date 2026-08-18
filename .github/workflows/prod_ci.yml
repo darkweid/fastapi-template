@@ -1,0 +1,32 @@
+# Production CI: the branch that gets deployed to the production environment.
+# All logic lives in _ci.yml; this file exists to bind it to a branch and to a
+# workflow name that CD (prod) can subscribe to.
+name: CI (prod)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_ci.yml
+    with:
+      # A pull request validates code; it must not publish an image.
+      push_image: ${{ github.event_name == 'push' }}
+      moving_tag: latest
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
