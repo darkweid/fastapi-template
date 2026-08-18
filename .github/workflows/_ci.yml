@@ -1,19 +1,23 @@
+# Reusable CI. Every environment runs exactly these jobs; the callers
+# (prod_ci.yml, stage_ci.yml) differ only in trigger, image tag and whether an
+# image is pushed at all.
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      push_image:
+        description: "Build and push the application image (false on pull requests)"
+        type: boolean
+        required: true
+      moving_tag:
+        description: "Moving tag pushed next to the immutable sha-<12> tag: latest for production, stage for staging"
+        type: string
+        required: true
 
 permissions:
   contents: read
   pull-requests: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   lint:
@@ -326,11 +330,15 @@ jobs:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   # Builds the image once, here, so a broken Dockerfile fails in CI instead of
-  # on the production box mid-deploy. CD then pulls this exact sha tag.
+  # on the box mid-deploy. CD then pulls this exact sha tag. `latest` only ever
+  # moves on the production caller - a staging build must not become the tag a
+  # human reaches for when they mean production.
   build-and-push:
     name: Build & push image
     needs: [lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # Branch and event filtering happens in the caller; here the decision arrives
+    # as a single input so stage and prod share one implementation.
+    if: ${{ inputs.push_image }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -368,7 +376,7 @@ jobs:
           platforms: linux/amd64
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ inputs.moving_tag }}
           # Lets a deploy assert which commit an image tag was actually built from.
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
