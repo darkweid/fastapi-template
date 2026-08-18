@@ -108,7 +108,8 @@ jobs:
       - name: Check migration HEADs
         shell: bash
         run: |
-          export PYTHONPATH=$(pwd)
+          PYTHONPATH=$(pwd)
+          export PYTHONPATH
           echo "--- Alembic heads ---"
           ./.venv/bin/alembic heads
           HEADS_COUNT=$(.venv/bin/alembic heads | wc -l)
