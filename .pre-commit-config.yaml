@@ -36,7 +36,7 @@ repos:
         files: ^infra/requirements/.*\.in$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.20
+    rev: v0.16.4
     hooks:
       - id: ruff
         args:
@@ -48,7 +48,7 @@ repos:
       - id: black
 
   - repo: https://github.com/myint/autoflake
-    rev: v2.3.3
+    rev: v2.4.0
     hooks:
       - id: autoflake
         # Import removal stays with ruff (F401), which honors noqa and __all__;
@@ -75,7 +75,7 @@ repos:
           - taskiq==0.12.4
           - taskiq-redis==1.2.3
           - PyJWT==2.13.0
-          - sentry-sdk==2.67.1
+          - sentry-sdk==2.68.0
           - pydantic-settings==2.15.0
           - redis==8.1.0
           - pytest==9.1.1
