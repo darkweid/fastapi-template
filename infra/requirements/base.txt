@@ -72,7 +72,7 @@ frozenlist==1.8.0
     #   aiosignal
 greenlet==3.5.5
     # via sqlalchemy
-gunicorn==26.0.0
+gunicorn==26.1.0
     # via
     #   -r base.in
     #   uvicorn-worker
@@ -104,9 +104,7 @@ multidict==6.7.1
     #   aiohttp
     #   yarl
 packaging==26.3
-    # via
-    #   gunicorn
-    #   taskiq
+    # via taskiq
 propcache==0.5.2
     # via
     #   aiohttp
@@ -131,7 +129,7 @@ python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
     #   botocore
-python-dotenv==1.2.2
+python-dotenv==1.2.3
     # via
     #   -r base.in
     #   pydantic-settings
@@ -183,7 +181,7 @@ urllib3==2.7.0
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.52.3
+uvicorn==0.52.4
     # via
     #   -r base.in
     #   uvicorn-worker
