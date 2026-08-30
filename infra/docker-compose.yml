@@ -133,7 +133,7 @@ services:
 
   nginx:
     container_name: template-nginx
-    image: nginx:1.31.3
+    image: nginx:1.31.4
     restart: always
     volumes:
       - ./nginx/main.conf:/etc/nginx/conf.d/00-main.conf:ro
