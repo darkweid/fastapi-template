@@ -35,7 +35,7 @@
 - Releases publish images only. Deployment still follows `main`; to run a release image, deploy it explicitly with `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:vX.Y.Z`.
 
 ### Pre-commit Autoupdate (`.github/workflows/pre-commit-autoupdate.yml`)
-- Runs monthly (1st of the month, `06:20 UTC`) and can be triggered manually (`workflow_dispatch`).
+- Runs monthly (3rd of the month, `06:20 UTC`) and can be triggered manually (`workflow_dispatch`).
 - Updates hook revisions in `.pre-commit-config.yaml` via `pre-commit autoupdate`.
 - Syncs `mypy.additional_dependencies` in `.pre-commit-config.yaml` from pinned versions in `infra/requirements/dev.txt` via `scripts/sync_precommit_mypy_deps.py`.
 - Validates resulting config with `pre-commit validate-config`.
