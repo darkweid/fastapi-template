@@ -65,7 +65,7 @@ cffi==2.1.1
     # via argon2-cffi-bindings
 cfgv==3.5.0
     # via pre-commit
-click==8.4.2
+click==8.5.0
     # via
     #   -r base.in
     #   black
@@ -93,7 +93,7 @@ gitignore-parser==0.1.13
     # via taskiq
 greenlet==3.5.5
     # via sqlalchemy
-gunicorn==26.0.0
+gunicorn==26.2.0
     # via
     #   -r base.in
     #   uvicorn-worker
@@ -101,9 +101,9 @@ h11==0.16.0
     # via
     #   httpcore2
     #   uvicorn
-httpcore2==2.10.0
+httpcore2==2.12.0
     # via httpx2
-httpx2==2.10.0
+httpx2==2.12.0
     # via -r dev.in
 identify==2.6.19
     # via pre-commit
@@ -137,7 +137,7 @@ multidict==6.7.1
     #   aiobotocore
     #   aiohttp
     #   yarl
-mypy==2.3.0
+mypy==2.3.1
     # via -r dev.in
 mypy-extensions==1.1.0
     # via
@@ -149,7 +149,6 @@ packaging==26.3
     # via
     #   black
     #   build
-    #   gunicorn
     #   pytest
     #   taskiq
     #   wheel
@@ -210,7 +209,7 @@ python-dateutil==2.9.0.post0
     #   botocore
 python-discovery==1.5.1
     # via virtualenv
-python-dotenv==1.2.2
+python-dotenv==1.2.3
     # via
     #   -r base.in
     #   pydantic-settings
@@ -226,7 +225,7 @@ redis==8.1.0
     #   taskiq-redis
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.68.0
+sentry-sdk==2.68.1
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -239,7 +238,7 @@ starlette==1.6.0
     # via
     #   -r base.in
     #   fastapi
-taskiq[reload]==0.12.4
+taskiq[reload]==0.12.5
     # via
     #   -r base.in
     #   -r dev.in
@@ -252,7 +251,7 @@ truststore==0.10.4
     # via
     #   httpcore2
     #   httpx2
-types-pyyaml==6.0.12.20260724
+types-pyyaml==6.0.12.20260815
     # via -r dev.in
 types-requests==2.33.0.20260712
     # via -r dev.in
@@ -279,7 +278,7 @@ urllib3==2.7.0
     #   types-requests
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.52.3
+uvicorn==0.52.4
     # via
     #   -r base.in
     #   uvicorn-worker
@@ -289,7 +288,7 @@ virtualenv==21.7.4
     # via pre-commit
 watchdog==6.0.0
     # via taskiq
-websockets==17.0.1
+websockets==17.1
     # via -r dev.in
 wheel==0.48.0
     # via pip-tools
