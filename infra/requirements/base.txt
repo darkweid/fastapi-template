@@ -56,7 +56,7 @@ certifi==2026.7.22
     # via sentry-sdk
 cffi==2.1.1
     # via argon2-cffi-bindings
-click==8.4.2
+click==8.5.0
     # via
     #   -r base.in
     #   uvicorn
@@ -72,7 +72,7 @@ frozenlist==1.8.0
     #   aiosignal
 greenlet==3.5.5
     # via sqlalchemy
-gunicorn==26.0.0
+gunicorn==26.2.0
     # via
     #   -r base.in
     #   uvicorn-worker
@@ -104,9 +104,7 @@ multidict==6.7.1
     #   aiohttp
     #   yarl
 packaging==26.3
-    # via
-    #   gunicorn
-    #   taskiq
+    # via taskiq
 propcache==0.5.2
     # via
     #   aiohttp
@@ -115,13 +113,13 @@ pycparser==3.0
     # via cffi
 pycron==3.2.0
     # via taskiq
-pydantic==2.13.4
+pydantic==2.13.5
     # via
     #   -r base.in
     #   fastapi
     #   pydantic-settings
     #   taskiq
-pydantic-core==2.46.4
+pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.15.0
     # via -r base.in
@@ -131,7 +129,7 @@ python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
     #   botocore
-python-dotenv==1.2.2
+python-dotenv==1.2.3
     # via
     #   -r base.in
     #   pydantic-settings
@@ -143,7 +141,7 @@ redis==8.1.0
     #   taskiq-redis
 s3transfer==0.14.0
     # via boto3
-sentry-sdk==2.68.0
+sentry-sdk==2.68.1
     # via -r base.in
 six==1.17.0
     # via python-dateutil
@@ -156,7 +154,7 @@ starlette==1.6.0
     # via
     #   -r base.in
     #   fastapi
-taskiq==0.12.4
+taskiq==0.12.5
     # via
     #   -r base.in
     #   taskiq-redis
@@ -183,7 +181,7 @@ urllib3==2.7.0
     #   sentry-sdk
 uuid6==2025.0.1
     # via -r base.in
-uvicorn==0.52.3
+uvicorn==0.52.4
     # via
     #   -r base.in
     #   uvicorn-worker

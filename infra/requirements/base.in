@@ -5,7 +5,7 @@ alembic
 alembic-postgresql-enum
 argon2-cffi  # direct argon2 backend for password hashing (passlib removed as unmaintained)
 asyncpg
-click>=8.3.3  # security: PYSEC-2026-2132
+click>=8.5.0  # security: PYSEC-2026-2132
 email-validator
 fastapi
 gunicorn
