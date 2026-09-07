@@ -9,6 +9,7 @@ broker would redeliver it forever.
 from collections.abc import Callable
 from typing import Any
 
+from taskiq.acks import AckController
 from taskiq.message import TaskiqMessage
 from taskiq.receiver import Receiver
 from taskiq.result import TaskiqResult
@@ -41,7 +42,10 @@ class IdempotencyReceiver(Receiver):
         self._marker_client = create_redis_client(config.redis.tasks_dsn)
 
     async def run_task(
-        self, target: Callable[..., Any], message: TaskiqMessage
+        self,
+        target: Callable[..., Any],
+        message: TaskiqMessage,
+        ack_controller: AckController | None = None,
     ) -> TaskiqResult[Any]:
         marker_key = build_idempotency_marker_key(message.task_id)
         try:
@@ -59,7 +63,7 @@ class IdempotencyReceiver(Receiver):
             )
             return TaskiqResult(is_err=False, return_value=None, execution_time=0.0)
 
-        result = await super().run_task(target, message)
+        result = await super().run_task(target, message, ack_controller)
 
         if not result.is_err:
             try:
