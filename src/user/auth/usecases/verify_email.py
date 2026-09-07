@@ -14,7 +14,7 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
-from src.main.config import config
+from src.user.auth.realm import USER_AUTH_REALM, VERIFICATION_PURPOSE
 from src.user.auth.security import (
     decode_one_time_token,
     invalidate_active_one_time_token,
@@ -73,8 +73,8 @@ class VerifyEmailUseCase:
             try:
                 normalized_email = await decode_one_time_token(
                     token,
-                    secret=config.jwt.JWT_VERIFY_SECRET_KEY,
-                    purpose="verification",
+                    secret=USER_AUTH_REALM.one_time_secret(VERIFICATION_PURPOSE),
+                    purpose=VERIFICATION_PURPOSE,
                     redis_client=self.redis_client,
                     expected_mode="verification_token",
                 )
@@ -88,7 +88,7 @@ class VerifyEmailUseCase:
                     return SuccessResponse(success=False)
                 if not verification_pending(user):
                     await invalidate_active_one_time_token(
-                        purpose="verification",
+                        purpose=VERIFICATION_PURPOSE,
                         email=normalized_email,
                         redis_client=self.redis_client,
                     )
@@ -109,7 +109,7 @@ class VerifyEmailUseCase:
                 )
                 await uow.commit()
                 await invalidate_active_one_time_token(
-                    purpose="verification",
+                    purpose=VERIFICATION_PURPOSE,
                     email=normalized_email,
                     redis_client=self.redis_client,
                 )

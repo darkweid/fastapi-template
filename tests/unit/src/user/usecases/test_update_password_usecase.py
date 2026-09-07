@@ -11,6 +11,7 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
@@ -178,7 +179,9 @@ async def test_update_password_success(
     assert result == SuccessResponse(success=True)
     uow.commit.assert_awaited_once()
     uow.flush.assert_awaited_once()
-    invalidate_mock.assert_awaited_once_with(str(user.id), fake_redis)
+    invalidate_mock.assert_awaited_once_with(
+        str(user.id), fake_redis, keys=USER_AUTH_REALM.keys
+    )
     assert await cache.get(cache_key) is None
     # Pre-commit bump plus the after-commit hook's second bump.
     assert cache_invalidate_spy.await_count == 2
@@ -232,6 +235,8 @@ async def test_update_password_commit_failure_after_invalidation(
     with pytest.raises(RuntimeError, match="db down"):
         await use_case.execute(data=change_password_data(), user_id=user.id)
 
-    invalidate_mock.assert_awaited_once_with(str(user.id), fake_redis)
+    invalidate_mock.assert_awaited_once_with(
+        str(user.id), fake_redis, keys=USER_AUTH_REALM.keys
+    )
     uow.flush.assert_awaited_once()
     uow.rollback.assert_awaited_once()

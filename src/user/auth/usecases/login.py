@@ -7,7 +7,6 @@ from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.auth.errors import InvalidCredentialsError
-from src.core.auth.redis_keys import auth_redis_keys
 from src.core.auth.tokens import create_access_token, create_refresh_token
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
@@ -23,6 +22,7 @@ from src.core.utils.security import (
     needs_password_rehash,
     verify_password,
 )
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import LoginUserModel
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
@@ -104,7 +104,7 @@ class LoginUserUseCase:
     ) -> TokenModel:
         # data.email is already normalized by EmailNormalizationMixin, so the
         # counter key cannot be split across spellings of one address.
-        failures_key = auth_redis_keys.login_failures(data.email)
+        failures_key = USER_AUTH_REALM.keys.login_failures(data.email)
         await self._ensure_email_not_throttled(failures_key)
 
         async with self.uow as uow:
@@ -147,12 +147,16 @@ class LoginUserUseCase:
             await self.redis_client.delete(failures_key)
             return TokenModel(
                 access_token=await create_access_token(
-                    token_data, redis_client=self.redis_client, session_id=session_id
+                    token_data,
+                    redis_client=self.redis_client,
+                    session_id=session_id,
+                    keys=USER_AUTH_REALM.keys,
                 ),
                 refresh_token=await create_refresh_token(
                     token_data,
                     redis_client=self.redis_client,
                     session_id=session_id,
+                    keys=USER_AUTH_REALM.keys,
                 ),
             )
 

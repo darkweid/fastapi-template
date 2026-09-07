@@ -10,6 +10,7 @@ from src.core.auth.token_helpers import (
 )
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
+from src.user.auth.realm import USER_AUTH_REALM
 
 logger = get_logger(__name__)
 
@@ -39,12 +40,16 @@ class LogoutUseCase:
             SuccessResponse with a successful operation flag.
         """
         if terminate_all_sessions:
-            await invalidate_all_user_sessions(user_id, self.redis_client)
+            await invalidate_all_user_sessions(
+                user_id, self.redis_client, keys=USER_AUTH_REALM.keys
+            )
             logger.debug(
                 "[LogoutUser] Invalidated all sessions for user '%s'.", user_id
             )
         else:
-            await invalidate_user_session(user_id, session_id, self.redis_client)
+            await invalidate_user_session(
+                user_id, session_id, self.redis_client, keys=USER_AUTH_REALM.keys
+            )
             logger.debug(
                 "[LogoutUser] Invalidated session '%s' for user '%s'.",
                 session_id,

@@ -6,7 +6,6 @@ from redis.asyncio import Redis
 from taskiq import TaskiqDepends
 
 from loggers import get_logger
-from src.core.auth.redis_keys import OneTimeTokenPurpose
 from src.core.email_service.schemas import (
     MailTemplateResetPasswordBody,
     MailTemplateVerificationBody,
@@ -16,6 +15,7 @@ from src.core.email_service.tasks import get_mailer
 from src.core.utils.security import mask_email
 from src.core.utils.urls import build_public_url
 from src.main.config import config
+from src.user.auth.realm import RESET_PASSWORD_PURPOSE, VERIFICATION_PURPOSE
 from src.user.auth.security import (
     create_reset_password_token,
     create_verification_token,
@@ -36,7 +36,7 @@ async def _deliver_tokenized_email(
     subject: str,
     template_name: str,
     template_body: MailTemplateVerificationBody | MailTemplateResetPasswordBody,
-    purpose: OneTimeTokenPurpose,
+    purpose: str,
     throttle_key: str | None,
 ) -> None:
     """Issue a one-time token, send its link by email, clean up on failure.
@@ -94,7 +94,7 @@ async def send_verification_email_task(
         template_body=MailTemplateVerificationBody(
             title="Verification Message", link="", name=full_name
         ),
-        purpose="verification",
+        purpose=VERIFICATION_PURPOSE,
         throttle_key=throttle_key,
     )
 
@@ -117,6 +117,6 @@ async def send_reset_password_email_task(
         template_body=MailTemplateResetPasswordBody(
             title="Restore access", link="", name=full_name
         ),
-        purpose="reset_password",
+        purpose=RESET_PASSWORD_PURPOSE,
         throttle_key=throttle_key,
     )

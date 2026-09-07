@@ -11,13 +11,15 @@ from typing import cast
 from redis.asyncio import Redis
 
 from src.core.auth.jwt_payload_schema import JWTPayload
-from src.core.auth.redis_keys import auth_redis_keys
+from src.core.auth.redis_keys import AuthRedisKeyBuilder
 from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 
 
-async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
+async def invalidate_all_user_sessions(
+    user_id: str, redis_client: Redis, *, keys: AuthRedisKeyBuilder
+) -> None:
     """
     Invalidates all sessions for a given user by walking the sessions:{uid}
     index - one ZRANGE, one DEL of the token keys and one ZREM instead of a
@@ -29,16 +31,17 @@ async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> Non
 
     Args:
         user_id: The user ID whose sessions should be invalidated
+        keys: The realm's Redis key builder.
     """
-    index_key = auth_redis_keys.sessions(user_id)
+    index_key = keys.sessions(user_id)
     # The shared client decodes responses, so members arrive as str; the cast
     # narrows redis-py's union return type.
     session_ids = cast(list[str], await redis_client.zrange(index_key, 0, -1))
 
     token_keys: list[str] = []
     for session_id in session_ids:
-        token_keys.append(auth_redis_keys.access(user_id, session_id))
-        token_keys.append(auth_redis_keys.refresh(user_id, session_id))
+        token_keys.append(keys.access(user_id, session_id))
+        token_keys.append(keys.refresh(user_id, session_id))
 
     if token_keys:
         await redis_client.delete(*token_keys)
@@ -53,6 +56,8 @@ async def invalidate_user_session(
     user_id: str,
     session_id: str,
     redis_client: Redis,
+    *,
+    keys: AuthRedisKeyBuilder,
 ) -> None:
     """
     Invalidates a single user session by deleting its active auth keys and
@@ -62,22 +67,24 @@ async def invalidate_user_session(
         user_id: The user ID whose session should be invalidated.
         session_id: The session identifier to invalidate.
         redis_client: Redis client used to delete the active token keys.
+        keys: The realm's Redis key builder.
     """
     await redis_client.delete(
-        auth_redis_keys.access(user_id, session_id),
-        auth_redis_keys.refresh(user_id, session_id),
+        keys.access(user_id, session_id),
+        keys.refresh(user_id, session_id),
     )
-    await redis_client.zrem(auth_redis_keys.sessions(user_id), session_id)
+    await redis_client.zrem(keys.sessions(user_id), session_id)
 
 
 async def validate_token_structure(
-    payload: JWTPayload, redis_client: Redis
+    payload: JWTPayload, redis_client: Redis, *, keys: AuthRedisKeyBuilder
 ) -> tuple[str, str, str]:
     """
     Validates that a token payload has all required fields.
 
     Args:
         payload: The JWT payload to validate
+        keys: The realm's Redis key builder.
 
     Returns:
         tuple: A tuple containing user_id, session_id, and jti
@@ -91,7 +98,7 @@ async def validate_token_structure(
 
     if not user_id or not session_id or not jti:
         if user_id:
-            await invalidate_all_user_sessions(user_id, redis_client)
+            await invalidate_all_user_sessions(user_id, redis_client, keys=keys)
         raise UnauthorizedException("Invalid token structure")
 
     return user_id, session_id, jti
@@ -126,6 +133,8 @@ async def execute_token_rotation(
     session_id: str,
     jti: str,
     redis_client: Redis,
+    *,
+    keys: AuthRedisKeyBuilder,
 ) -> str:
     """
     Executes the atomic token rotation operation using a Lua script.
@@ -134,6 +143,7 @@ async def execute_token_rotation(
         user_id: The user ID from the token
         session_id: The session ID from the token
         jti: The JTI (JWT ID) from the token
+        keys: The realm's Redis key builder.
 
     Returns:
         str: The result of the token rotation operation ('OK' - every other
@@ -151,8 +161,8 @@ async def execute_token_rotation(
     # is no separate knob because no other value is correct.
     used_ttl_seconds = refresh_ttl_seconds
 
-    old_refresh_key = auth_redis_keys.refresh(user_id, session_id)
-    used_refresh_key = auth_redis_keys.used(user_id, jti)
+    old_refresh_key = keys.refresh(user_id, session_id)
+    used_refresh_key = keys.used(user_id, jti)
 
     result: str = await cast(
         Awaitable[str],
@@ -173,10 +183,10 @@ async def execute_token_rotation(
         # client merely retried a refresh over a flaky connection.
         raise UnauthorizedException("Token invalidated or expired")
     if result == "REUSED":
-        await invalidate_all_user_sessions(user_id, redis_client)
+        await invalidate_all_user_sessions(user_id, redis_client, keys=keys)
         raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
     if result == "INVALID":
-        await invalidate_all_user_sessions(user_id, redis_client)
+        await invalidate_all_user_sessions(user_id, redis_client, keys=keys)
         raise UnauthorizedException("Token invalidated or expired")
 
     return result

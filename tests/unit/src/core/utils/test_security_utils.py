@@ -59,9 +59,9 @@ def test_generate_otp_invalid_length() -> None:
         security.generate_otp(0)
 
 
-def test_build_email_throttle_key_and_normalize() -> None:
+def test_build_throttle_key_and_normalize() -> None:
     normalized = security.normalize_email("  USER@Example.COM  ")
-    key = security.build_email_throttle_key("prefix", normalized)
+    key = security.build_throttle_key("prefix", normalized)
 
     assert normalized == "user@example.com"
     assert key.startswith("prefix:")

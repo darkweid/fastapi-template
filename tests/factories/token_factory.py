@@ -10,6 +10,7 @@ from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.tokens import create_access_token, create_refresh_token
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.security import (
     create_reset_password_token,
     create_verification_token,
@@ -64,7 +65,9 @@ async def build_access_token(
     *,
     session_id: str | None = None,
 ) -> str:
-    return await create_access_token(data, redis_client, session_id=session_id)
+    return await create_access_token(
+        data, redis_client, session_id=session_id, keys=USER_AUTH_REALM.keys
+    )
 
 
 async def build_refresh_token(
@@ -73,7 +76,9 @@ async def build_refresh_token(
     *,
     session_id: str | None = None,
 ) -> str:
-    return await create_refresh_token(data, redis_client, session_id=session_id)
+    return await create_refresh_token(
+        data, redis_client, session_id=session_id, keys=USER_AUTH_REALM.keys
+    )
 
 
 async def build_verification_token(data: dict[str, Any], redis_client: Any) -> str:

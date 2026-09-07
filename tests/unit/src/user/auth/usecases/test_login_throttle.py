@@ -2,12 +2,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.core.auth.redis_keys import auth_redis_keys
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import (
     InstanceProcessingException,
     TooManyRequestsException,
 )
+from src.user.auth.realm import USER_AUTH_REALM
 import src.user.auth.usecases.login as login_usecase
 from src.user.auth.usecases.login import (
     INVALID_CREDENTIALS_MESSAGE,
@@ -57,7 +57,7 @@ async def test_login_blocked_at_the_failure_limit_before_password_verify(
     verify_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
     await fake_redis.setex(
-        auth_redis_keys.login_failures("user@example.com"),
+        USER_AUTH_REALM.keys.login_failures("user@example.com"),
         600,
         str(LOGIN_FAILURES_LIMIT),
     )
@@ -95,7 +95,7 @@ async def test_wrong_password_increments_the_counter_and_arms_the_window(
             login_usecase.LoginUserModel(email="user@example.com", password="wrong")
         )
 
-    failures_key = auth_redis_keys.login_failures("user@example.com")
+    failures_key = USER_AUTH_REALM.keys.login_failures("user@example.com")
     assert await fake_redis.get(failures_key) == "1"
     assert await fake_redis.ttl(failures_key) == LOGIN_FAILURES_WINDOW_SECONDS
 
@@ -113,7 +113,7 @@ async def test_throttled_counter_without_ttl_reports_the_full_window(
     user = build_user()
     uow = build_uow(user, fake_session)
     monkeypatch.setattr(login_usecase, "verify_password", AsyncMock(return_value=True))
-    failures_key = auth_redis_keys.login_failures("user@example.com")
+    failures_key = USER_AUTH_REALM.keys.login_failures("user@example.com")
     await fake_redis.set(failures_key, str(LOGIN_FAILURES_LIMIT))
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
@@ -140,7 +140,7 @@ async def test_later_failures_do_not_push_the_window_forward(
     uow = build_uow(user, fake_session)
     verify_mock = AsyncMock(return_value=False)
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
-    failures_key = auth_redis_keys.login_failures("user@example.com")
+    failures_key = USER_AUTH_REALM.keys.login_failures("user@example.com")
     await fake_redis.setex(failures_key, 600, "3")
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
@@ -174,7 +174,7 @@ async def test_unknown_email_also_increments_the_counter(
             login_usecase.LoginUserModel(email="missing@example.com", password="x1")
         )
 
-    failures_key = auth_redis_keys.login_failures("missing@example.com")
+    failures_key = USER_AUTH_REALM.keys.login_failures("missing@example.com")
     assert await fake_redis.get(failures_key) == "1"
 
 
@@ -197,7 +197,7 @@ async def test_successful_login_clears_the_counter(
     monkeypatch.setattr(
         login_usecase, "create_refresh_token", AsyncMock(return_value="refresh")
     )
-    failures_key = auth_redis_keys.login_failures("user@example.com")
+    failures_key = USER_AUTH_REALM.keys.login_failures("user@example.com")
     await fake_redis.setex(failures_key, 600, "3")
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
@@ -230,5 +230,5 @@ async def test_admission_failure_with_correct_password_does_not_count(
             )
         )
 
-    failures_key = auth_redis_keys.login_failures("user@example.com")
+    failures_key = USER_AUTH_REALM.keys.login_failures("user@example.com")
     assert await fake_redis.exists(failures_key) == 0

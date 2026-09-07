@@ -19,6 +19,7 @@ from src.core.errors.exceptions import (
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import hash_password, mask_email, verify_password
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
 
@@ -102,7 +103,9 @@ class UpdateUserPasswordUseCase:
             if not updated_user:
                 raise InstanceNotFoundException("User not found.")
             await uow.flush()
-            await invalidate_all_user_sessions(str(updated_user.id), self.redis_client)
+            await invalidate_all_user_sessions(
+                str(updated_user.id), self.redis_client, keys=USER_AUTH_REALM.keys
+            )
             await self.cache.invalidate(user_cache_keys.namespace(updated_user.id))
             uow.add_after_commit_hook(
                 partial(

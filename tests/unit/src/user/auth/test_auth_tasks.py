@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.auth.redis_keys import auth_redis_keys
+from src.user.auth.realm import (
+    RESET_PASSWORD_PURPOSE,
+    USER_AUTH_REALM,
+    VERIFICATION_PURPOSE,
+)
 from src.user.auth.tasks import (
     send_reset_password_email_task,
     send_verification_email_task,
@@ -36,7 +40,7 @@ async def test_send_verification_email_creates_token_and_sends_email(
     )
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", "user@example.com")
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, "user@example.com")
         )
         == 1
     )
@@ -66,7 +70,7 @@ async def test_send_verification_email_cleans_up_token_and_throttle_on_failure(
 
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", "user@example.com")
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, "user@example.com")
         )
         == 0
     )
@@ -97,7 +101,7 @@ async def test_send_reset_password_email_creates_token_and_sends_email(
     )
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", "user@example.com")
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, "user@example.com")
         )
         == 1
     )
@@ -127,7 +131,7 @@ async def test_send_reset_password_email_cleans_up_token_and_throttle_on_failure
 
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", "user@example.com")
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, "user@example.com")
         )
         == 0
     )

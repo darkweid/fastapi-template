@@ -3,11 +3,15 @@ from typing import Any
 import jwt
 from redis.asyncio import Redis
 
-from src.core.auth.redis_keys import OneTimeTokenPurpose, auth_redis_keys
 from src.core.auth.tokens import issue_token
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.utils.security import normalize_email
 from src.main.config import config
+from src.user.auth.realm import (
+    RESET_PASSWORD_PURPOSE,
+    USER_AUTH_REALM,
+    VERIFICATION_PURPOSE,
+)
 
 
 async def create_verification_token(data: dict[str, Any], redis_client: Redis) -> str:
@@ -28,13 +32,14 @@ async def create_verification_token(data: dict[str, Any], redis_client: Redis) -
         sub=email,
         mode="verification_token",
         ttl_minutes=ttl_minutes,
-        secret=config.jwt.JWT_VERIFY_SECRET_KEY,
+        secret=USER_AUTH_REALM.one_time_secret(VERIFICATION_PURPOSE),
         redis_client=redis_client,
+        keys=USER_AUTH_REALM.keys,
         extra_data={**data, "email": email},
     )
 
     await store_active_one_time_token(
-        purpose="verification",
+        purpose=VERIFICATION_PURPOSE,
         email=email,
         jti=jti,
         ttl_seconds=ttl_minutes * 60,
@@ -62,13 +67,14 @@ async def create_reset_password_token(data: dict[str, Any], redis_client: Redis)
         sub=email,
         mode="reset_password_token",
         ttl_minutes=ttl_minutes,
-        secret=config.jwt.JWT_RESET_PASSWORD_SECRET_KEY,
+        secret=USER_AUTH_REALM.one_time_secret(RESET_PASSWORD_PURPOSE),
         redis_client=redis_client,
+        keys=USER_AUTH_REALM.keys,
         extra_data={**data, "email": email},
     )
 
     await store_active_one_time_token(
-        purpose="reset_password",
+        purpose=RESET_PASSWORD_PURPOSE,
         email=email,
         jti=jti,
         ttl_seconds=ttl_minutes * 60,
@@ -82,7 +88,7 @@ async def decode_one_time_token(
     token: str,
     *,
     secret: str,
-    purpose: OneTimeTokenPurpose,
+    purpose: str,
     redis_client: Redis,
     expected_mode: str | None = None,
 ) -> str:
@@ -118,7 +124,7 @@ async def decode_one_time_token(
 
 
 async def store_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
+    purpose: str,
     email: str,
     jti: str,
     ttl_seconds: int,
@@ -129,14 +135,14 @@ async def store_active_one_time_token(
     """
     normalized_email = normalize_email(email)
     await redis_client.set(
-        auth_redis_keys.one_time_token(purpose, normalized_email),
+        USER_AUTH_REALM.keys.one_time(purpose, normalized_email),
         jti,
         ex=ttl_seconds,
     )
 
 
 async def validate_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
+    purpose: str,
     email: str,
     jti: str | None,
     redis_client: Redis,
@@ -149,7 +155,7 @@ async def validate_active_one_time_token(
 
     normalized_email = normalize_email(email)
     active_jti = await redis_client.get(
-        auth_redis_keys.one_time_token(purpose, normalized_email)
+        USER_AUTH_REALM.keys.one_time(purpose, normalized_email)
     )
 
     if active_jti != jti:
@@ -157,7 +163,7 @@ async def validate_active_one_time_token(
 
 
 async def invalidate_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
+    purpose: str,
     email: str,
     redis_client: Redis,
 ) -> None:
@@ -165,4 +171,4 @@ async def invalidate_active_one_time_token(
     Deletes the active single-use token entry for the provided purpose and email.
     """
     normalized_email = normalize_email(email)
-    await redis_client.delete(auth_redis_keys.one_time_token(purpose, normalized_email))
+    await redis_client.delete(USER_AUTH_REALM.keys.one_time(purpose, normalized_email))

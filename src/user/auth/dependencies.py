@@ -15,7 +15,6 @@ from src.core.auth.cookies import (
 )
 from src.core.auth.errors import TokenExpiredError
 from src.core.auth.jwt_payload_schema import JWTPayload
-from src.core.auth.redis_keys import auth_redis_keys
 from src.core.auth.token_helpers import (
     invalidate_all_user_sessions,
     is_within_reuse_grace,
@@ -24,6 +23,7 @@ from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.main.config import config
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.dependencies import get_user_repository
 from src.user.models import User
 from src.user.policies import ensure_can_use_session
@@ -372,19 +372,21 @@ async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
         raise UnauthorizedException("Invalid token structure")
 
     if mode == "refresh_token":
-        used_marker = await redis_client.get(auth_redis_keys.used(user_id, jti))
+        used_marker = await redis_client.get(USER_AUTH_REALM.keys.used(user_id, jti))
 
         if used_marker is not None:
             # Inside the grace window this is a benign double-submit, not
             # theft: reject the request but keep the session family alive.
             if await is_within_reuse_grace(used_marker, redis_client):
                 raise UnauthorizedException("Token invalidated or expired")
-            await invalidate_all_user_sessions(user_id, redis_client)
+            await invalidate_all_user_sessions(
+                user_id, redis_client, keys=USER_AUTH_REALM.keys
+            )
             raise UnauthorizedException(
                 "Token reuse detected. All sessions invalidated."
             )
 
-    active_key = auth_redis_keys.session_key(mode, user_id, session_id)
+    active_key = USER_AUTH_REALM.keys.session_key(mode, user_id, session_id)
     stored_jti = await redis_client.get(active_key)
 
     stored_jti_str = (

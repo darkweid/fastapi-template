@@ -6,7 +6,6 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.auth.redis_keys import auth_redis_keys
 from src.core.auth.token_helpers import invalidate_all_user_sessions
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
@@ -16,7 +15,7 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import hash_password, mask_email
-from src.main.config import config
+from src.user.auth.realm import RESET_PASSWORD_PURPOSE, USER_AUTH_REALM
 from src.user.auth.schemas import ResetPasswordModel
 from src.user.auth.security import (
     decode_one_time_token,
@@ -84,8 +83,8 @@ class ResetPasswordConfirmUseCase:
             try:
                 normalized_email = await decode_one_time_token(
                     data.token,
-                    secret=config.jwt.JWT_RESET_PASSWORD_SECRET_KEY,
-                    purpose="reset_password",
+                    secret=USER_AUTH_REALM.one_time_secret(RESET_PASSWORD_PURPOSE),
+                    purpose=RESET_PASSWORD_PURPOSE,
                     redis_client=self.redis_client,
                     expected_mode="reset_password_token",
                 )
@@ -105,16 +104,18 @@ class ResetPasswordConfirmUseCase:
 
                 await uow.flush()
                 await invalidate_active_one_time_token(
-                    purpose="reset_password",
+                    purpose=RESET_PASSWORD_PURPOSE,
                     email=normalized_email,
                     redis_client=self.redis_client,
                 )
-                await invalidate_all_user_sessions(str(user.id), self.redis_client)
+                await invalidate_all_user_sessions(
+                    str(user.id), self.redis_client, keys=USER_AUTH_REALM.keys
+                )
                 # A successful reset proves mailbox ownership: clear the
                 # login-failure throttle so an attacker who filled the window
                 # with wrong passwords cannot keep the real owner locked out.
                 await self.redis_client.delete(
-                    auth_redis_keys.login_failures(normalized_email)
+                    USER_AUTH_REALM.keys.login_failures(normalized_email)
                 )
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
                 uow.add_after_commit_hook(

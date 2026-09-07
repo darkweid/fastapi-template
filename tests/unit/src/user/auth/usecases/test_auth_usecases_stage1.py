@@ -6,13 +6,17 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
-from src.core.auth.redis_keys import auth_redis_keys
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse, TokenModel
-from src.core.utils.security import build_email_throttle_key
+from src.core.utils.security import build_throttle_key
 from src.main.config import config
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
+from src.user.auth.realm import (
+    RESET_PASSWORD_PURPOSE,
+    USER_AUTH_REALM,
+    VERIFICATION_PURPOSE,
+)
 from src.user.auth.schemas import (
     CreateUserModel,
     ResendVerificationModel,
@@ -122,6 +126,7 @@ async def test_get_tokens_by_refresh_user_usecase_success(
         {"sub": str(user.id)},
         redis_client=fake_redis,
         session_id=payload["session_id"],
+        keys=USER_AUTH_REALM.keys,
     )
 
 
@@ -250,7 +255,7 @@ async def test_resend_verification_success(
     result = await use_case.execute(data=ResendVerificationModel(email=user.email))
 
     assert result == SuccessResponse(success=True)
-    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    expected_throttle_key = build_throttle_key("resend_verification", user.email)
     notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
@@ -294,7 +299,7 @@ async def test_resend_verification_releases_throttle_when_commit_fails(
             data=ResendVerificationModel(email=user.email),
         )
 
-    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    expected_throttle_key = build_throttle_key("resend_verification", user.email)
     notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
@@ -334,7 +339,7 @@ async def test_reset_password_request_success(
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    expected_throttle_key = build_throttle_key("password-reset", user.email)
     notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
@@ -358,7 +363,7 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
             data=SendResetPasswordRequestModel(email=user.email),
         )
 
-    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    expected_throttle_key = build_throttle_key("password-reset", user.email)
     notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
@@ -421,6 +426,7 @@ async def test_logout_usecase_invalidates_current_session(
         "user-1",
         "session-1",
         fake_redis,
+        keys=USER_AUTH_REALM.keys,
     )
 
 
@@ -443,7 +449,9 @@ async def test_logout_usecase_can_invalidate_all_sessions(
     )
 
     assert result == SuccessResponse(success=True)
-    invalidate_mock.assert_awaited_once_with("user-1", fake_redis)
+    invalidate_mock.assert_awaited_once_with(
+        "user-1", fake_redis, keys=USER_AUTH_REALM.keys
+    )
 
 
 @pytest.mark.asyncio
@@ -472,7 +480,7 @@ async def test_reset_password_confirm_success(
     cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
     # An attacker-filled login throttle must fall with the reset: the reset
     # proves mailbox ownership.
-    login_failures_key = auth_redis_keys.login_failures(user.email)
+    login_failures_key = USER_AUTH_REALM.keys.login_failures(user.email)
     await fake_redis.setex(login_failures_key, 600, "25")
 
     use_case = ResetPasswordConfirmUseCase(
@@ -491,7 +499,7 @@ async def test_reset_password_confirm_success(
     assert cache_invalidate_spy.await_count == 2
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", user.email)
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
         )
         == 0
     )
@@ -512,7 +520,7 @@ async def test_reset_password_confirm_invalid_mode(
         "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
     }
     token = jwt.encode(
-        payload, config.jwt.JWT_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
+        payload, config.jwt.JWT_USER_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
     )
 
     use_case = ResetPasswordConfirmUseCase(
@@ -536,7 +544,7 @@ async def test_reset_password_confirm_rejects_inactive_jti(
     uow = build_uow(fake_session, users_repo)
     token = await build_reset_password_token({"email": user.email}, fake_redis)
     await fake_redis.delete(
-        auth_redis_keys.one_time_token("reset_password", user.email)
+        USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
     )
 
     use_case = ResetPasswordConfirmUseCase(
@@ -580,7 +588,7 @@ async def test_reset_password_confirm_redis_failure_skips_commit(
     uow.rollback.assert_awaited_once()
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", user.email)
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
         )
         == 0
     )
@@ -646,7 +654,7 @@ async def test_reset_password_confirm_commit_failure_after_invalidation_consumes
 
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", user.email)
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
         )
         == 0
     )
@@ -690,7 +698,7 @@ async def test_verify_email_usecase_already_verified(
     assert result == SuccessResponse(success=True)
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", user.email)
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
         == 0
     )
@@ -722,7 +730,7 @@ async def test_verify_email_usecase_success(
     assert cache_invalidate_spy.await_count == 2
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", user.email)
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
         == 0
     )
@@ -743,7 +751,9 @@ async def test_verify_email_usecase_invalid_token(
         "email": "user@example.com",
         "exp": int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()),
     }
-    token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
+    token = jwt.encode(
+        payload, config.jwt.JWT_USER_VERIFY_SECRET_KEY, config.jwt.ALGORITHM
+    )
 
     result = await use_case.execute(token)
 
@@ -761,7 +771,9 @@ async def test_verify_email_usecase_rejects_inactive_jti(
     uow = build_uow(fake_session, users_repo)
     use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     token = await build_verification_token({"email": user.email}, fake_redis)
-    await fake_redis.delete(auth_redis_keys.one_time_token("verification", user.email))
+    await fake_redis.delete(
+        USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
+    )
 
     result = await use_case.execute(token)
 
@@ -808,7 +820,7 @@ async def test_verify_email_usecase_commit_failure_keeps_token_active(
 
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", user.email)
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
         == 1
     )

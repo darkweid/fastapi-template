@@ -11,6 +11,7 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import mask_email
 from src.main.config import config
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.models import User
 from src.user.policies import account_access_violation, ensure_can_use_session
 
@@ -69,7 +70,7 @@ class GetTokensByRefreshUserUseCase:
         ensure_can_use_session(user)
 
         new_refresh_token = await rotate_refresh_token(
-            old_token_payload, self.redis_client
+            old_token_payload, self.redis_client, keys=USER_AUTH_REALM.keys
         )
 
         new_payload = jwt.decode(
@@ -82,6 +83,7 @@ class GetTokensByRefreshUserUseCase:
             {"sub": str(user.id)},
             redis_client=self.redis_client,
             session_id=new_payload["session_id"],
+            keys=USER_AUTH_REALM.keys,
         )
 
         return TokenModel(

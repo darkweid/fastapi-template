@@ -14,7 +14,6 @@ from src.core.auth.cookies import (
 )
 from src.core.auth.csrf import build_csrf_token
 from src.core.auth.errors import CsrfFailedError, TokenExpiredError
-from src.core.auth.redis_keys import auth_redis_keys
 from src.core.errors.codes import ErrorCode
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import CookieConfig, config
@@ -33,6 +32,7 @@ from src.user.auth.dependencies import (
     verify_jti,
 )
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.models import User
 from tests.factories.token_factory import (
     build_access_payload,
@@ -47,6 +47,8 @@ from tests.helpers.requests import build_request
 # Pinned wall clock for grace-window math; the fake's key expiry runs on
 # time.monotonic(), so freezing this cannot make keys expire mid-test.
 FROZEN_NOW = 1_755_000_000
+
+AUTH_KEYS = USER_AUTH_REALM.keys
 
 
 def encode_token(payload: dict[str, object], secret: str) -> str:
@@ -63,7 +65,7 @@ async def test_verify_jti_accepts_bearer_prefix(fake_redis: InMemoryRedis) -> No
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -111,12 +113,12 @@ async def test_verify_jti_refresh_reuse_invalidates(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
     await fake_redis.setex(
-        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        AUTH_KEYS.used(payload["sub"], payload["jti"]),
         60,
         "used",
     )
@@ -129,7 +131,7 @@ async def test_verify_jti_refresh_reuse_invalidates(
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
         await verify_jti(token, fake_redis)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -143,7 +145,7 @@ async def test_verify_jti_used_marker_within_grace_rejects_without_wipe(
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.setex(
-        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        AUTH_KEYS.used(payload["sub"], payload["jti"]),
         60,
         str(FROZEN_NOW),
     )
@@ -168,7 +170,7 @@ async def test_verify_jti_used_marker_past_grace_wipes(
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
     await fake_redis.setex(
-        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        AUTH_KEYS.used(payload["sub"], payload["jti"]),
         60,
         str(FROZEN_NOW),
     )
@@ -181,7 +183,7 @@ async def test_verify_jti_used_marker_past_grace_wipes(
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
         await verify_jti(token, fake_redis)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -189,7 +191,7 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         "other-jti",
         ex=60,
     )
@@ -207,7 +209,7 @@ async def test_authenticate_access_token_success(
     payload = build_access_payload(str(user.id))
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -233,7 +235,7 @@ async def test_authenticate_access_token_wrong_mode(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -326,7 +328,7 @@ async def test_get_access_by_refresh_token_success(
     payload = build_refresh_payload(str(user.id))
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -365,7 +367,7 @@ async def test_get_user_id_from_token_success(
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )

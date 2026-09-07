@@ -6,7 +6,7 @@ import jwt
 from redis.asyncio import Redis
 
 from src.core.auth.jwt_payload_schema import JWTPayload
-from src.core.auth.redis_keys import auth_redis_keys
+from src.core.auth.redis_keys import AuthRedisKeyBuilder
 from src.core.auth.token_helpers import execute_token_rotation, validate_token_structure
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
@@ -21,6 +21,7 @@ async def issue_token(
     ttl_minutes: int,
     secret: str,
     redis_client: Redis,
+    keys: AuthRedisKeyBuilder,
     session_id: str | None = None,
     redis_key: str | None = None,
     extra_data: dict[str, Any] | None = None,
@@ -60,7 +61,7 @@ async def issue_token(
         # silently expired, so without the prune the index would only grow.
         # The index TTL always covers the refresh lifetime - the
         # longest-lived credential of any session.
-        index_key = auth_redis_keys.sessions(sub)
+        index_key = keys.sessions(sub)
         index_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
         now_seconds, _ = await redis_client.time()
         await redis_client.zremrangebyscore(index_key, 0, int(now_seconds))
@@ -73,7 +74,11 @@ async def issue_token(
 
 
 async def create_access_token(
-    data: dict[str, Any], redis_client: Redis, session_id: str | None = None
+    data: dict[str, Any],
+    redis_client: Redis,
+    session_id: str | None = None,
+    *,
+    keys: AuthRedisKeyBuilder,
 ) -> str:
     """
     Create a new JWT access token
@@ -81,6 +86,7 @@ async def create_access_token(
     Args:
         data: Dictionary containing token data (must include 'sub' key with user ID)
         session_id: Optional session ID for tracking multiple sessions per user
+        keys: The realm's Redis key builder.
     Returns:
         str: Encoded JWT access token
     """
@@ -93,8 +99,9 @@ async def create_access_token(
         ttl_minutes=config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES,
         secret=config.jwt.JWT_USER_SECRET_KEY,
         redis_client=redis_client,
+        keys=keys,
         session_id=session_id,
-        redis_key=auth_redis_keys.access(data["sub"], session_id),
+        redis_key=keys.access(data["sub"], session_id),
     )
     return token
 
@@ -103,6 +110,8 @@ async def create_refresh_token(
     data: dict[str, Any],
     redis_client: Redis,
     session_id: str | None = None,
+    *,
+    keys: AuthRedisKeyBuilder,
 ) -> str:
     """
     Create a new JWT refresh token
@@ -110,6 +119,7 @@ async def create_refresh_token(
     Args:
         data: Dictionary containing token data (must include 'sub' key with user ID)
         session_id: Optional session ID for tracking multiple sessions per user
+        keys: The realm's Redis key builder.
     Returns:
         str: Encoded JWT refresh token
     """
@@ -122,13 +132,16 @@ async def create_refresh_token(
         ttl_minutes=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES,
         secret=config.jwt.JWT_USER_SECRET_KEY,
         redis_client=redis_client,
+        keys=keys,
         session_id=session_id,
-        redis_key=auth_redis_keys.refresh(data["sub"], session_id),
+        redis_key=keys.refresh(data["sub"], session_id),
     )
     return token
 
 
-async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> str:
+async def rotate_refresh_token(
+    old_payload: JWTPayload, redis_client: Redis, *, keys: AuthRedisKeyBuilder
+) -> str:
     """
     Rotate a refresh token by creating a new one while invalidating the old one.
 
@@ -139,6 +152,7 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
 
     Args:
         old_payload: The payload from the old refresh token
+        keys: The realm's Redis key builder.
 
     Returns:
         str: A new refresh token
@@ -148,10 +162,12 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
     """
 
     user_id, old_session_id, old_jti = await validate_token_structure(
-        old_payload, redis_client
+        old_payload, redis_client, keys=keys
     )
 
-    await execute_token_rotation(user_id, old_session_id, old_jti, redis_client)
+    await execute_token_rotation(
+        user_id, old_session_id, old_jti, redis_client, keys=keys
+    )
 
     token, _ = await issue_token(
         sub=user_id,
@@ -159,7 +175,8 @@ async def rotate_refresh_token(old_payload: JWTPayload, redis_client: Redis) -> 
         ttl_minutes=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES,
         secret=config.jwt.JWT_USER_SECRET_KEY,
         redis_client=redis_client,
+        keys=keys,
         session_id=old_session_id,
-        redis_key=auth_redis_keys.refresh(user_id, old_session_id),
+        redis_key=keys.refresh(user_id, old_session_id),
     )
     return token
