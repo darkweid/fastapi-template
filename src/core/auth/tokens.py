@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 import jwt
@@ -16,9 +16,7 @@ from src.main.config import config
 async def issue_token(
     *,
     sub: str,
-    mode: Literal[
-        "access_token", "refresh_token", "verification_token", "reset_password_token"
-    ],
+    mode: str,
     ttl_minutes: int,
     secret: str,
     redis_client: Redis,

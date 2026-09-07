@@ -4,7 +4,7 @@ Overview of security mechanisms implemented in the template and the rationale be
 
 ## JWT Token Architecture
 
-`src/user/auth/security.py`, `src/main/config.py`
+`src/core/auth/tokens.py`, `src/user/auth/realm.py`, `src/main/config.py`
 
 **Separate secret keys per token purpose:**
 - `JWT_USER_SECRET_KEY` — access and refresh tokens.
@@ -91,8 +91,8 @@ auth key so a second principal class (staff, partner) can never collide with or 
 another realm's session invalidation.
 
 - Each login creates a unique `session_id` (UUID4), enabling multi-device support.
-- `invalidate_user_session()` — single device logout.
-- `invalidate_all_user_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
+- `invalidate_session()` — single device logout.
+- `invalidate_all_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
 - Logout endpoint supports both modes via `terminate_all_sessions` flag.
 
 **Why it matters:** Stateless JWT alone cannot be revoked. Redis-backed JTI tracking adds revocation capability while preserving JWT's stateless verification for normal requests.

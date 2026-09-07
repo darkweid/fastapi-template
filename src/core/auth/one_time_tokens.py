@@ -33,7 +33,7 @@ async def issue_one_time_token(
     """
     token, jti = await issue_token(
         sub=identifier,
-        mode=mode,  # type: ignore[arg-type]
+        mode=mode,
         ttl_minutes=ttl_minutes,
         secret=realm.one_time_secret(purpose),
         redis_client=redis_client,

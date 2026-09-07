@@ -34,7 +34,12 @@ Follow `src/user/auth/` as the worked example throughout.
    `.env.test`. Nothing else in config changes: `JWTConfig.reject_shared_secrets`
    already walks every `*_SECRET_KEY` field by name, so a new field is
    automatically checked for collisions against every other realm's secrets -
-   no update needed there.
+   no update needed there. That validator compares config *field values*, not
+   realm *declarations*: it cannot catch step 1's `session_secret` lambda
+   copy-pasted to read `JWT_USER_SECRET_KEY` instead of the new field - that
+   passes the validator cleanly (both fields hold different values, and
+   nothing checks which realm reads which). Double-check the lambda names
+   the realm's own field before moving on.
 
 3. **Create the principal.** A model (`src/<module>/models.py`), a repository
    (`src/<module>/repositories.py`, declarative one-liner over `BaseRepository`),
@@ -65,11 +70,15 @@ Follow `src/user/auth/` as the worked example throughout.
    `issue_session_pair` and `LoginThrottle` from
    `src/core/auth/session_issuance.py`. Refresh and logout need no new
    UseCase at all: import `RefreshAccessUseCase` and `LogoutUseCase` from
-   `src/core/auth/usecases/` and instantiate them in the router with the
-   realm, an admission callable and a `claims_builder` - see
-   `get_refresh_access_use_case` / `get_logout_use_case` in
-   `src/user/auth/routers.py`. Writing a new class here would be exactly the
-   copy this factoring was meant to avoid.
+   `src/core/auth/usecases/` and give each a thin provider module next to the
+   realm's other usecases - `src/<module>/auth/usecases/refresh_access.py`
+   and `src/<module>/auth/usecases/logout.py`, mirroring
+   `src/user/auth/usecases/refresh_access.py` / `logout.py`. Each file is a
+   single `get_*_use_case(redis_client: Annotated[Redis, Depends(get_redis_client)])`
+   that builds the core UseCase with the realm, an admission callable and a
+   `claims_builder`; the router only imports the provider and depends on it,
+   the same way it depends on every other UseCase. Writing a new UseCase
+   class here would be exactly the copy this factoring was meant to avoid.
 
 6. **Mount the router.** Add it to `src/main/presentation.py` under `/v1`,
    then check that the mounted path matches the `refresh_cookie_path`
@@ -92,12 +101,17 @@ A realm that authenticates by one-time code (SMS, email) instead of a
 password reuses the same core, plus `ActiveChallengeRegistry`
 (`src/core/auth/challenges.py`):
 
-- **Never store the code itself.** Hash it (the same primitive
-  `src/core/utils/security.py` already uses for passwords) and hand
-  `ActiveChallengeRegistry.store` the hash, not the code. `validate` compares
-  the caller's code, hashed the same way, against the stored value.
+- **Never store the code itself.** `ActiveChallengeRegistry.validate`
+  (`src/core/auth/challenges.py`) checks the presented value against the
+  stored one with a plain equality comparison, so the stored value must be
+  deterministic - Argon2 (`src/core/utils/security.py`'s password hasher) is
+  salted and produces a different hash every call, which would make every
+  validation fail. Use a keyed digest instead: `hmac.new(realm.one_time_secret(purpose).encode(), code.encode(), hashlib.sha256).hexdigest()`,
+  computed the same way to store and to compare. Keying the digest with the
+  realm's own one-time secret means a Redis dump still doesn't hand a reader
+  a table to brute-force the code against.
 - **Count attempts separately from the challenge.** The challenge key holds
-  the live code (or its hash); a second, realm-keyed counter tracks failed
+  the live code's digest; a second, realm-keyed counter tracks failed
   attempts against it, independent of the challenge's own TTL. Exhausting the
   counter should retire the challenge (`ActiveChallengeRegistry.invalidate`)
   rather than leaving it guessable until it expires on its own.

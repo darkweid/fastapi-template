@@ -1,5 +1,3 @@
-from typing import Literal
-
 from src.core.utils.security import build_throttle_key
 
 
@@ -36,12 +34,13 @@ class AuthRedisKeyBuilder:
         """The single active challenge for one purpose and one identifier."""
         return f"{self._prefix}:{build_throttle_key(f'one-time:{purpose}', identifier)}"
 
-    def session_key(
-        self,
-        mode: Literal["access_token", "refresh_token"],
-        subject_id: str,
-        session_id: str,
-    ) -> str:
+    def session_key(self, mode: str, subject_id: str, session_id: str) -> str:
+        """Dispatch to the access or refresh key for one session.
+
+        `mode` is a session-token mode ("access_token"/"refresh_token"), not
+        the wider `JWTPayload.mode`; the caller (`credentials.verify_jti`)
+        already rejects any other value before reaching here.
+        """
         if mode == "access_token":
             return self.access(subject_id, session_id)
         return self.refresh(subject_id, session_id)

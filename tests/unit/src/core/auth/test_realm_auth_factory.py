@@ -54,3 +54,33 @@ async def test_a_token_minted_for_one_realm_is_rejected_by_another(
         await second_auth.authenticate(
             token=token, session=None, redis_client=fake_redis
         )
+
+
+async def test_a_token_minted_for_one_realm_is_accepted_by_that_same_realm(
+    fake_redis: object,
+) -> None:
+    """Pins the positive half of the cross-realm check.
+
+    Without this, a `verify_jti` regression that ignored `realm` entirely and
+    read a hardcoded secret would still pass the rejection test above - the
+    token would simply be signed with neither realm's secret. Only a case
+    that must succeed against its own realm can prove the realm's secret is
+    the one actually used.
+    """
+    principal = FakePrincipal(id="42")
+    first_auth = build_realm_auth(
+        realm=FIRST_REALM,
+        principal_type=FakePrincipal,
+        repository_factory=lambda: FakePrincipalRepository(principal),
+        admission=lambda _principal: None,
+    )
+    token = await create_access_token(
+        {"sub": "42"}, fake_redis, realm=FIRST_REALM, session_id="s1"
+    )
+
+    authenticated = await first_auth.authenticate(
+        token=token, session=None, redis_client=fake_redis
+    )
+
+    assert authenticated.principal is principal
+    assert authenticated.session_id == "s1"

@@ -329,4 +329,5 @@ in-flight automatic deploy.
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
 - Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)
+- Adding an auth realm: [docs/readme/auth-realms.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/auth-realms.md)
 - Contributing & CI/CD: [docs/readme/contributing.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/contributing.md)
