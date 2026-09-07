@@ -13,12 +13,10 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
 from src.user.auth.dependencies import get_access_by_refresh_token, get_logout_identity
 from src.user.auth.realm import USER_AUTH_REALM
-from src.user.auth.routers import (
-    get_logout_use_case,
-    get_refresh_access_use_case,
-    router,
-)
+from src.user.auth.routers import router
 from src.user.auth.usecases.login import get_login_user_use_case
+from src.user.auth.usecases.logout import get_logout_use_case
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.auth.usecases.register import get_register_use_case
 from src.user.auth.usecases.resend_verification import get_send_verification_use_case
 from src.user.auth.usecases.reset_password_confirm import (

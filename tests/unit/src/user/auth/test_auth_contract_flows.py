@@ -10,13 +10,13 @@ from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_authenticated_user,
 )
-from src.user.auth.routers import get_refresh_access_use_case
 from src.user.auth.schemas import (
     LoginUserModel,
     ResetPasswordModel,
     SendResetPasswordRequestModel,
 )
 from src.user.auth.usecases.login import get_login_user_use_case
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.auth.usecases.reset_password_confirm import (
     get_reset_password_confirm_use_case,
 )

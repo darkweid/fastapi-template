@@ -46,15 +46,31 @@ class LoginThrottle:
 
     async def ensure_under_limit(self, identifier: str, redis_client: Redis) -> None:
         """Reject before any database or password-hash work is spent."""
-        failures = await redis_client.get(self._realm.keys.login_failures(identifier))
-        if failures is not None and int(failures) >= self._limit:
-            raise TooManyRequestsException("Too many failed login attempts.")
+        key = self._realm.keys.login_failures(identifier)
+        failures = await redis_client.get(key)
+        if failures is None or int(failures) < self._limit:
+            return
+
+        retry_after = await redis_client.ttl(key)
+        if retry_after < 0:
+            # A counter stranded without a TTL (crash between INCR and EXPIRE)
+            # never reaches record_failure again - this gate rejects first -
+            # so the gate itself must arm the window, or the lockout is
+            # permanent.
+            await redis_client.expire(key, self._window_seconds, nx=True)
+            retry_after = self._window_seconds
+        raise TooManyRequestsException(
+            "Too many failed login attempts.", retry_after=retry_after
+        )
 
     async def record_failure(self, identifier: str, redis_client: Redis) -> None:
         key = self._realm.keys.login_failures(identifier)
-        count = await redis_client.incr(key)
-        if count == 1:
-            await redis_client.expire(key, self._window_seconds)
+        await redis_client.incr(key)
+        # NX arms the window only when the key has no TTL yet, so later
+        # failures never push the reset forward - and unlike an "only on the
+        # first INCR" guard, a crash between INCR and EXPIRE cannot strand a
+        # persistent counter: the next failure arms it.
+        await redis_client.expire(key, self._window_seconds, nx=True)
 
     async def clear(self, identifier: str, redis_client: Redis) -> None:
         await redis_client.delete(self._realm.keys.login_failures(identifier))

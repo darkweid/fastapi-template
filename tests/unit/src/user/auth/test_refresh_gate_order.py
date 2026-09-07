@@ -24,7 +24,7 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.main.config import get_settings
 from src.user.auth.realm import USER_AUTH_REALM
-from src.user.auth.routers import get_refresh_access_use_case
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_refresh_token
 from tests.factories.user_factory import build_user

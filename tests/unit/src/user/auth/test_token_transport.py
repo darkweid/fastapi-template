@@ -17,8 +17,8 @@ from src.user import routers as user_routers
 from src.user.auth import routers as user_auth_routers
 from src.user.auth.dependencies import get_access_by_refresh_token
 from src.user.auth.realm import USER_AUTH_REALM
-from src.user.auth.routers import get_refresh_access_use_case
 from src.user.auth.usecases.login import get_login_user_use_case
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_refresh_payload, build_refresh_token
 from tests.factories.user_factory import build_user
