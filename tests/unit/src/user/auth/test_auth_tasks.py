@@ -148,7 +148,7 @@ async def test_send_verification_email_releases_throttle_when_token_creation_fai
     mock_mailer = MockMailer()
     monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mock_mailer))
     monkeypatch.setattr(
-        "src.user.auth.tasks.create_verification_token",
+        "src.user.auth.tasks.issue_one_time_token",
         AsyncMock(side_effect=RuntimeError("token issuance failed")),
     )
     await fake_redis.set("throttle:key", "1", ex=60)

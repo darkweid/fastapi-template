@@ -1,11 +1,12 @@
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from typing import Annotated, Any
+from typing import Annotated
 
 from redis.asyncio import Redis
 from taskiq import TaskiqDepends
 
 from loggers import get_logger
+from src.core.auth.challenges import ActiveChallengeRegistry
+from src.core.auth.one_time_tokens import issue_one_time_token
 from src.core.email_service.schemas import (
     MailTemplateResetPasswordBody,
     MailTemplateVerificationBody,
@@ -15,11 +16,10 @@ from src.core.email_service.tasks import get_mailer
 from src.core.utils.security import mask_email
 from src.core.utils.urls import build_public_url
 from src.main.config import config
-from src.user.auth.realm import RESET_PASSWORD_PURPOSE, VERIFICATION_PURPOSE
-from src.user.auth.security import (
-    create_reset_password_token,
-    create_verification_token,
-    invalidate_active_one_time_token,
+from src.user.auth.realm import (
+    RESET_PASSWORD_PURPOSE,
+    USER_AUTH_REALM,
+    VERIFICATION_PURPOSE,
 )
 from taskiq_worker.broker import broker
 from taskiq_worker.dependencies import get_tasks_redis_client
@@ -31,12 +31,13 @@ async def _deliver_tokenized_email(
     *,
     redis_client: Redis,
     email: str,
-    create_token: Callable[[dict[str, Any], Redis], Awaitable[str]],
+    purpose: str,
+    mode: str,
+    ttl_minutes: int,
     link_path: str,
     subject: str,
     template_name: str,
     template_body: MailTemplateVerificationBody | MailTemplateResetPasswordBody,
-    purpose: str,
     throttle_key: str | None,
 ) -> None:
     """Issue a one-time token, send its link by email, clean up on failure.
@@ -52,7 +53,14 @@ async def _deliver_tokenized_email(
     """
     email_service = EmailService(get_mailer())
     try:
-        token = await create_token({"email": email}, redis_client)
+        token = await issue_one_time_token(
+            realm=USER_AUTH_REALM,
+            purpose=purpose,
+            identifier=email,
+            mode=mode,
+            ttl_minutes=ttl_minutes,
+            redis_client=redis_client,
+        )
         link = build_public_url(config.app.PUBLIC_BASE_URL, link_path, token=token)
         await email_service.send_template_email(
             subject=subject,
@@ -65,10 +73,8 @@ async def _deliver_tokenized_email(
             with suppress(Exception):
                 await redis_client.delete(throttle_key)
         with suppress(Exception):
-            await invalidate_active_one_time_token(
-                purpose=purpose,
-                email=email,
-                redis_client=redis_client,
+            await ActiveChallengeRegistry(USER_AUTH_REALM).invalidate(
+                purpose, email, redis_client
             )
         logger.exception(
             "Failed to process %s email task for %s", purpose, mask_email(email)
@@ -87,14 +93,15 @@ async def send_verification_email_task(
     await _deliver_tokenized_email(
         redis_client=redis_client,
         email=email,
-        create_token=create_verification_token,
+        purpose=VERIFICATION_PURPOSE,
+        mode="verification_token",
+        ttl_minutes=config.jwt.VERIFICATION_TOKEN_EXPIRE_MINUTES,
         link_path=config.app.EMAIL_VERIFY_PATH,
         subject="Verification Message",
         template_name="verification.html",
         template_body=MailTemplateVerificationBody(
             title="Verification Message", link="", name=full_name
         ),
-        purpose=VERIFICATION_PURPOSE,
         throttle_key=throttle_key,
     )
 
@@ -110,13 +117,14 @@ async def send_reset_password_email_task(
     await _deliver_tokenized_email(
         redis_client=redis_client,
         email=email,
-        create_token=create_reset_password_token,
+        purpose=RESET_PASSWORD_PURPOSE,
+        mode="reset_password_token",
+        ttl_minutes=config.jwt.RESET_PASSWORD_TOKEN_EXPIRE_MINUTES,
         link_path=config.app.PASSWORD_RESET_PATH,
         subject="Resetting password",
         template_name="reset_password.html",
         template_body=MailTemplateResetPasswordBody(
             title="Restore access", link="", name=full_name
         ),
-        purpose=RESET_PASSWORD_PURPOSE,
         throttle_key=throttle_key,
     )

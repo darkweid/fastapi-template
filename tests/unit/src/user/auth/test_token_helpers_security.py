@@ -6,11 +6,16 @@ import pytest
 
 from src.core.auth.credentials import verify_jti
 from src.core.auth.jwt_payload_schema import JWTPayload
+import src.core.auth.one_time_tokens as one_time_tokens
 import src.core.auth.token_helpers as token_helpers
 import src.core.auth.tokens as tokens
 from src.core.errors.exceptions import UnauthorizedException
-from src.user.auth.realm import USER_AUTH_REALM
-import src.user.auth.security as security
+from src.main.config import config
+from src.user.auth.realm import (
+    RESET_PASSWORD_PURPOSE,
+    USER_AUTH_REALM,
+    VERIFICATION_PURPOSE,
+)
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.providers import ProvideValue
 
@@ -44,25 +49,25 @@ def one_time_token_key(purpose: str, email: str) -> str:
 @pytest.fixture(autouse=True)
 def _patch_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        security.config.jwt,
+        config.jwt,
         "JWT_USER_SECRET_KEY",
         TEST_JWT_USER_SECRET_KEY,
     )
     monkeypatch.setattr(
-        security.config.jwt,
+        config.jwt,
         "JWT_USER_VERIFY_SECRET_KEY",
         TEST_JWT_USER_VERIFY_SECRET_KEY,
     )
     monkeypatch.setattr(
-        security.config.jwt,
+        config.jwt,
         "JWT_USER_RESET_PASSWORD_SECRET_KEY",
         TEST_JWT_RESET_SECRET_KEY,
     )
-    monkeypatch.setattr(security.config.jwt, "ALGORITHM", "HS256")
-    monkeypatch.setattr(security.config.jwt, "ACCESS_TOKEN_EXPIRE_MINUTES", 5)
-    monkeypatch.setattr(security.config.jwt, "REFRESH_TOKEN_EXPIRE_MINUTES", 10)
-    monkeypatch.setattr(security.config.jwt, "VERIFICATION_TOKEN_EXPIRE_MINUTES", 5)
-    monkeypatch.setattr(security.config.jwt, "RESET_PASSWORD_TOKEN_EXPIRE_MINUTES", 5)
+    monkeypatch.setattr(config.jwt, "ALGORITHM", "HS256")
+    monkeypatch.setattr(config.jwt, "ACCESS_TOKEN_EXPIRE_MINUTES", 5)
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_EXPIRE_MINUTES", 10)
+    monkeypatch.setattr(config.jwt, "VERIFICATION_TOKEN_EXPIRE_MINUTES", 5)
+    monkeypatch.setattr(config.jwt, "RESET_PASSWORD_TOKEN_EXPIRE_MINUTES", 5)
 
 
 @pytest.mark.asyncio
@@ -170,14 +175,20 @@ async def test_issue_token_requires_keys_to_register_a_session(
 
 
 @pytest.mark.asyncio
-async def test_create_verification_token_stores_active_jti(
+async def test_issue_one_time_token_stores_active_jti_for_verification(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    token = await security.create_verification_token(
-        {"email": "User@Example.com"},
+    # The core neither lowercases nor validates: normalization is the
+    # perimeter's job, so the identifier here arrives already normalized.
+    token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=VERIFICATION_PURPOSE,
+        identifier="user@example.com",
+        mode="verification_token",
+        ttl_minutes=5,
         redis_client=fake_redis,
     )
     decoded = jwt.decode(
@@ -188,7 +199,7 @@ async def test_create_verification_token_stores_active_jti(
     )
 
     assert decoded["mode"] == "verification_token"
-    assert decoded["email"] == "user@example.com"
+    assert decoded["identifier"] == "user@example.com"
     assert decoded["sub"] == "user@example.com"
     assert decoded["jti"]
     assert (
@@ -198,15 +209,23 @@ async def test_create_verification_token_stores_active_jti(
 
 
 @pytest.mark.asyncio
-async def test_create_verification_token_invalidates_previous_jti(
+async def test_issue_one_time_token_invalidates_previous_jti_for_verification(
     fake_redis: InMemoryRedis,
 ) -> None:
-    first_token = await security.create_verification_token(
-        {"email": "user@example.com"},
+    first_token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=VERIFICATION_PURPOSE,
+        identifier="user@example.com",
+        mode="verification_token",
+        ttl_minutes=5,
         redis_client=fake_redis,
     )
-    second_token = await security.create_verification_token(
-        {"email": "user@example.com"},
+    second_token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=VERIFICATION_PURPOSE,
+        identifier="user@example.com",
+        mode="verification_token",
+        ttl_minutes=5,
         redis_client=fake_redis,
     )
 
@@ -231,14 +250,18 @@ async def test_create_verification_token_invalidates_previous_jti(
 
 
 @pytest.mark.asyncio
-async def test_create_reset_password_token_stores_active_jti(
+async def test_issue_one_time_token_stores_active_jti_for_reset_password(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    token = await security.create_reset_password_token(
-        {"email": "User@Example.com"},
+    token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=RESET_PASSWORD_PURPOSE,
+        identifier="user@example.com",
+        mode="reset_password_token",
+        ttl_minutes=5,
         redis_client=fake_redis,
     )
     decoded = jwt.decode(
@@ -249,7 +272,7 @@ async def test_create_reset_password_token_stores_active_jti(
     )
 
     assert decoded["mode"] == "reset_password_token"
-    assert decoded["email"] == "user@example.com"
+    assert decoded["identifier"] == "user@example.com"
     assert decoded["sub"] == "user@example.com"
     assert decoded["jti"]
     assert (
@@ -259,15 +282,23 @@ async def test_create_reset_password_token_stores_active_jti(
 
 
 @pytest.mark.asyncio
-async def test_create_reset_password_token_invalidates_previous_jti(
+async def test_issue_one_time_token_invalidates_previous_jti_for_reset_password(
     fake_redis: InMemoryRedis,
 ) -> None:
-    first_token = await security.create_reset_password_token(
-        {"email": "user@example.com"},
+    first_token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=RESET_PASSWORD_PURPOSE,
+        identifier="user@example.com",
+        mode="reset_password_token",
+        ttl_minutes=5,
         redis_client=fake_redis,
     )
-    second_token = await security.create_reset_password_token(
-        {"email": "user@example.com"},
+    second_token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=RESET_PASSWORD_PURPOSE,
+        identifier="user@example.com",
+        mode="reset_password_token",
+        ttl_minutes=5,
         redis_client=fake_redis,
     )
 
@@ -517,7 +548,7 @@ async def test_issued_tokens_register_the_session_in_the_index(
     # The sessions:{uid} index is what lets a wipe find every session without
     # a keyspace SCAN, so issuance must register and refresh it.
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
-    refresh_ttl_seconds = security.config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+    refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
 
     await tokens.create_refresh_token(
         {"sub": "user-1"},

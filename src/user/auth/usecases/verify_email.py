@@ -6,6 +6,8 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.auth.challenges import ActiveChallengeRegistry
+from src.core.auth.one_time_tokens import decode_one_time_token
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
@@ -15,10 +17,6 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.user.auth.realm import USER_AUTH_REALM, VERIFICATION_PURPOSE
-from src.user.auth.security import (
-    decode_one_time_token,
-    invalidate_active_one_time_token,
-)
 from src.user.cache_keys import user_cache_keys
 from src.user.policies import verification_pending
 
@@ -67,13 +65,14 @@ class VerifyEmailUseCase:
         self.uow = uow
         self.redis_client = redis_client
         self.cache = cache
+        self.challenges = ActiveChallengeRegistry(USER_AUTH_REALM)
 
     async def execute(self, token: str) -> SuccessResponse:
         async with self.uow as uow:
             try:
                 normalized_email = await decode_one_time_token(
                     token,
-                    secret=USER_AUTH_REALM.one_time_secret(VERIFICATION_PURPOSE),
+                    realm=USER_AUTH_REALM,
                     purpose=VERIFICATION_PURPOSE,
                     redis_client=self.redis_client,
                     expected_mode="verification_token",
@@ -87,10 +86,8 @@ class VerifyEmailUseCase:
                     )
                     return SuccessResponse(success=False)
                 if not verification_pending(user):
-                    await invalidate_active_one_time_token(
-                        purpose=VERIFICATION_PURPOSE,
-                        email=normalized_email,
-                        redis_client=self.redis_client,
+                    await self.challenges.invalidate(
+                        VERIFICATION_PURPOSE, normalized_email, self.redis_client
                     )
                     logger.debug(
                         "[VerifyEmail] User with email '%s' already verified.",
@@ -108,10 +105,8 @@ class VerifyEmailUseCase:
                     partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
                 )
                 await uow.commit()
-                await invalidate_active_one_time_token(
-                    purpose=VERIFICATION_PURPOSE,
-                    email=normalized_email,
-                    redis_client=self.redis_client,
+                await self.challenges.invalidate(
+                    VERIFICATION_PURPOSE, normalized_email, self.redis_client
                 )
 
                 logger.info(

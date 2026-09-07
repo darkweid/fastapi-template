@@ -374,5 +374,12 @@ class InMemoryRedis:
     async def ping(self) -> bool:
         return True
 
+    def keys_snapshot(self) -> list[str]:
+        """All keys currently held, string and sorted-set alike.
+
+        For tests asserting a value never leaked into a key, not a Redis API.
+        """
+        return list({*self._store.keys(), *self._zsets.keys()})
+
     async def aclose(self) -> None:
         self.closed = True
