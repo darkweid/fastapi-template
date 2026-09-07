@@ -7,7 +7,7 @@ from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.auth.errors import InvalidCredentialsError
-from src.core.auth.token_helpers import invalidate_all_user_sessions
+from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
@@ -103,7 +103,7 @@ class UpdateUserPasswordUseCase:
             if not updated_user:
                 raise InstanceNotFoundException("User not found.")
             await uow.flush()
-            await invalidate_all_user_sessions(
+            await invalidate_all_sessions(
                 str(updated_user.id), self.redis_client, keys=USER_AUTH_REALM.keys
             )
             await self.cache.invalidate(user_cache_keys.namespace(updated_user.id))

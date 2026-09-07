@@ -7,10 +7,11 @@ import jwt
 import pytest
 from starlette.requests import Request as StarletteRequest
 
-from src.core.auth.cookies import (
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    TokenCookieResponder,
+from src.core.auth.cookies import CSRF_HEADER_NAME, TokenCookieResponder
+from src.core.auth.credentials import (
+    RefreshCredentials,
+    read_refresh_credentials,
+    verify_jti,
 )
 from src.core.auth.csrf import build_csrf_token
 from src.core.auth.errors import CsrfFailedError, TokenExpiredError
@@ -20,16 +21,13 @@ from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
 from src.user.auth.dependencies import (
     AuthenticatedUser,
-    RefreshCredentials,
     authenticate_access_token,
     get_access_by_refresh_token,
     get_authenticated_user,
     get_current_user,
     get_current_user_with_session,
     get_user_id_from_token,
-    read_refresh_credentials,
     verify_csrf,
-    verify_jti,
 )
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 from src.user.auth.realm import USER_AUTH_REALM
@@ -49,6 +47,7 @@ from tests.helpers.requests import build_request
 FROZEN_NOW = 1_755_000_000
 
 AUTH_KEYS = USER_AUTH_REALM.keys
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
 
 
 def encode_token(payload: dict[str, object], secret: str) -> str:
@@ -70,7 +69,7 @@ async def test_verify_jti_accepts_bearer_prefix(fake_redis: InMemoryRedis) -> No
         ex=60,
     )
 
-    result = await verify_jti(f"Bearer {token}", fake_redis)
+    result = await verify_jti(f"Bearer {token}", fake_redis, realm=USER_AUTH_REALM)
 
     assert result["sub"] == "user-1"
 
@@ -82,7 +81,7 @@ async def test_verify_jti_expired_token(fake_redis: InMemoryRedis) -> None:
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
 
     with pytest.raises(TokenExpiredError, match="Token expired") as exc_info:
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
     assert exc_info.value.error_code is ErrorCode.TOKEN_EXPIRED
 
@@ -93,7 +92,7 @@ async def test_verify_jti_invalid_signature(fake_redis: InMemoryRedis) -> None:
     token = encode_token(payload, "wrong_secret_key_for_tests_more_than_32")
 
     with pytest.raises(UnauthorizedException, match="Invalid token"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
 
 @pytest.mark.asyncio
@@ -103,7 +102,7 @@ async def test_verify_jti_invalid_structure(fake_redis: InMemoryRedis) -> None:
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
 
     with pytest.raises(UnauthorizedException, match="Invalid token structure"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
 
 @pytest.mark.asyncio
@@ -124,12 +123,12 @@ async def test_verify_jti_refresh_reuse_invalidates(
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        "src.core.auth.credentials.invalidate_all_sessions",
         invalidate_mock,
     )
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
@@ -151,12 +150,12 @@ async def test_verify_jti_used_marker_within_grace_rejects_without_wipe(
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        "src.core.auth.credentials.invalidate_all_sessions",
         invalidate_mock,
     )
 
     with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock.assert_not_awaited()
 
@@ -176,12 +175,12 @@ async def test_verify_jti_used_marker_past_grace_wipes(
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        "src.core.auth.credentials.invalidate_all_sessions",
         invalidate_mock,
     )
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
@@ -197,7 +196,7 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
     )
 
     with pytest.raises(UnauthorizedException, match="Token invalidated"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
 
 @pytest.mark.asyncio
@@ -400,7 +399,8 @@ def _request(
 
 def test_cookie_is_preferred_over_the_header() -> None:
     credentials = read_refresh_credentials(
-        _request(cookie="from-cookie", authorization="from-header")
+        _request(cookie="from-cookie", authorization="from-header"),
+        realm=USER_AUTH_REALM,
     )
 
     assert credentials is not None
@@ -409,7 +409,9 @@ def test_cookie_is_preferred_over_the_header() -> None:
 
 
 def test_header_is_used_when_there_is_no_cookie() -> None:
-    credentials = read_refresh_credentials(_request(authorization="from-header"))
+    credentials = read_refresh_credentials(
+        _request(authorization="from-header"), realm=USER_AUTH_REALM
+    )
 
     assert credentials is not None
     assert credentials.token == "from-header"
@@ -417,7 +419,7 @@ def test_header_is_used_when_there_is_no_cookie() -> None:
 
 
 def test_no_credentials_returns_none() -> None:
-    assert read_refresh_credentials(_request()) is None
+    assert read_refresh_credentials(_request(), realm=USER_AUTH_REALM) is None
 
 
 CSRF_SECRET = "unit-test-csrf-secret-key-value-32"
@@ -425,6 +427,7 @@ CSRF_SECRET = "unit-test-csrf-secret-key-value-32"
 
 def _refresh_responder() -> TokenCookieResponder:
     return TokenCookieResponder(
+        realm=USER_AUTH_REALM,
         cookie_config=CookieConfig(CSRF_SECRET_KEY=CSRF_SECRET),
         refresh_token_expire_minutes=60,
     )
@@ -527,7 +530,7 @@ async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
     identity = await dependencies.get_logout_identity(token=token)
 
     assert identity == dependencies.SessionIdentity(
-        user_id="user-1", session_id="session-1"
+        subject_id="user-1", session_id="session-1"
     )
 
 
@@ -539,7 +542,7 @@ async def test_get_logout_identity_reads_a_bearer_prefixed_token() -> None:
     identity = await dependencies.get_logout_identity(token=f"Bearer {token}")
 
     assert identity == dependencies.SessionIdentity(
-        user_id="user-1", session_id="session-1"
+        subject_id="user-1", session_id="session-1"
     )
 
 

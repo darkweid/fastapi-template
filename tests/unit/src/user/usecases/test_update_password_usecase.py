@@ -73,7 +73,7 @@ async def test_update_password_rejects_wrong_current_password(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        "src.user.usecases.update_password.invalidate_all_sessions",
         invalidate_mock,
     )
     original_hash = user.password_hash
@@ -108,7 +108,7 @@ async def test_update_password_rejects_reusing_the_current_password(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        "src.user.usecases.update_password.invalidate_all_sessions",
         invalidate_mock,
     )
 
@@ -140,7 +140,7 @@ async def test_update_password_missing_row_on_update_is_reported(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        "src.user.usecases.update_password.invalidate_all_sessions",
         invalidate_mock,
     )
 
@@ -165,7 +165,7 @@ async def test_update_password_success(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        "src.user.usecases.update_password.invalidate_all_sessions",
         invalidate_mock,
     )
     cache_key = user_cache_keys.summary(user.id)
@@ -199,7 +199,7 @@ async def test_update_password_redis_failure_skips_commit(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock(side_effect=RuntimeError("redis down"))
     monkeypatch.setattr(
-        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        "src.user.usecases.update_password.invalidate_all_sessions",
         invalidate_mock,
     )
 
@@ -226,7 +226,7 @@ async def test_update_password_commit_failure_after_invalidation(
     uow.commit = AsyncMock(side_effect=RuntimeError("db down"))
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.usecases.update_password.invalidate_all_user_sessions",
+        "src.user.usecases.update_password.invalidate_all_sessions",
         invalidate_mock,
     )
 

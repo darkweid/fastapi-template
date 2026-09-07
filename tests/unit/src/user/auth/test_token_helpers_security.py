@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
+from src.core.auth.credentials import verify_jti
 from src.core.auth.jwt_payload_schema import JWTPayload
 import src.core.auth.token_helpers as token_helpers
 import src.core.auth.tokens as tokens
 from src.core.errors.exceptions import UnauthorizedException
-from src.user.auth.dependencies import verify_jti
 from src.user.auth.realm import USER_AUTH_REALM
 import src.user.auth.security as security
 from tests.fakes.redis import InMemoryRedis
@@ -78,7 +78,7 @@ async def test_create_access_token_stores_jti(
     monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
     token = await tokens.create_access_token(
-        {"sub": "user"}, redis_client=fake_redis, keys=AUTH_KEYS
+        {"sub": "user"}, redis_client=fake_redis, realm=USER_AUTH_REALM
     )
     decoded = jwt.decode(
         token,
@@ -106,7 +106,7 @@ async def test_create_access_token_ignores_removed_family_claim(
         {"sub": "user", "family": "family-1"},
         redis_client=fake_redis,
         session_id="session-1",
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
     decoded = jwt.decode(
         token,
@@ -132,7 +132,7 @@ async def test_create_refresh_token_stores_jti(
     monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
     token = await tokens.create_refresh_token(
-        {"sub": "user"}, redis_client=fake_redis, keys=AUTH_KEYS
+        {"sub": "user"}, redis_client=fake_redis, realm=USER_AUTH_REALM
     )
     decoded = jwt.decode(
         token,
@@ -146,6 +146,27 @@ async def test_create_refresh_token_stores_jti(
         await fake_redis.get(refresh_jti_key(decoded["sub"], decoded["session_id"]))
         == decoded["jti"]
     )
+
+
+@pytest.mark.asyncio
+async def test_issue_token_requires_keys_to_register_a_session(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """
+    Registering a session (redis_key + session_id) without an index namespace
+    (keys) would silently leave that session invisible to a mass wipe. This
+    must fail loudly instead.
+    """
+    with pytest.raises(ValueError, match="keys is required"):
+        await tokens.issue_token(
+            sub="user",
+            mode="refresh_token",
+            ttl_minutes=5,
+            secret=TEST_JWT_USER_SECRET_KEY,
+            redis_client=fake_redis,
+            session_id="session-1",
+            redis_key="some:refresh:key",
+        )
 
 
 @pytest.mark.asyncio
@@ -280,7 +301,7 @@ async def test_validate_token_structure_missing_fields(
     Then: UnauthorizedException is raised and all sessions for that user are invalidated.
     """
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
     payload: JWTPayload = {"sub": "u1", "session_id": "s1", "mode": "refresh_token"}
 
     with pytest.raises(UnauthorizedException):
@@ -302,7 +323,7 @@ async def test_execute_token_rotation_reused(
     """
     await fake_redis.setex(used_refresh_key("u1", "j1"), 100, "used")
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
         await token_helpers.execute_token_rotation(
@@ -323,7 +344,7 @@ async def test_execute_token_rotation_invalid(
     """
     await fake_redis.set(refresh_jti_key("u1", "s1"), "wrong-jti", ex=600)
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
         await token_helpers.execute_token_rotation(
@@ -351,7 +372,7 @@ async def test_execute_token_rotation_ok(fake_redis: InMemoryRedis) -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalidate_all_user_sessions(fake_redis: InMemoryRedis) -> None:
+async def test_invalidate_all_sessions(fake_redis: InMemoryRedis) -> None:
     """
     Given: user sessions are registered in the sessions:{uid} index.
     When: user session invalidation is executed.
@@ -369,11 +390,11 @@ async def test_invalidate_all_user_sessions(fake_redis: InMemoryRedis) -> None:
     )
 
     async def scan_forbidden(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("invalidate_all_user_sessions must not SCAN")
+        raise AssertionError("invalidate_all_sessions must not SCAN")
 
     fake_redis.scan = scan_forbidden  # type: ignore[method-assign]
 
-    await token_helpers.invalidate_all_user_sessions("1", fake_redis, keys=AUTH_KEYS)
+    await token_helpers.invalidate_all_sessions("1", fake_redis, keys=AUTH_KEYS)
 
     assert await fake_redis.exists(access_jti_key("1", "s1")) == 0
     assert await fake_redis.exists(refresh_jti_key("1", "s1")) == 0
@@ -384,7 +405,7 @@ async def test_invalidate_all_user_sessions(fake_redis: InMemoryRedis) -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalidate_user_session_removes_only_target_session(
+async def test_invalidate_session_removes_only_target_session(
     fake_redis: InMemoryRedis,
 ) -> None:
     """
@@ -399,7 +420,7 @@ async def test_invalidate_user_session_removes_only_target_session(
     await fake_redis.zadd(
         AUTH_KEYS.sessions("1"), {"s1": FROZEN_NOW + 60, "s2": FROZEN_NOW + 60}
     )
-    await token_helpers.invalidate_user_session("1", "s1", fake_redis, keys=AUTH_KEYS)
+    await token_helpers.invalidate_session("1", "s1", fake_redis, keys=AUTH_KEYS)
 
     assert await fake_redis.exists(access_jti_key("1", "s1")) == 0
     assert await fake_redis.exists(refresh_jti_key("1", "s1")) == 0
@@ -420,13 +441,13 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
         {"sub": "user", "family": "family-1"},
         redis_client=fake_redis,
         session_id="session-1",
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
     refresh_token = await tokens.create_refresh_token(
         {"sub": "user"},
         redis_client=fake_redis,
         session_id="session-1",
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
     refresh_payload = jwt.decode(
         refresh_token,
@@ -438,7 +459,7 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
     rotated_refresh_token = await tokens.rotate_refresh_token(
         refresh_payload,
         fake_redis,
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
     rotated_refresh_payload = jwt.decode(
         rotated_refresh_token,
@@ -450,20 +471,22 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
         {"sub": "user"},
         redis_client=fake_redis,
         session_id=rotated_refresh_payload["session_id"],
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
 
     with pytest.raises(UnauthorizedException, match="Token invalidated"):
-        await verify_jti(access_token_before_refresh, fake_redis)
+        await verify_jti(access_token_before_refresh, fake_redis, realm=USER_AUTH_REALM)
 
-    verified_payload = await verify_jti(access_token_after_refresh, fake_redis)
+    verified_payload = await verify_jti(
+        access_token_after_refresh, fake_redis, realm=USER_AUTH_REALM
+    )
 
     assert verified_payload["session_id"] == "session-1"
     assert "family" not in verified_payload
 
 
 @pytest.mark.asyncio
-async def test_invalidate_all_user_sessions_keeps_other_users_keys(
+async def test_invalidate_all_sessions_keeps_other_users_keys(
     fake_redis: InMemoryRedis,
 ) -> None:
     """
@@ -478,7 +501,7 @@ async def test_invalidate_all_user_sessions_keeps_other_users_keys(
     await fake_redis.zadd(AUTH_KEYS.sessions("1"), {"a1": FROZEN_NOW + 60})
     await fake_redis.zadd(AUTH_KEYS.sessions("2"), {"a2": FROZEN_NOW + 60})
 
-    await token_helpers.invalidate_all_user_sessions("1", fake_redis, keys=AUTH_KEYS)
+    await token_helpers.invalidate_all_sessions("1", fake_redis, keys=AUTH_KEYS)
 
     assert await fake_redis.exists(access_jti_key("1", "a1")) == 0
     assert await fake_redis.exists(refresh_jti_key("1", "a1")) == 0
@@ -500,13 +523,13 @@ async def test_issued_tokens_register_the_session_in_the_index(
         {"sub": "user-1"},
         redis_client=fake_redis,
         session_id="session-1",
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
     await tokens.create_access_token(
         {"sub": "user-1"},
         redis_client=fake_redis,
         session_id="session-1",
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
 
     index_key = AUTH_KEYS.sessions("user-1")
@@ -535,7 +558,7 @@ async def test_issuance_prunes_index_members_past_their_refresh_lifetime(
         {"sub": "user-1"},
         redis_client=fake_redis,
         session_id="session-1",
-        keys=AUTH_KEYS,
+        realm=USER_AUTH_REALM,
     )
 
     assert await fake_redis.zrange(index_key, 0, -1) == ["session-1"]

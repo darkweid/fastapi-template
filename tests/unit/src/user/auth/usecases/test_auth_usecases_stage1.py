@@ -126,7 +126,7 @@ async def test_get_tokens_by_refresh_user_usecase_success(
         {"sub": str(user.id)},
         redis_client=fake_redis,
         session_id=payload["session_id"],
-        keys=USER_AUTH_REALM.keys,
+        realm=USER_AUTH_REALM,
     )
 
 
@@ -411,7 +411,7 @@ async def test_logout_usecase_invalidates_current_session(
 ) -> None:
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.logout.invalidate_user_session",
+        "src.user.auth.usecases.logout.invalidate_session",
         invalidate_mock,
     )
 
@@ -437,7 +437,7 @@ async def test_logout_usecase_can_invalidate_all_sessions(
 ) -> None:
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.logout.invalidate_all_user_sessions",
+        "src.user.auth.usecases.logout.invalidate_all_sessions",
         invalidate_mock,
     )
 
@@ -466,7 +466,7 @@ async def test_reset_password_confirm_success(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
 
@@ -570,7 +570,7 @@ async def test_reset_password_confirm_redis_failure_skips_commit(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock(side_effect=RuntimeError("redis down"))
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
     token = await build_reset_password_token({"email": user.email}, fake_redis)
@@ -606,7 +606,7 @@ async def test_reset_password_confirm_cannot_reuse_successful_token(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
     token = await build_reset_password_token({"email": user.email}, fake_redis)
@@ -639,7 +639,7 @@ async def test_reset_password_confirm_commit_failure_after_invalidation_consumes
     uow.commit = AsyncMock(side_effect=RuntimeError("db down"))
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
     token = await build_reset_password_token({"email": user.email}, fake_redis)

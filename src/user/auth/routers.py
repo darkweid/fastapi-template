@@ -2,16 +2,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Response
 
-from src.core.auth.cookies import TokenCookieResponder, get_token_cookie_responder
+from src.core.auth.cookies import TokenCookieResponder
+from src.core.auth.credentials import SessionIdentity
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.dependencies import (
-    SessionIdentity,
     get_access_by_refresh_token,
     get_logout_identity,
+    get_token_cookie_responder,
     get_user_id_from_token,
     verify_csrf,
 )
@@ -206,7 +207,7 @@ async def logout_user(
     """
     if identity is not None:
         await use_case.execute(
-            user_id=identity.user_id,
+            user_id=identity.subject_id,
             session_id=identity.session_id,
             terminate_all_sessions=(
                 data.terminate_all_sessions if data is not None else False

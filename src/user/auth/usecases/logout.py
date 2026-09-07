@@ -4,10 +4,7 @@ from fastapi import Depends
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.auth.token_helpers import (
-    invalidate_all_user_sessions,
-    invalidate_user_session,
-)
+from src.core.auth.token_helpers import invalidate_all_sessions, invalidate_session
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.user.auth.realm import USER_AUTH_REALM
@@ -40,14 +37,14 @@ class LogoutUseCase:
             SuccessResponse with a successful operation flag.
         """
         if terminate_all_sessions:
-            await invalidate_all_user_sessions(
+            await invalidate_all_sessions(
                 user_id, self.redis_client, keys=USER_AUTH_REALM.keys
             )
             logger.debug(
                 "[LogoutUser] Invalidated all sessions for user '%s'.", user_id
             )
         else:
-            await invalidate_user_session(
+            await invalidate_session(
                 user_id, session_id, self.redis_client, keys=USER_AUTH_REALM.keys
             )
             logger.debug(

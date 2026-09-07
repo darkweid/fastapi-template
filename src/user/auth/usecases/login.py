@@ -150,13 +150,13 @@ class LoginUserUseCase:
                     token_data,
                     redis_client=self.redis_client,
                     session_id=session_id,
-                    keys=USER_AUTH_REALM.keys,
+                    realm=USER_AUTH_REALM,
                 ),
                 refresh_token=await create_refresh_token(
                     token_data,
                     redis_client=self.redis_client,
                     session_id=session_id,
-                    keys=USER_AUTH_REALM.keys,
+                    realm=USER_AUTH_REALM,
                 ),
             )
 

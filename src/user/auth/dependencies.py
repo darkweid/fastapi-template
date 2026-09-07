@@ -1,28 +1,24 @@
 from dataclasses import dataclass
-from typing import Annotated, cast
+from typing import Annotated
 
 from fastapi import Depends, Request, Security
 from fastapi.security.api_key import APIKeyHeader
-import jwt
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth.cookies import (
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    TokenCookieResponder,
-    get_token_cookie_responder,
+from src.core.auth.cookies import CSRF_HEADER_NAME, TokenCookieResponder
+from src.core.auth.credentials import (
+    RefreshCredentials,
+    SessionIdentity,
+    decode_logout_identity,
+    read_refresh_credentials,
+    verify_jti,
 )
-from src.core.auth.errors import TokenExpiredError
 from src.core.auth.jwt_payload_schema import JWTPayload
-from src.core.auth.token_helpers import (
-    invalidate_all_user_sessions,
-    is_within_reuse_grace,
-)
 from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
-from src.main.config import config
+from src.main.config import Config, get_settings
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.dependencies import get_user_repository
 from src.user.models import User
@@ -48,39 +44,21 @@ class AuthenticatedUser:
     session_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class SessionIdentity:
-    """The user and session a token names, without loading the user entity."""
-
-    user_id: str
-    session_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class RefreshCredentials:
-    """A refresh token together with where it actually came from."""
-
-    token: str
-    from_cookie: bool
-
-
-def read_refresh_credentials(request: Request) -> RefreshCredentials | None:
+def get_token_cookie_responder(
+    settings: Annotated[Config, Depends(get_settings)],
+) -> TokenCookieResponder:
     """
-    Locate the refresh token on a request: cookie first, Authorization header second.
+    Temporary home for the user-realm cookie responder factory.
 
-    The source is a fact about the request, never a client claim. A caller must not
-    be able to skip the CSRF check by declaring a body transport while still relying
-    on the cookie the browser attached automatically.
+    A realm-generic factory belongs in a shared DI module once a second realm
+    exists; until then this stays the one place that binds TokenCookieResponder
+    to USER_AUTH_REALM.
     """
-    cookie_token = request.cookies.get(REFRESH_COOKIE_NAME)
-    if cookie_token:
-        return RefreshCredentials(token=cookie_token, from_cookie=True)
-
-    header_token = request.headers.get("Authorization")
-    if header_token:
-        return RefreshCredentials(token=header_token, from_cookie=False)
-
-    return None
+    return TokenCookieResponder(
+        realm=USER_AUTH_REALM,
+        cookie_config=settings.cookie,
+        refresh_token_expire_minutes=settings.jwt.REFRESH_TOKEN_EXPIRE_MINUTES,
+    )
 
 
 async def get_refresh_credentials(
@@ -94,7 +72,7 @@ async def get_refresh_credentials(
     OpenAPI document and Swagger keeps its authorize button; the actual lookup goes
     through read_refresh_credentials so that cookie and header follow one rule.
     """
-    credentials = read_refresh_credentials(request)
+    credentials = read_refresh_credentials(request, realm=USER_AUTH_REALM)
     if credentials is None:
         raise UnauthorizedException("Could not validate credentials")
 
@@ -144,7 +122,7 @@ async def authenticate_access_token(
         "Could not validate credentials",
     )
 
-    payload = await verify_jti(token, redis_client)
+    payload = await verify_jti(token, redis_client, realm=USER_AUTH_REALM)
 
     try:
         user_id = payload["sub"]
@@ -200,48 +178,10 @@ async def get_logout_identity(
     """
     Identify the session a logout request asks to terminate.
 
-    Unlike every other authenticated dependency this one tolerates an expired access
-    token, and answers None instead of raising when it cannot identify a session.
-    Logout has to stay usable once the access token expires: the refresh cookie is
-    scoped to the refresh route and never reaches this endpoint, and a browser cannot
-    drop an httponly cookie itself, so a rejected logout would leave the client
-    holding a session it can neither use nor clear. The signature is still verified -
-    only the `exp` claim is relaxed - so a forged token identifies nothing.
-
-    Returns:
-        SessionIdentity: The user and session named by a signature-valid access token.
-        None: If no token was sent, or it is forged, malformed or not an access token.
+    Thin wrapper over decode_logout_identity, bound to the user realm; see that
+    function's docstring for why an expired token is tolerated here.
     """
-    if not token:
-        return None
-
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
-
-    try:
-        payload = cast(
-            JWTPayload,
-            jwt.decode(
-                token,
-                config.jwt.JWT_USER_SECRET_KEY,
-                algorithms=[config.jwt.ALGORITHM],
-                options={"verify_exp": False},
-            ),
-        )
-    except jwt.PyJWTError:
-        return None
-
-    try:
-        user_id = payload["sub"]
-        session_id = payload["session_id"]
-        mode = payload["mode"]
-    except KeyError:
-        return None
-
-    if mode != "access_token":
-        return None
-
-    return SessionIdentity(user_id=user_id, session_id=session_id)
+    return await decode_logout_identity(token, realm=USER_AUTH_REALM)
 
 
 async def get_access_by_refresh_token(
@@ -273,7 +213,7 @@ async def get_access_by_refresh_token(
         "Could not validate credentials",
     )
 
-    payload = await verify_jti(credentials.token, redis_client)
+    payload = await verify_jti(credentials.token, redis_client, realm=USER_AUTH_REALM)
 
     try:
         user_id = payload["sub"]
@@ -311,14 +251,14 @@ async def get_user_id_from_token(
     Raises:
         UnauthorizedException: If no credentials are found or the token is invalid.
     """
-    credentials = read_refresh_credentials(request)
+    credentials = read_refresh_credentials(request, realm=USER_AUTH_REALM)
     if credentials is None:
         raise UnauthorizedException(
             "Authentication token not found",
         )
 
     redis_client = await get_redis_client(request)
-    payload = await verify_jti(credentials.token, redis_client)
+    payload = await verify_jti(credentials.token, redis_client, realm=USER_AUTH_REALM)
     try:
         identifier = payload["sub"]
 
@@ -327,77 +267,3 @@ async def get_user_id_from_token(
         raise UnauthorizedException(
             "Invalid or expired token",
         ) from None
-
-
-async def verify_jti(token: str, redis_client: Redis) -> JWTPayload:
-    """
-    Verify JWT claims and compare the token JTI against Redis state.
-
-    Args:
-        token: The JWT token, with or without the `Bearer ` prefix.
-        redis_client: Redis client used to validate active and used keys.
-
-    Returns:
-        JWTPayload: The verified JWT payload.
-
-    Raises:
-        TokenExpiredError: If the token has expired.
-        UnauthorizedException: If the token is malformed, has an invalid
-            structure, was reused, or no longer matches the active Redis entry.
-    """
-    if isinstance(token, str) and token.lower().startswith("bearer "):
-        token = token[7:].strip()
-
-    try:
-        payload = jwt.decode(
-            token,
-            config.jwt.JWT_USER_SECRET_KEY,
-            algorithms=[config.jwt.ALGORITHM],
-        )
-        payload_typed = cast(JWTPayload, payload)
-    except jwt.ExpiredSignatureError:
-        raise TokenExpiredError("Token expired") from None
-    except jwt.PyJWTError:
-        raise UnauthorizedException("Invalid token") from None
-
-    try:
-        jti = payload_typed["jti"]
-        mode = payload_typed["mode"]
-        user_id = payload_typed["sub"]
-        session_id = payload_typed["session_id"]
-    except KeyError:
-        raise UnauthorizedException("Invalid token structure") from None
-
-    if mode not in {"access_token", "refresh_token"}:
-        raise UnauthorizedException("Invalid token structure")
-
-    if mode == "refresh_token":
-        used_marker = await redis_client.get(USER_AUTH_REALM.keys.used(user_id, jti))
-
-        if used_marker is not None:
-            # Inside the grace window this is a benign double-submit, not
-            # theft: reject the request but keep the session family alive.
-            if await is_within_reuse_grace(used_marker, redis_client):
-                raise UnauthorizedException("Token invalidated or expired")
-            await invalidate_all_user_sessions(
-                user_id, redis_client, keys=USER_AUTH_REALM.keys
-            )
-            raise UnauthorizedException(
-                "Token reuse detected. All sessions invalidated."
-            )
-
-    active_key = USER_AUTH_REALM.keys.session_key(mode, user_id, session_id)
-    stored_jti = await redis_client.get(active_key)
-
-    stored_jti_str = (
-        stored_jti.decode()
-        if isinstance(stored_jti, (bytes, bytearray))
-        else stored_jti
-    )
-
-    if not stored_jti or stored_jti_str != jti:
-        raise UnauthorizedException(
-            "Token invalidated or expired",
-        )
-
-    return payload_typed

@@ -6,7 +6,7 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.auth.token_helpers import invalidate_all_user_sessions
+from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
@@ -108,7 +108,7 @@ class ResetPasswordConfirmUseCase:
                     email=normalized_email,
                     redis_client=self.redis_client,
                 )
-                await invalidate_all_user_sessions(
+                await invalidate_all_sessions(
                     str(user.id), self.redis_client, keys=USER_AUTH_REALM.keys
                 )
                 # A successful reset proves mailbox ownership: clear the

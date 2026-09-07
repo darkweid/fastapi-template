@@ -66,7 +66,7 @@ async def build_access_token(
     session_id: str | None = None,
 ) -> str:
     return await create_access_token(
-        data, redis_client, session_id=session_id, keys=USER_AUTH_REALM.keys
+        data, redis_client, session_id=session_id, realm=USER_AUTH_REALM
     )
 
 
@@ -77,7 +77,7 @@ async def build_refresh_token(
     session_id: str | None = None,
 ) -> str:
     return await create_refresh_token(
-        data, redis_client, session_id=session_id, keys=USER_AUTH_REALM.keys
+        data, redis_client, session_id=session_id, realm=USER_AUTH_REALM
     )
 
 

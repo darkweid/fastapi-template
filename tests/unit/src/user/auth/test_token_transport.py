@@ -6,12 +6,7 @@ from fastapi.routing import APIRoute
 from httpx2 import ASGITransport, AsyncClient
 import pytest
 
-from src.core.auth.cookies import (
-    CSRF_COOKIE_NAME,
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    REFRESH_COOKIE_PATH,
-)
+from src.core.auth.cookies import CSRF_HEADER_NAME
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.database.session import get_session
@@ -21,6 +16,7 @@ from src.system import routers as system_routers
 from src.user import routers as user_routers
 from src.user.auth import routers as user_auth_routers
 from src.user.auth.dependencies import get_access_by_refresh_token
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )
@@ -34,6 +30,10 @@ from tests.fakes.redis import InMemoryRedis
 from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
 from tests.helpers.providers import ProvideAsyncValue, ProvideValue
+
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
+CSRF_COOKIE_NAME = USER_AUTH_REALM.csrf_cookie
+REFRESH_COOKIE_PATH = USER_AUTH_REALM.refresh_cookie_path
 
 
 class FakeUseCase:

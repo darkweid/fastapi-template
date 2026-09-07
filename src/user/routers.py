@@ -8,7 +8,7 @@ from fastapi import (
     Response,
 )
 
-from src.core.auth.cookies import TokenCookieResponder, get_token_cookie_responder
+from src.core.auth.cookies import TokenCookieResponder
 from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.cache.decorators import cached_route
 from src.core.cache.interface import CacheScope
@@ -17,6 +17,7 @@ from src.core.schemas import SuccessResponse
 from src.user.auth.dependencies import (
     get_authenticated_user,
     get_current_user,
+    get_token_cookie_responder,
     get_user_id_from_token,
 )
 from src.user.auth.permissions.enum import Permission

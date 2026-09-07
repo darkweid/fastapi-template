@@ -70,12 +70,12 @@ class GetTokensByRefreshUserUseCase:
         ensure_can_use_session(user)
 
         new_refresh_token = await rotate_refresh_token(
-            old_token_payload, self.redis_client, keys=USER_AUTH_REALM.keys
+            old_token_payload, self.redis_client, realm=USER_AUTH_REALM
         )
 
         new_payload = jwt.decode(
             new_refresh_token,
-            config.jwt.JWT_USER_SECRET_KEY,
+            USER_AUTH_REALM.secret,
             algorithms=[config.jwt.ALGORITHM],
         )
 
@@ -83,7 +83,7 @@ class GetTokensByRefreshUserUseCase:
             {"sub": str(user.id)},
             redis_client=self.redis_client,
             session_id=new_payload["session_id"],
-            keys=USER_AUTH_REALM.keys,
+            realm=USER_AUTH_REALM,
         )
 
         return TokenModel(
