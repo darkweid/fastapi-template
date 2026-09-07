@@ -24,9 +24,7 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.main.config import get_settings
 from src.user.auth.realm import USER_AUTH_REALM
-from src.user.auth.usecases.get_access_by_refresh import (
-    get_tokens_by_refresh_user_use_case,
-)
+from src.user.auth.routers import get_refresh_access_use_case
 from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_refresh_token
 from tests.factories.user_factory import build_user
@@ -87,7 +85,7 @@ async def test_csrf_failure_does_not_consume_the_user_rate_limit(
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
     monkeypatch.setattr(UserRepository, "get_single", AsyncMock(return_value=user))
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case,
+        get_refresh_access_use_case,
         ProvideValue(FakeUseCase(TokenModel(access_token="a", refresh_token="r"))),
     )
 
@@ -128,7 +126,7 @@ async def test_valid_csrf_still_consumes_the_user_rate_limit(
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
     monkeypatch.setattr(UserRepository, "get_single", AsyncMock(return_value=user))
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(tokens))
+        get_refresh_access_use_case, ProvideValue(FakeUseCase(tokens))
     )
 
     async_client.cookies.set(

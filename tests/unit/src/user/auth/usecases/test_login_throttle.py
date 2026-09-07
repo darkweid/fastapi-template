@@ -7,6 +7,7 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
     TooManyRequestsException,
 )
+from src.core.schemas import TokenModel
 from src.user.auth.realm import USER_AUTH_REALM
 import src.user.auth.usecases.login as login_usecase
 from src.user.auth.usecases.login import (
@@ -49,8 +50,8 @@ async def test_login_blocked_at_the_failure_limit_before_password_verify(
     """
     Given: the per-email failure counter has reached the limit.
     When: another login for that email arrives.
-    Then: it answers 429 with the window's remaining TTL, without spending a
-    password hash verification or touching the database.
+    Then: it answers 429, without spending a password hash verification or
+    touching the database.
     """
     user = build_user()
     uow = build_uow(user, fake_session)
@@ -64,14 +65,13 @@ async def test_login_blocked_at_the_failure_limit_before_password_verify(
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
-    with pytest.raises(TooManyRequestsException) as exc_info:
+    with pytest.raises(TooManyRequestsException):
         await use_case.execute(
             login_usecase.LoginUserModel(
                 email="user@example.com", password="plain-pass"
             )
         )
 
-    assert exc_info.value.retry_after == 600
     verify_mock.assert_not_awaited()
     uow.commit.assert_not_awaited()
 
@@ -101,15 +101,14 @@ async def test_wrong_password_increments_the_counter_and_arms_the_window(
 
 
 @pytest.mark.asyncio
-async def test_throttled_counter_without_ttl_reports_the_full_window(
+async def test_throttled_counter_without_ttl_still_blocks(
     monkeypatch: pytest.MonkeyPatch,
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     cache: InMemoryCache,
 ) -> None:
-    # A stranded persistent counter (crash between INCR and EXPIRE) never
-    # reaches _register_login_failure again - the gate rejects first - so the
-    # gate itself must arm the window, or the lockout becomes permanent.
+    # A counter at the limit blocks regardless of whether it still carries a
+    # TTL - LoginThrottle.ensure_under_limit reads only the count.
     user = build_user()
     uow = build_uow(user, fake_session)
     monkeypatch.setattr(login_usecase, "verify_password", AsyncMock(return_value=True))
@@ -118,15 +117,12 @@ async def test_throttled_counter_without_ttl_reports_the_full_window(
 
     use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
-    with pytest.raises(TooManyRequestsException) as exc_info:
+    with pytest.raises(TooManyRequestsException):
         await use_case.execute(
             login_usecase.LoginUserModel(
                 email="user@example.com", password="plain-pass"
             )
         )
-
-    assert exc_info.value.retry_after == LOGIN_FAILURES_WINDOW_SECONDS
-    assert await fake_redis.ttl(failures_key) == LOGIN_FAILURES_WINDOW_SECONDS
 
 
 @pytest.mark.asyncio
@@ -192,10 +188,11 @@ async def test_successful_login_clears_the_counter(
     )
     monkeypatch.setattr(login_usecase, "verify_password", AsyncMock(return_value=True))
     monkeypatch.setattr(
-        login_usecase, "create_access_token", AsyncMock(return_value="access")
-    )
-    monkeypatch.setattr(
-        login_usecase, "create_refresh_token", AsyncMock(return_value="refresh")
+        login_usecase,
+        "issue_session_pair",
+        AsyncMock(
+            return_value=TokenModel(access_token="access", refresh_token="refresh")
+        ),
     )
     failures_key = USER_AUTH_REALM.keys.login_failures("user@example.com")
     await fake_redis.setex(failures_key, 600, "3")

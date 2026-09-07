@@ -13,12 +13,12 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
 from src.user.auth.dependencies import get_access_by_refresh_token, get_logout_identity
 from src.user.auth.realm import USER_AUTH_REALM
-from src.user.auth.routers import router
-from src.user.auth.usecases.get_access_by_refresh import (
-    get_tokens_by_refresh_user_use_case,
+from src.user.auth.routers import (
+    get_logout_use_case,
+    get_refresh_access_use_case,
+    router,
 )
 from src.user.auth.usecases.login import get_login_user_use_case
-from src.user.auth.usecases.logout import get_logout_use_case
 from src.user.auth.usecases.register import get_register_use_case
 from src.user.auth.usecases.resend_verification import get_send_verification_use_case
 from src.user.auth.usecases.reset_password_confirm import (
@@ -136,7 +136,7 @@ async def test_refresh_endpoint(
     dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
     tokens = TokenModel(access_token="a", refresh_token="r")
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(tokens))
+        get_refresh_access_use_case, ProvideValue(FakeUseCase(tokens))
     )
 
     # The route-level CSRF gate resolves the refresh credentials itself, so a request
@@ -189,8 +189,8 @@ async def test_refresh_of_blocked_user_reports_user_blocked(
     dependency_overrides: DependencyOverrides,
     fake_redis: InMemoryRedis,
 ) -> None:
-    # The real GetTokensByRefreshUserUseCase must run here too: a caller who
-    # already holds a valid refresh token gets the real reason, unlike login.
+    # The real RefreshAccessUseCase must run here too: a caller who already
+    # holds a valid refresh token gets the real reason, unlike login.
     user = build_user(is_active=False)
     payload: JWTPayload = build_refresh_payload(str(user.id))
     dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
@@ -246,7 +246,7 @@ async def test_logout_endpoint(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        user_id=str(user.id),
+        subject_id=str(user.id),
         session_id="session-1",
         terminate_all_sessions=False,
     )
@@ -323,7 +323,7 @@ async def test_logout_endpoint_can_terminate_all_sessions(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        user_id=str(user.id),
+        subject_id=str(user.id),
         session_id="session-1",
         terminate_all_sessions=True,
     )
@@ -484,7 +484,7 @@ async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        user_id="user-1",
+        subject_id="user-1",
         session_id="session-1",
         terminate_all_sessions=False,
     )

@@ -1,12 +1,16 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Response
+from redis.asyncio import Redis
 
 from src.core.auth.cookies import TokenCookieResponder
 from src.core.auth.credentials import SessionIdentity
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.token_transport import TokenTransport, get_token_transport
+from src.core.auth.usecases.logout import LogoutUseCase
+from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
 from src.core.limiter.depends import RateLimiter
+from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.dependencies import (
@@ -16,6 +20,7 @@ from src.user.auth.dependencies import (
     get_user_id_from_token,
     verify_csrf,
 )
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import (
     CreateUserModel,
     LoginUserModel,
@@ -25,12 +30,7 @@ from src.user.auth.schemas import (
     SendResetPasswordRequestModel,
     VerifyEmailRequestModel,
 )
-from src.user.auth.usecases.get_access_by_refresh import (
-    GetTokensByRefreshUserUseCase,
-    get_tokens_by_refresh_user_use_case,
-)
 from src.user.auth.usecases.login import LoginUserUseCase, get_login_user_use_case
-from src.user.auth.usecases.logout import LogoutUseCase, get_logout_use_case
 from src.user.auth.usecases.register import RegisterUseCase, get_register_use_case
 from src.user.auth.usecases.resend_verification import (
     SendVerificationUseCase,
@@ -49,11 +49,29 @@ from src.user.auth.usecases.verify_email import (
     get_verify_email_use_case,
 )
 from src.user.models import User
+from src.user.policies import ensure_can_use_session
 from src.user.schemas import (
     UserProfileViewModel,
 )
 
 router = APIRouter()
+
+
+def get_refresh_access_use_case(
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+) -> RefreshAccessUseCase[User]:
+    return RefreshAccessUseCase(
+        redis_client,
+        realm=USER_AUTH_REALM,
+        claims_builder=lambda user: {"sub": str(user.id)},
+        admission=ensure_can_use_session,
+    )
+
+
+def get_logout_use_case(
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+) -> LogoutUseCase:
+    return LogoutUseCase(redis_client, realm=USER_AUTH_REALM)
 
 
 @router.post(
@@ -171,7 +189,7 @@ async def get_access_by_refresh(
     transport: Annotated[TokenTransport, Depends(get_token_transport)],
     responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[
-        GetTokensByRefreshUserUseCase, Depends(get_tokens_by_refresh_user_use_case)
+        RefreshAccessUseCase[User], Depends(get_refresh_access_use_case)
     ],
 ) -> TokenModel:
     """
@@ -181,7 +199,7 @@ async def get_access_by_refresh(
     Native clients send the refresh token in the Authorization header.
     """
     current_user, old_payload = user_and_payload
-    tokens = await use_case.execute(user=current_user, old_token_payload=old_payload)
+    tokens = await use_case.execute(current_user, old_payload)
     return responder.apply(tokens, response, transport)
 
 
@@ -207,7 +225,7 @@ async def logout_user(
     """
     if identity is not None:
         await use_case.execute(
-            user_id=identity.subject_id,
+            subject_id=identity.subject_id,
             session_id=identity.session_id,
             terminate_all_sessions=(
                 data.terminate_all_sessions if data is not None else False

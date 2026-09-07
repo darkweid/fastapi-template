@@ -1,18 +1,16 @@
 from functools import partial
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import Depends
 from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.auth.errors import InvalidCredentialsError
-from src.core.auth.tokens import create_access_token, create_refresh_token
+from src.core.auth.session_issuance import LoginThrottle, issue_session_pair
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
-from src.core.errors.exceptions import TooManyRequestsException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import (
@@ -52,7 +50,8 @@ class LoginUserUseCase:
     - data: LoginUserModel containing email and password.
 
     Validations:
-    - The email must be under the failed-login limit for the current window.
+    - The email must be under the failed-login limit for the current window
+      (LoginThrottle).
     - User must exist.
     - Password must be correct.
     - Account must pass admission (verified and active) - see policies.py.
@@ -68,8 +67,8 @@ class LoginUserUseCase:
        bad credentials (anti-enumeration).
     5) Rehash and persist the password if needed.
     6) Invalidate the user cache namespace.
-    7) Commit the transaction, clear the failure counter, and generate access
-       and refresh tokens.
+    7) Commit the transaction, clear the failure counter, and issue an access
+       and refresh token pair for a new session.
 
     Side effects:
     - Persists password hash updates when rehashing is required.
@@ -97,6 +96,9 @@ class LoginUserUseCase:
         self.uow = uow
         self.redis_client = redis_client
         self.cache = cache
+        self.throttle = LoginThrottle(
+            USER_AUTH_REALM, LOGIN_FAILURES_LIMIT, LOGIN_FAILURES_WINDOW_SECONDS
+        )
 
     async def execute(
         self,
@@ -104,8 +106,7 @@ class LoginUserUseCase:
     ) -> TokenModel:
         # data.email is already normalized by EmailNormalizationMixin, so the
         # counter key cannot be split across spellings of one address.
-        failures_key = USER_AUTH_REALM.keys.login_failures(data.email)
-        await self._ensure_email_not_throttled(failures_key)
+        await self.throttle.ensure_under_limit(data.email, self.redis_client)
 
         async with self.uow as uow:
             user = await uow.users.get_single(uow.session, email=data.email)
@@ -115,7 +116,7 @@ class LoginUserUseCase:
                     mask_email(data.email),
                 )
                 await verify_password(data.password, DUMMY_PASSWORD_HASH)
-                await self._register_login_failure(failures_key)
+                await self.throttle.record_failure(data.email, self.redis_client)
                 raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             correct_password = await verify_password(data.password, user.password_hash)
@@ -124,7 +125,7 @@ class LoginUserUseCase:
                     "[LoginUser] Incorrect password for user '%s'",
                     mask_email(data.email),
                 )
-                await self._register_login_failure(failures_key)
+                await self.throttle.record_failure(data.email, self.redis_client)
                 raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             violation = account_access_violation(user)
@@ -137,57 +138,18 @@ class LoginUserUseCase:
             ensure_can_authenticate(user)
 
             await self._rehash_password_if_needed(uow, user, data.password)
-            session_id = str(uuid4())
-            token_data = {"sub": str(user.id)}
             await self.cache.invalidate(user_cache_keys.namespace(user.id))
             uow.add_after_commit_hook(
                 partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
             )
             await uow.commit()
-            await self.redis_client.delete(failures_key)
-            return TokenModel(
-                access_token=await create_access_token(
-                    token_data,
-                    redis_client=self.redis_client,
-                    session_id=session_id,
-                    realm=USER_AUTH_REALM,
-                ),
-                refresh_token=await create_refresh_token(
-                    token_data,
-                    redis_client=self.redis_client,
-                    session_id=session_id,
-                    realm=USER_AUTH_REALM,
-                ),
+            await self.throttle.clear(data.email, self.redis_client)
+            return await issue_session_pair(
+                realm=USER_AUTH_REALM,
+                subject_id=str(user.id),
+                claims={},
+                redis_client=self.redis_client,
             )
-
-    async def _ensure_email_not_throttled(self, failures_key: str) -> None:
-        failures = await self.redis_client.get(failures_key)
-        if failures is None or int(failures) < LOGIN_FAILURES_LIMIT:
-            return
-
-        retry_after = await self.redis_client.ttl(failures_key)
-        if retry_after < 0:
-            # A counter stranded without a TTL (crash between INCR and EXPIRE)
-            # never reaches _register_login_failure again - this gate rejects
-            # first - so the gate must arm the window or the lockout is permanent.
-            await self.redis_client.expire(
-                failures_key, LOGIN_FAILURES_WINDOW_SECONDS, nx=True
-            )
-            retry_after = LOGIN_FAILURES_WINDOW_SECONDS
-        raise TooManyRequestsException(
-            "Too many failed login attempts. Try again later.",
-            retry_after=retry_after,
-        )
-
-    async def _register_login_failure(self, failures_key: str) -> None:
-        await self.redis_client.incr(failures_key)
-        # NX arms the window only when the key has no TTL yet, so later
-        # failures never push the reset forward - and unlike an "only on the
-        # first INCR" guard, a crash between INCR and EXPIRE cannot strand a
-        # persistent counter: the next failure arms it.
-        await self.redis_client.expire(
-            failures_key, LOGIN_FAILURES_WINDOW_SECONDS, nx=True
-        )
 
     async def _rehash_password_if_needed(
         self,

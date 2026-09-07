@@ -116,12 +116,15 @@ for the full contract. Four settings in `.env` govern this (`src/main/config.py`
 - `COOKIE_DOMAIN` (default unset/blank) — leave blank unless the auth cookies must
   be shared across subdomains.
 
-The refresh cookie is scoped to the refresh route (`/v1/users/auth/login/refresh`);
-the readable `csrf_token` cookie is set at `path=/` so that a same-origin SPA can
-read it from `document.cookie`. A cross-origin SPA cannot read an API-origin cookie
-at all — it takes the value from the `csrf_token` field of the login/refresh response
-body instead. Both sources carry the same token; either one is echoed back in the
-`X-CSRF-Token` header on the next refresh.
+The refresh token is delivered in a cookie named `user_refresh_token`, scoped to the
+refresh route (`/v1/users/auth/login/refresh`); the readable `user_csrf_token` cookie
+is set at `path=/` so that a same-origin SPA can read it from `document.cookie`. Both
+names are derived from the auth realm (`user`) that issued them — see
+[docs/readme/auth-realms.md](docs/readme/auth-realms.md) for what a realm is and how
+a second one (staff, partner, ...) is added. A cross-origin SPA cannot read an
+API-origin cookie at all — it takes the value from the `csrf_token` field of the
+login/refresh response body instead. Both sources carry the same token; either one is
+echoed back in the `X-CSRF-Token` header on the next refresh.
 
 ## Rate Limiting Notes
 - Primary rate limiting uses Redis-backed `RateLimiter` dependencies from `src/core/limiter`.

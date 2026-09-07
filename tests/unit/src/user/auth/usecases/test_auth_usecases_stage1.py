@@ -8,10 +8,9 @@ import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
-from src.core.schemas import SuccessResponse, TokenModel
+from src.core.schemas import SuccessResponse
 from src.core.utils.security import build_throttle_key
 from src.main.config import config
-from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 from src.user.auth.realm import (
     RESET_PASSWORD_PURPOSE,
     USER_AUTH_REALM,
@@ -23,8 +22,6 @@ from src.user.auth.schemas import (
     ResetPasswordModel,
     SendResetPasswordRequestModel,
 )
-from src.user.auth.usecases.get_access_by_refresh import GetTokensByRefreshUserUseCase
-from src.user.auth.usecases.logout import LogoutUseCase
 from src.user.auth.usecases.register import RegisterUseCase
 from src.user.auth.usecases.resend_verification import SendVerificationUseCase
 from src.user.auth.usecases.reset_password_confirm import ResetPasswordConfirmUseCase
@@ -34,7 +31,6 @@ from src.user.cache_keys import user_cache_keys
 from src.user.models import User
 from src.user.schemas import UserProfileViewModel
 from tests.factories.token_factory import (
-    build_refresh_payload,
     build_reset_password_token,
     build_verification_token,
 )
@@ -89,71 +85,6 @@ def build_uow(
     users_repo: FakeUsersRepository,
 ) -> FakeUnitOfWork:
     return FakeUnitOfWork(session=session, repositories={"users": users_repo})
-
-
-@pytest.mark.asyncio
-async def test_get_tokens_by_refresh_user_usecase_success(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    user = build_user(is_verified=True, is_active=True)
-    payload = build_refresh_payload(str(user.id))
-    refresh_token = jwt.encode(
-        payload,
-        config.jwt.JWT_USER_SECRET_KEY,
-        config.jwt.ALGORITHM,
-    )
-    access_token = "access-token"
-
-    rotate_mock = AsyncMock(return_value=refresh_token)
-    create_access_mock = AsyncMock(return_value=access_token)
-    monkeypatch.setattr(
-        "src.user.auth.usecases.get_access_by_refresh.rotate_refresh_token",
-        rotate_mock,
-    )
-    monkeypatch.setattr(
-        "src.user.auth.usecases.get_access_by_refresh.create_access_token",
-        create_access_mock,
-    )
-
-    use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
-    result = await use_case.execute(user=user, old_token_payload=payload)
-
-    assert isinstance(result, TokenModel)
-    assert result.refresh_token == refresh_token
-    assert result.access_token == access_token
-    rotate_mock.assert_awaited_once()
-    create_access_mock.assert_awaited_once_with(
-        {"sub": str(user.id)},
-        redis_client=fake_redis,
-        session_id=payload["session_id"],
-        realm=USER_AUTH_REALM,
-    )
-
-
-@pytest.mark.asyncio
-async def test_get_tokens_by_refresh_user_usecase_blocked(
-    fake_redis: InMemoryRedis,
-) -> None:
-    user = build_user(is_verified=True, is_active=False)
-    payload = build_refresh_payload(str(user.id))
-
-    use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
-
-    with pytest.raises(UserBlockedError, match="User is blocked"):
-        await use_case.execute(user=user, old_token_payload=payload)
-
-
-@pytest.mark.asyncio
-async def test_get_tokens_by_refresh_user_usecase_unverified(
-    fake_redis: InMemoryRedis,
-) -> None:
-    user = build_user(is_verified=False, is_active=True)
-    payload = build_refresh_payload(str(user.id))
-
-    use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
-
-    with pytest.raises(UserNotVerifiedError, match="User is not verified"):
-        await use_case.execute(user=user, old_token_payload=payload)
 
 
 @pytest.mark.asyncio
@@ -402,56 +333,6 @@ async def test_reset_password_request_user_not_found(
     assert result == SuccessResponse(success=True)
     notifier.send.assert_not_awaited()
     uow.commit.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_logout_usecase_invalidates_current_session(
-    fake_redis: InMemoryRedis,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(
-        "src.user.auth.usecases.logout.invalidate_session",
-        invalidate_mock,
-    )
-
-    use_case = LogoutUseCase(redis_client=fake_redis)
-    result = await use_case.execute(
-        user_id="user-1",
-        session_id="session-1",
-    )
-
-    assert result == SuccessResponse(success=True)
-    invalidate_mock.assert_awaited_once_with(
-        "user-1",
-        "session-1",
-        fake_redis,
-        keys=USER_AUTH_REALM.keys,
-    )
-
-
-@pytest.mark.asyncio
-async def test_logout_usecase_can_invalidate_all_sessions(
-    fake_redis: InMemoryRedis,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(
-        "src.user.auth.usecases.logout.invalidate_all_sessions",
-        invalidate_mock,
-    )
-
-    use_case = LogoutUseCase(redis_client=fake_redis)
-    result = await use_case.execute(
-        user_id="user-1",
-        session_id="session-1",
-        terminate_all_sessions=True,
-    )
-
-    assert result == SuccessResponse(success=True)
-    invalidate_mock.assert_awaited_once_with(
-        "user-1", fake_redis, keys=USER_AUTH_REALM.keys
-    )
 
 
 @pytest.mark.asyncio
