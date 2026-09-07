@@ -21,8 +21,7 @@ from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )
 from src.user.auth.usecases.login import get_login_user_use_case
-from src.user.dependencies import get_user_repository
-from src.user.models import User
+from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_refresh_payload, build_refresh_token
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
@@ -39,11 +38,6 @@ REFRESH_COOKIE_PATH = USER_AUTH_REALM.refresh_cookie_path
 class FakeUseCase:
     def __init__(self, result) -> None:
         self.execute = AsyncMock(return_value=result)
-
-
-class FakeUserRepository:
-    def __init__(self, user: User | None) -> None:
-        self.get_single = AsyncMock(return_value=user)
 
 
 @pytest.fixture(autouse=True)
@@ -230,6 +224,7 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     dependency_overrides: DependencyOverrides,
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     Drives the assembled default path end to end with nothing stubbed out below the
@@ -239,6 +234,10 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     decide the outcome. Only the use cases and the repository/session/redis
     infrastructure are faked - the CSRF and credential-resolution logic under test
     runs unmodified.
+
+    The realm-auth factory resolves its repository itself rather than through
+    FastAPI DI (see build_realm_auth), so the fake is installed on the
+    UserRepository class instead of via a dependency override.
     """
     user = build_user()
     refresh_token = await build_refresh_token({"sub": str(user.id)}, fake_redis)
@@ -253,9 +252,7 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     )
     dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
-    dependency_overrides.set(
-        get_user_repository, ProvideValue(FakeUserRepository(user))
-    )
+    monkeypatch.setattr(UserRepository, "get_single", AsyncMock(return_value=user))
 
     login_response = await async_client.post(
         "/v1/users/auth/login",

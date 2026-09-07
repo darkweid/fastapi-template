@@ -347,7 +347,7 @@ async def test_blocked_user_cannot_update_profile(
     blocked = build_user(is_active=False)
     dependency_overrides.set(
         authenticate_access_token,
-        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+        ProvideValue(AuthenticatedUser(principal=blocked, session_id="sid")),
     )
 
     response = await async_client.patch("/v1/users/me", json={"username": "new-name"})
@@ -363,7 +363,7 @@ async def test_blocked_user_cannot_change_password(
     blocked = build_user(is_active=False)
     dependency_overrides.set(
         authenticate_access_token,
-        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+        ProvideValue(AuthenticatedUser(principal=blocked, session_id="sid")),
     )
 
     response = await async_client.patch(
@@ -382,7 +382,7 @@ async def test_unverified_user_still_reads_own_profile(
     unverified = build_user(is_verified=False)
     dependency_overrides.set(
         authenticate_access_token,
-        ProvideValue(AuthenticatedUser(user=unverified, session_id="sid")),
+        ProvideValue(AuthenticatedUser(principal=unverified, session_id="sid")),
     )
 
     response = await async_client.get("/v1/users/me")
