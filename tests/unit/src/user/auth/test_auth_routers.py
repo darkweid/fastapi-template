@@ -5,17 +5,17 @@ from unittest.mock import AsyncMock
 from fastapi.routing import APIRoute
 import pytest
 
+from src.core.auth.cookies import CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME
+from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.database.session import get_unit_of_work
 from src.core.limiter.depends import RateLimiter
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
-from src.user.auth.cookies import CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME
 from src.user.auth.dependencies import (
     SessionIdentity,
     get_access_by_refresh_token,
     get_logout_identity,
 )
-from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.routers import router
 from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,

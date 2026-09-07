@@ -6,21 +6,21 @@ from fastapi.routing import APIRoute
 from httpx2 import ASGITransport, AsyncClient
 import pytest
 
+from src.core.auth.cookies import (
+    CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME,
+    REFRESH_COOKIE_NAME,
+    REFRESH_COOKIE_PATH,
+)
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.database.session import get_session
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.system import routers as system_routers
 from src.user import routers as user_routers
 from src.user.auth import routers as user_auth_routers
-from src.user.auth.cookies import (
-    CSRF_COOKIE_NAME,
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    REFRESH_COOKIE_PATH,
-)
 from src.user.auth.dependencies import get_access_by_refresh_token
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )

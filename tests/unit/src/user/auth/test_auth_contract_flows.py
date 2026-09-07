@@ -3,13 +3,13 @@ from dataclasses import dataclass
 from fastapi import Request
 import pytest
 
+from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import SuccessResponse, TokenModel
 from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_authenticated_user,
 )
-from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     LoginUserModel,
     ResetPasswordModel,

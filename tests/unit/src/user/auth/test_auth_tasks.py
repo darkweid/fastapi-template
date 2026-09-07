@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.user.auth.redis_keys import auth_redis_keys
+from src.core.auth.redis_keys import auth_redis_keys
 from src.user.auth.tasks import (
     send_reset_password_email_task,
     send_verification_email_task,

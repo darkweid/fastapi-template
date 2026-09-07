@@ -10,12 +10,11 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.redis_keys import auth_redis_keys
+from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 from src.core.errors.exceptions import UnauthorizedException
-from src.core.utils.security import normalize_email
 from src.main.config import config
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.redis_keys import OneTimeTokenPurpose, auth_redis_keys
-from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 
 async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
@@ -69,57 +68,6 @@ async def invalidate_user_session(
         auth_redis_keys.refresh(user_id, session_id),
     )
     await redis_client.zrem(auth_redis_keys.sessions(user_id), session_id)
-
-
-async def store_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
-    email: str,
-    jti: str,
-    ttl_seconds: int,
-    redis_client: Redis,
-) -> None:
-    """
-    Stores the active JTI for a single-use token identified by purpose and email.
-    """
-    normalized_email = normalize_email(email)
-    await redis_client.set(
-        auth_redis_keys.one_time_token(purpose, normalized_email),
-        jti,
-        ex=ttl_seconds,
-    )
-
-
-async def validate_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
-    email: str,
-    jti: str | None,
-    redis_client: Redis,
-) -> None:
-    """
-    Ensures the provided JTI matches the current active single-use token in Redis.
-    """
-    if not jti:
-        raise UnauthorizedException("Invalid or expired token.")
-
-    normalized_email = normalize_email(email)
-    active_jti = await redis_client.get(
-        auth_redis_keys.one_time_token(purpose, normalized_email)
-    )
-
-    if active_jti != jti:
-        raise UnauthorizedException("Invalid or expired token.")
-
-
-async def invalidate_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
-    email: str,
-    redis_client: Redis,
-) -> None:
-    """
-    Deletes the active single-use token entry for the provided purpose and email.
-    """
-    normalized_email = normalize_email(email)
-    await redis_client.delete(auth_redis_keys.one_time_token(purpose, normalized_email))
 
 
 async def validate_token_structure(

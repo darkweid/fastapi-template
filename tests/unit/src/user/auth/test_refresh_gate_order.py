@@ -16,17 +16,17 @@ from fastapi import FastAPI
 import pytest
 import pytest_asyncio
 
+from src.core.auth.cookies import (
+    CSRF_HEADER_NAME,
+    REFRESH_COOKIE_NAME,
+    REFRESH_COOKIE_PATH,
+)
+from src.core.auth.csrf import build_csrf_token
 from src.core.database.session import get_session
 from src.core.limiter import FastAPILimiter
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.main.config import get_settings
-from src.user.auth.cookies import (
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    REFRESH_COOKIE_PATH,
-)
-from src.user.auth.csrf import build_csrf_token
 from src.user.auth.usecases.get_access_by_refresh import (
     get_tokens_by_refresh_user_use_case,
 )

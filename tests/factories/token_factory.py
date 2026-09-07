@@ -6,12 +6,11 @@ from uuid import uuid4
 
 import jwt
 
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.tokens import create_access_token, create_refresh_token
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
-from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.security import (
-    create_access_token,
-    create_refresh_token,
     create_reset_password_token,
     create_verification_token,
 )

@@ -6,6 +6,9 @@ from fastapi import Depends
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.auth.errors import InvalidCredentialsError
+from src.core.auth.redis_keys import auth_redis_keys
+from src.core.auth.tokens import create_access_token, create_refresh_token
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
@@ -20,10 +23,7 @@ from src.core.utils.security import (
     needs_password_rehash,
     verify_password,
 )
-from src.user.auth.errors import InvalidCredentialsError
-from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import LoginUserModel
-from src.user.auth.security import create_access_token, create_refresh_token
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
 from src.user.policies import (

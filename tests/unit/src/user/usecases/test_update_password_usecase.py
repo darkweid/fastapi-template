@@ -4,13 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.auth.errors import InvalidCredentialsError
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
-from src.user.auth.errors import InvalidCredentialsError
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User

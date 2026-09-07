@@ -7,23 +7,23 @@ import jwt
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database.session import get_session
-from src.core.errors.exceptions import UnauthorizedException
-from src.core.redis.dependencies import get_redis_client
-from src.main.config import config
-from src.user.auth.cookies import (
+from src.core.auth.cookies import (
     CSRF_HEADER_NAME,
     REFRESH_COOKIE_NAME,
     TokenCookieResponder,
     get_token_cookie_responder,
 )
-from src.user.auth.errors import TokenExpiredError
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.redis_keys import auth_redis_keys
-from src.user.auth.token_helpers import (
+from src.core.auth.errors import TokenExpiredError
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.redis_keys import auth_redis_keys
+from src.core.auth.token_helpers import (
     invalidate_all_user_sessions,
     is_within_reuse_grace,
 )
+from src.core.database.session import get_session
+from src.core.errors.exceptions import UnauthorizedException
+from src.core.redis.dependencies import get_redis_client
+from src.main.config import config
 from src.user.dependencies import get_user_repository
 from src.user.models import User
 from src.user.policies import ensure_can_use_session

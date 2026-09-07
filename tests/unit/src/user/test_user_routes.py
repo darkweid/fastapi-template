@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.auth.errors import InvalidCredentialsError
+from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
@@ -15,8 +17,6 @@ from src.user.auth.dependencies import (
     get_authenticated_user,
     get_current_user,
 )
-from src.user.auth.errors import InvalidCredentialsError
-from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
 from src.user.schemas import UserProfileViewModel

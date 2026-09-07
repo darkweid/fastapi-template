@@ -3,12 +3,12 @@ from typing import Annotated, Final
 from fastapi import Depends, Response
 
 from loggers import get_logger
+from src.core.auth.csrf import build_csrf_token, verify_csrf_token
+from src.core.auth.errors import CsrfFailedError
+from src.core.auth.token_transport import TokenTransport
 from src.core.errors.exceptions import InfrastructureException
 from src.core.schemas import TokenModel
 from src.main.config import Config, CookieConfig, get_settings
-from src.user.auth.csrf import build_csrf_token, verify_csrf_token
-from src.user.auth.errors import CsrfFailedError
-from src.user.auth.token_transport import TokenTransport
 
 logger = get_logger(__name__)
 

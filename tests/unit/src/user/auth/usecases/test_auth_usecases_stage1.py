@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
+from src.core.auth.redis_keys import auth_redis_keys
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse, TokenModel
 from src.core.utils.security import build_email_throttle_key
 from src.main.config import config
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
-from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import (
     CreateUserModel,
     ResendVerificationModel,

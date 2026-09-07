@@ -7,6 +7,7 @@ from pydantic import BaseModel, ValidationError
 import pytest
 import sentry_sdk
 
+import src.core.auth.errors  # noqa: F401 - register domain subclasses for the walk; every new domain errors module must be imported here the same way
 from src.core.errors import exceptions as exc, handlers
 from src.core.errors.codes import ErrorCode
 from src.core.errors.handlers import (

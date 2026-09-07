@@ -7,16 +7,18 @@ import jwt
 import pytest
 from starlette.requests import Request as StarletteRequest
 
-from src.core.errors.codes import ErrorCode
-from src.core.errors.exceptions import UnauthorizedException
-from src.main.config import CookieConfig, config
-from src.user.auth import dependencies
-from src.user.auth.cookies import (
+from src.core.auth.cookies import (
     CSRF_HEADER_NAME,
     REFRESH_COOKIE_NAME,
     TokenCookieResponder,
 )
-from src.user.auth.csrf import build_csrf_token
+from src.core.auth.csrf import build_csrf_token
+from src.core.auth.errors import CsrfFailedError, TokenExpiredError
+from src.core.auth.redis_keys import auth_redis_keys
+from src.core.errors.codes import ErrorCode
+from src.core.errors.exceptions import UnauthorizedException
+from src.main.config import CookieConfig, config
+from src.user.auth import dependencies
 from src.user.auth.dependencies import (
     AuthenticatedUser,
     RefreshCredentials,
@@ -30,13 +32,7 @@ from src.user.auth.dependencies import (
     verify_csrf,
     verify_jti,
 )
-from src.user.auth.errors import (
-    CsrfFailedError,
-    TokenExpiredError,
-    UserBlockedError,
-    UserNotVerifiedError,
-)
-from src.user.auth.redis_keys import auth_redis_keys
+from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 from src.user.models import User
 from tests.factories.token_factory import (
     build_access_payload,

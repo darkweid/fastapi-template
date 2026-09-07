@@ -2,10 +2,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Response
 
+from src.core.auth.cookies import TokenCookieResponder, get_token_cookie_responder
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
-from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
 from src.user.auth.dependencies import (
     SessionIdentity,
     get_access_by_refresh_token,
@@ -13,7 +15,6 @@ from src.user.auth.dependencies import (
     get_user_id_from_token,
     verify_csrf,
 )
-from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     CreateUserModel,
     LoginUserModel,
@@ -23,7 +24,6 @@ from src.user.auth.schemas import (
     SendResetPasswordRequestModel,
     VerifyEmailRequestModel,
 )
-from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.auth.usecases.get_access_by_refresh import (
     GetTokensByRefreshUserUseCase,
     get_tokens_by_refresh_user_use_case,

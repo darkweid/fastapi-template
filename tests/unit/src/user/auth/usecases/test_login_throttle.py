@@ -2,12 +2,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.core.auth.redis_keys import auth_redis_keys
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import (
     InstanceProcessingException,
     TooManyRequestsException,
 )
-from src.user.auth.redis_keys import auth_redis_keys
 import src.user.auth.usecases.login as login_usecase
 from src.user.auth.usecases.login import (
     INVALID_CREDENTIALS_MESSAGE,

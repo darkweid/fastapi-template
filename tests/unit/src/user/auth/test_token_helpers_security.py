@@ -4,12 +4,13 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.redis_keys import OneTimeTokenPurpose, auth_redis_keys
+import src.core.auth.token_helpers as token_helpers
+import src.core.auth.tokens as tokens
 from src.core.errors.exceptions import UnauthorizedException
 from src.user.auth.dependencies import verify_jti
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.redis_keys import OneTimeTokenPurpose, auth_redis_keys
 import src.user.auth.security as security
-import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.providers import ProvideValue
 
@@ -72,9 +73,9 @@ async def test_create_access_token_stores_jti(
     Then: token payload contains access mode and Redis stores jti by (sub, session_id).
     """
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    token = await security.create_access_token({"sub": "user"}, redis_client=fake_redis)
+    token = await tokens.create_access_token({"sub": "user"}, redis_client=fake_redis)
     decoded = jwt.decode(
         token,
         TEST_JWT_USER_SECRET_KEY,
@@ -95,9 +96,9 @@ async def test_create_access_token_ignores_removed_family_claim(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    token = await security.create_access_token(
+    token = await tokens.create_access_token(
         {"sub": "user", "family": "family-1"},
         redis_client=fake_redis,
         session_id="session-1",
@@ -123,11 +124,9 @@ async def test_create_refresh_token_stores_jti(
     Then: refresh jti is stored under the active session key.
     """
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    token = await security.create_refresh_token(
-        {"sub": "user"}, redis_client=fake_redis
-    )
+    token = await tokens.create_refresh_token({"sub": "user"}, redis_client=fake_redis)
     decoded = jwt.decode(
         token,
         TEST_JWT_USER_SECRET_KEY,
@@ -147,7 +146,7 @@ async def test_create_verification_token_stores_active_jti(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
     token = await security.create_verification_token(
         {"email": "User@Example.com"},
@@ -208,7 +207,7 @@ async def test_create_reset_password_token_stores_active_jti(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
     token = await security.create_reset_password_token(
         {"email": "User@Example.com"},
@@ -400,14 +399,14 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixed_now = datetime.now(timezone.utc)
-    monkeypatch.setattr(security, "get_utc_now", ProvideValue(fixed_now))
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    access_token_before_refresh = await security.create_access_token(
+    access_token_before_refresh = await tokens.create_access_token(
         {"sub": "user", "family": "family-1"},
         redis_client=fake_redis,
         session_id="session-1",
     )
-    refresh_token = await security.create_refresh_token(
+    refresh_token = await tokens.create_refresh_token(
         {"sub": "user"},
         redis_client=fake_redis,
         session_id="session-1",
@@ -419,7 +418,7 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
         options={"verify_exp": False},
     )
 
-    rotated_refresh_token = await security.rotate_refresh_token(
+    rotated_refresh_token = await tokens.rotate_refresh_token(
         refresh_payload,
         fake_redis,
     )
@@ -429,7 +428,7 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
         algorithms=["HS256"],
         options={"verify_exp": False},
     )
-    access_token_after_refresh = await security.create_access_token(
+    access_token_after_refresh = await tokens.create_access_token(
         {"sub": "user"},
         redis_client=fake_redis,
         session_id=rotated_refresh_payload["session_id"],
@@ -478,10 +477,10 @@ async def test_issued_tokens_register_the_session_in_the_index(
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     refresh_ttl_seconds = security.config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
 
-    await security.create_refresh_token(
+    await tokens.create_refresh_token(
         {"sub": "user-1"}, redis_client=fake_redis, session_id="session-1"
     )
-    await security.create_access_token(
+    await tokens.create_access_token(
         {"sub": "user-1"}, redis_client=fake_redis, session_id="session-1"
     )
 
@@ -507,7 +506,7 @@ async def test_issuance_prunes_index_members_past_their_refresh_lifetime(
     index_key = auth_redis_keys.sessions("user-1")
     await fake_redis.zadd(index_key, {"expired-session": FROZEN_NOW - 1})
 
-    await security.create_refresh_token(
+    await tokens.create_refresh_token(
         {"sub": "user-1"}, redis_client=fake_redis, session_id="session-1"
     )
 

@@ -4,12 +4,12 @@ from fastapi import Depends
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.redis.dependencies import get_redis_client
-from src.core.schemas import SuccessResponse
-from src.user.auth.token_helpers import (
+from src.core.auth.token_helpers import (
     invalidate_all_user_sessions,
     invalidate_user_session,
 )
+from src.core.redis.dependencies import get_redis_client
+from src.core.schemas import SuccessResponse
 
 logger = get_logger(__name__)
 

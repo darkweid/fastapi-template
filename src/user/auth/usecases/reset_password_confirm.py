@@ -6,6 +6,8 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.auth.redis_keys import auth_redis_keys
+from src.core.auth.token_helpers import invalidate_all_user_sessions
 from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
 from src.core.database.session import get_unit_of_work
@@ -15,12 +17,10 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import hash_password, mask_email
 from src.main.config import config
-from src.user.auth.redis_keys import auth_redis_keys
 from src.user.auth.schemas import ResetPasswordModel
-from src.user.auth.security import decode_one_time_token
-from src.user.auth.token_helpers import (
+from src.user.auth.security import (
+    decode_one_time_token,
     invalidate_active_one_time_token,
-    invalidate_all_user_sessions,
 )
 from src.user.cache_keys import user_cache_keys
 

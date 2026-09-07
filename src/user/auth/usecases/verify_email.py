@@ -15,8 +15,10 @@ from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
 from src.main.config import config
-from src.user.auth.security import decode_one_time_token
-from src.user.auth.token_helpers import invalidate_active_one_time_token
+from src.user.auth.security import (
+    decode_one_time_token,
+    invalidate_active_one_time_token,
+)
 from src.user.cache_keys import user_cache_keys
 from src.user.policies import verification_pending
 

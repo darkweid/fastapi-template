@@ -6,6 +6,7 @@ from redis.asyncio import Redis
 from taskiq import TaskiqDepends
 
 from loggers import get_logger
+from src.core.auth.redis_keys import OneTimeTokenPurpose
 from src.core.email_service.schemas import (
     MailTemplateResetPasswordBody,
     MailTemplateVerificationBody,
@@ -15,12 +16,11 @@ from src.core.email_service.tasks import get_mailer
 from src.core.utils.security import mask_email
 from src.core.utils.urls import build_public_url
 from src.main.config import config
-from src.user.auth.redis_keys import OneTimeTokenPurpose
 from src.user.auth.security import (
     create_reset_password_token,
     create_verification_token,
+    invalidate_active_one_time_token,
 )
-from src.user.auth.token_helpers import invalidate_active_one_time_token
 from taskiq_worker.broker import broker
 from taskiq_worker.dependencies import get_tasks_redis_client
 

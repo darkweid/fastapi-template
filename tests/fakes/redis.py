@@ -8,13 +8,13 @@ from typing import Any
 
 import redis.exceptions as redis_exc
 
+from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 from src.core.cache.redis_scripts import (
     CACHE_DELETE_SCRIPT,
     CACHE_GET_SCRIPT,
     CACHE_INVALIDATE_SCRIPT,
     CACHE_SET_SCRIPT,
 )
-from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 
 def _normalize_key(key: str | bytes) -> str:

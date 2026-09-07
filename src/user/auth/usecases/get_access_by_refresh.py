@@ -5,12 +5,12 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.tokens import create_access_token, rotate_refresh_token
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.core.utils.security import mask_email
 from src.main.config import config
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.security import create_access_token, rotate_refresh_token
 from src.user.models import User
 from src.user.policies import account_access_violation, ensure_can_use_session
 

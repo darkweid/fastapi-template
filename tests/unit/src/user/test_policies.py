@@ -3,12 +3,9 @@ import inspect
 
 import pytest
 
+from src.core.auth.errors import InvalidCredentialsError
 from src.user import policies
-from src.user.auth.errors import (
-    InvalidCredentialsError,
-    UserBlockedError,
-    UserNotVerifiedError,
-)
+from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 
 
 @dataclass

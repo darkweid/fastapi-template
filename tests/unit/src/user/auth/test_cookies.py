@@ -3,12 +3,7 @@ import json
 from fastapi import Response
 import pytest
 
-from src.core.errors.codes import ErrorCode
-from src.core.errors.exceptions import InfrastructureException
-from src.core.errors.handlers import handle_core_exception
-from src.core.schemas import TokenModel
-from src.main.config import CookieConfig
-from src.user.auth.cookies import (
+from src.core.auth.cookies import (
     CSRF_COOKIE_NAME,
     CSRF_COOKIE_PATH,
     CSRF_FAILURE_MESSAGE,
@@ -16,9 +11,14 @@ from src.user.auth.cookies import (
     REFRESH_COOKIE_PATH,
     TokenCookieResponder,
 )
-from src.user.auth.csrf import build_csrf_token
-from src.user.auth.errors import CsrfFailedError
-from src.user.auth.token_transport import TokenTransport
+from src.core.auth.csrf import build_csrf_token
+from src.core.auth.errors import CsrfFailedError
+from src.core.auth.token_transport import TokenTransport
+from src.core.errors.codes import ErrorCode
+from src.core.errors.exceptions import InfrastructureException
+from src.core.errors.handlers import handle_core_exception
+from src.core.schemas import TokenModel
+from src.main.config import CookieConfig
 from tests.helpers.requests import build_request
 
 SECRET = "unit-test-csrf-secret-key-value-32"

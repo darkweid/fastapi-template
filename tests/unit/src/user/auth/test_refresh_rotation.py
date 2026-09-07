@@ -3,11 +3,11 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
+from src.core.auth.redis_keys import auth_redis_keys
+import src.core.auth.token_helpers as token_helpers
+from src.core.auth.tokens import rotate_refresh_token
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
-from src.user.auth.redis_keys import auth_redis_keys
-from src.user.auth.security import rotate_refresh_token
-import src.user.auth.token_helpers as token_helpers
 from tests.fakes.redis import InMemoryRedis
 
 TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
