@@ -96,6 +96,14 @@ class BaseRepository(Generic[T]):
                 "the UoW commit."
             )
 
+    def _scope_filters(self, filters: dict[str, Any]) -> dict[str, Any]:
+        """
+        Default filters every read and every filtered write of this repository
+        carries. A plain repository scopes nothing; SoftDeleteRepository seeds
+        `is_deleted=False` here, in one place instead of in every method.
+        """
+        return filters
+
     async def create(
         self, session: AsyncSession, data: dict[str, Any], commit: bool = False
     ) -> T:
@@ -150,6 +158,7 @@ class BaseRepository(Generic[T]):
         Determine if a record exists in the database matching the provided filters.
         Optionally, it can enforce strict single-record existence checks.
         """
+        filters = self._scope_filters(filters)
         if strict_single:
             query = select(1).select_from(self.model).filter_by(**filters).limit(2)
             rows = (await session.execute(query)).all()
@@ -167,6 +176,7 @@ class BaseRepository(Generic[T]):
         **filters: Any,
     ) -> T | None:
         """Retrieve a single record using the provided session."""
+        filters = self._scope_filters(filters)
         query = select(self.model).filter_by(**filters).limit(1)
 
         if eager:
@@ -185,6 +195,7 @@ class BaseRepository(Generic[T]):
         **filters: Any,
     ) -> list[T]:
         """Retrieve a list of records using the provided session without pagination."""
+        filters = self._scope_filters(filters)
         query = select(self.model).filter_by(**filters)
         if eager:
             query = query.options(*eager)
@@ -210,6 +221,7 @@ class BaseRepository(Generic[T]):
         if size < 1:
             raise ValueError("size must be greater than or equal to 1")
 
+        filters = self._scope_filters(filters)
         list_query = query if query is not None else ListQuery()
         where_clauses = list_query.build_where_clauses(
             self.model, self.searchable_fields
@@ -246,6 +258,7 @@ class BaseRepository(Generic[T]):
         **filters: Any,
     ) -> int:
         """Count records matching the provided filters using the given session."""
+        filters = self._scope_filters(filters)
         query = select(func.count()).select_from(self.model).filter_by(**filters)
         result = await session.execute(query)
         count_value = result.scalar_one()
@@ -261,7 +274,10 @@ class BaseRepository(Generic[T]):
         """Update a record using the provided session."""
         if commit:
             self._ensure_commit_allowed(session)
+        # The guard runs on the caller's own filters: seeding the scope first
+        # would make a filter-less call look filtered.
         self._ensure_filters_present(filters)
+        filters = self._scope_filters(filters)
         # setattr with a mistyped key would silently attach a plain Python
         # attribute the flush ignores - the caller believes the row changed.
         # Boundary: mapped attributes (columns and relationships) pass; hybrid
@@ -308,6 +324,7 @@ class BaseRepository(Generic[T]):
         if commit:
             self._ensure_commit_allowed(session)
         self._ensure_filters_present(filters)
+        filters = self._scope_filters(filters)
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
@@ -364,82 +381,17 @@ class BaseRepository(Generic[T]):
 
 
 class SoftDeleteRepository(BaseRepository[T], Generic[T]):
-    """Repository with soft delete support."""
+    """Repository whose reads and writes ignore soft-deleted rows by default."""
 
     def __init__(self) -> None:
         super().__init__()
         self._assert_softdelete_fields()
 
-    async def exists(
-        self, session: AsyncSession, strict_single: bool = False, **filters: Any
-    ) -> bool:
+    def _scope_filters(self, filters: dict[str, Any]) -> dict[str, Any]:
+        # setdefault, not assignment: an explicit `is_deleted=True` still reaches
+        # the query, which is how a caller reads the soft-deleted rows.
         filters.setdefault("is_deleted", False)
-        return await super().exists(session, strict_single=strict_single, **filters)
-
-    async def get_single(
-        self,
-        session: AsyncSession,
-        eager: EagerLoadSequence | None = None,
-        for_update: bool = False,
-        **filters: Any,
-    ) -> T | None:
-        """Retrieve a single record where the is_deleted flag is False, using the provided session and filters."""
-        filters.setdefault("is_deleted", False)
-        return await super().get_single(
-            session, eager=eager, for_update=for_update, **filters
-        )
-
-    async def get_list(
-        self,
-        session: AsyncSession,
-        eager: EagerLoadSequence | None = None,
-        for_update: bool = False,
-        **filters: Any,
-    ) -> list[T]:
-        """Retrieve a list of records where the is_deleted flag is False, using the provided session and filters."""
-        filters.setdefault("is_deleted", False)
-        return await super().get_list(
-            session, eager=eager, for_update=for_update, **filters
-        )
-
-    async def get_paginated_list(
-        self,
-        session: AsyncSession,
-        page: int,
-        size: int,
-        eager: EagerLoadSequence | None = None,
-        query: ListQuery | None = None,
-        **filters: Any,
-    ) -> tuple[list[T], int]:
-        """Retrieve a list of records where is_deleted flag is False, using the filters,
-        with pagination."""
-        filters.setdefault("is_deleted", False)
-        return await super().get_paginated_list(
-            session, page=page, size=size, eager=eager, query=query, **filters
-        )
-
-    async def count(
-        self,
-        session: AsyncSession,
-        **filters: Any,
-    ) -> int:
-        """Count records matching the provided filters using the given session."""
-        filters.setdefault("is_deleted", False)
-        return await super().count(session, **filters)
-
-    async def update(
-        self,
-        session: AsyncSession,
-        data: dict[str, Any],
-        commit: bool = False,
-        **filters: Any,
-    ) -> T | None:
-        """Update a record where is_deleted flag is False, using the filters."""
-        # Guard before the setdefault below: seeding is_deleted first would make
-        # the base-class filter check pass for a filter-less call.
-        self._ensure_filters_present(filters)
-        filters.setdefault("is_deleted", False)
-        return await super().update(session, data, commit, **filters)
+        return filters
 
     async def delete(
         self, session: AsyncSession, commit: bool = False, **filters: Any
@@ -448,7 +400,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         self._ensure_filters_present(filters)
         if commit:
             self._ensure_commit_allowed(session)
-        filters.setdefault("is_deleted", False)
+        filters = self._scope_filters(filters)
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
