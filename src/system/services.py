@@ -1,5 +1,4 @@
 import asyncio
-from collections.abc import Awaitable
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,10 +96,7 @@ class HealthService:
 
     async def _check_redis(self) -> bool:
         try:
-            ping_result = self.redis_client.ping()
-            if isinstance(ping_result, Awaitable):
-                return bool(await ping_result)
-            return bool(ping_result)
+            return bool(await self.redis_client.ping())
         except Exception as exc:
             logger.warning("Redis health check failed: %s", exc)
             return False

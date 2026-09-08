@@ -17,14 +17,17 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
 
     async def redis_startup(app: FastAPI, dsn: str) -> None:
         calls.append("redis_startup")
+        # The limiter reads the client off app.state, exactly as the real hook
+        # leaves it there.
+        app.state.redis_client = object()
 
     async def redis_shutdown(app: FastAPI) -> None:
         calls.append("redis_shutdown")
 
-    async def limiter_startup(dsn: str) -> None:
+    async def limiter_init(redis_client: object) -> None:
         calls.append("limiter_startup")
 
-    async def limiter_shutdown() -> None:
+    async def limiter_close() -> None:
         calls.append("limiter_shutdown")
 
     async def cache_startup(app: FastAPI) -> None:
@@ -40,8 +43,8 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     )
     monkeypatch.setattr(lifespan_module, "on_redis_startup", redis_startup)
     monkeypatch.setattr(lifespan_module, "on_redis_shutdown", redis_shutdown)
-    monkeypatch.setattr(lifespan_module, "on_limiter_startup", limiter_startup)
-    monkeypatch.setattr(lifespan_module, "on_limiter_shutdown", limiter_shutdown)
+    monkeypatch.setattr(lifespan_module.FastAPILimiter, "init", limiter_init)
+    monkeypatch.setattr(lifespan_module.FastAPILimiter, "close", limiter_close)
     monkeypatch.setattr(lifespan_module, "on_cache_startup", cache_startup)
     monkeypatch.setattr(lifespan_module, "on_cache_shutdown", cache_shutdown)
 

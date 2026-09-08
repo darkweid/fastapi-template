@@ -56,7 +56,7 @@ class FastAPILimiter:
     @classmethod
     async def init(
         cls,
-        redis_client: aredis.Redis | str,
+        redis_client: aredis.Redis,
         prefix: str | None = None,
         identifier: Callable[[Request], Awaitable[str]] | None = None,
         http_callback: None | (
@@ -64,39 +64,38 @@ class FastAPILimiter:
         ) = None,
     ) -> None:
         """
-        Initializes a Redis client, identifier and callback.
-        Loads a Lua script to Redis and stores SHA for evalsha.
+        Stores the shared Redis client, identifier and callback, then loads the
+        Lua script and keeps its SHA for evalsha.
+
+        The client is passed in rather than built from a DSN: the application
+        already owns one on app.state, and a second pool would double the
+        connections for no gain.
         """
-        logger.debug("Initializing FastAPILimiter...")
-
-        redis_instance: aredis.Redis
-        if isinstance(redis_client, str):
-            redis_instance = aredis.from_url(redis_client)
-        else:
-            redis_instance = redis_client
-
-        cls.redis = redis_instance
+        cls.redis = redis_client
         cls.prefix = prefix or cls.prefix
         cls.identifier = identifier or cls.identifier
         cls.http_callback = http_callback or cls.http_callback
 
         try:
-            cls.lua_sha = await redis_instance.script_load(cls.lua_script)
+            cls.lua_sha = await redis_client.script_load(cls.lua_script)
         except Exception as e:
             logger.error(f"Failed to load Lua script: {e}")
             raise RuntimeError(f"Failed to load Lua script: {e}") from e
 
-        logger.info("FastAPILimiter initialized successfully.")
+        logger.info("Rate limiter started successfully.")
 
     @classmethod
     async def close(cls) -> None:
         """
-        Properly closes Redis connection and clears state.
+        Clears the limiter state.
+
+        The Redis client belongs to the application lifecycle, which closes it
+        after every consumer has stopped; closing it here would pull it out from
+        under the cache.
         """
-        if cls.redis:
-            await cls.redis.aclose()
         cls.redis = None
         cls.lua_sha = None
+        logger.info("Rate limiter stopped.")
 
     @classmethod
     def is_initialized(cls) -> bool:

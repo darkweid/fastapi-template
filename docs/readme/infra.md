@@ -35,12 +35,11 @@ The cache layer (`src/core/cache/`) has no dedicated Redis connection — it run
 `src/main/lifespan.py` and shared with auth token storage and the health probe.
 There is no separate service or port to provision.
 
-Rate limiting and taskiq do *not* share that client: `on_limiter_startup` hands
-`FastAPILimiter.init` a DSN string and it opens its own pool, and the taskiq
-broker (plus the retry schedule source) connects on its own as well. An API
-container therefore holds three independent Redis connection pools, and a worker
-or scheduler container holds the broker's — size `maxclients` from that count,
-not from one pool per process.
+The rate limiter runs on that same client: `lifespan` hands it to
+`FastAPILimiter.init`. Only taskiq keeps a connection of its own (the broker plus
+the retry schedule source), so an API container holds two Redis connection pools
+and a worker or scheduler container holds the broker's — size `maxclients` from
+that count, not from one pool per process.
 
 - Under memory pressure, prefer `maxmemory-policy allkeys-lru` (or actively monitor
   `INFO stats` → `evicted_keys`). Every namespace and tag version counter is itself

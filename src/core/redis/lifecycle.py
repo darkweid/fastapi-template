@@ -1,5 +1,3 @@
-from collections.abc import Awaitable
-
 from fastapi import FastAPI
 
 from loggers import get_logger
@@ -11,14 +9,13 @@ logger = get_logger(__name__)
 async def on_redis_startup(app: FastAPI, connection_url: str) -> None:
     """
     Initialize a Redis client and attach it to app.state for DI access.
+
+    Pings before publishing the client: an unreachable Redis must fail startup
+    rather than surface later as a per-request error.
     """
     redis_client = create_redis_client(connection_url=connection_url)
-    ping_result = redis_client.ping()
-    if isinstance(ping_result, Awaitable):
-        await ping_result
-    else:
-        if not ping_result:
-            raise RuntimeError("Redis ping failed during startup")
+    if not await redis_client.ping():
+        raise RuntimeError("Redis ping failed during startup")
     app.state.redis_client = redis_client
     logger.info("Redis client created successfully.")
 
