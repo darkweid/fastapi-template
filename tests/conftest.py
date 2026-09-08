@@ -11,9 +11,8 @@ import httpx2
 import pytest
 import pytest_asyncio
 
-from src.core.cache.dependencies import get_cache
 from src.core.cache.memory_cache import InMemoryCache
-from src.core.cache.runtime import reset_cache, set_cache
+from src.core.cache.runtime import get_cache, reset_cache, set_cache
 from src.core.cache.serializer import JsonSerializer
 from src.core.database.session import get_session, get_unit_of_work
 from src.core.email_service.dependencies import get_email_service

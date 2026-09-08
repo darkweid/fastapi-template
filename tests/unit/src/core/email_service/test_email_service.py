@@ -97,17 +97,17 @@ async def test_send_template_email_all_invalid(email_service: EmailService):
 
 
 @pytest.mark.asyncio
-async def test_send_email_with_single_attachment(
+async def test_send_email_with_one_attachment(
     tmp_path: Path, email_service: EmailService, mock_mailer: MockMailer
 ):
     file_path = tmp_path / "document.txt"
     file_path.write_text("Attachment content")
 
-    await email_service.send_email_with_single_attachment(
+    await email_service.send_email_with_attachments(
         subject="Attached",
         recipients="user@example.com",
         body_text="Please find the attachment.",
-        file_path=file_path,
+        file_paths=[file_path],
     )
 
     assert len(mock_mailer.sent_attachments) == 1
@@ -125,11 +125,11 @@ async def test_send_email_with_attachment_all_invalid(
     file_path.write_text("data")
 
     with pytest.raises(ValueError):
-        await email_service.send_email_with_single_attachment(
+        await email_service.send_email_with_attachments(
             subject="Error",
             recipients=["nope", "wrong"],
             body_text="text",
-            file_path=file_path,
+            file_paths=[file_path],
         )
 
     assert file_path.exists()  # cleanup defaults to False
@@ -202,11 +202,11 @@ async def test_send_email_with_attachment_unusual_file_types(
     file_path = tmp_path / "strange_type.xyz"
     file_path.write_text("Content of an unknown type")
 
-    await email_service.send_email_with_single_attachment(
+    await email_service.send_email_with_attachments(
         subject="Unusual File",
         recipients="user@example.com",
         body_text="Here is a file with an unusual extension.",
-        file_path=file_path,
+        file_paths=[file_path],
     )
 
     assert len(mock_mailer.sent_attachments) == 1

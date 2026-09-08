@@ -5,8 +5,8 @@ from uuid import UUID
 from fastapi import Depends
 
 from loggers import get_logger
-from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
+from src.core.cache.runtime import get_cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceNotFoundException

@@ -19,3 +19,8 @@ def get_cache_instance() -> Cache:
     if _cache is None:
         raise RuntimeError("Cache is not initialized. Ensure startup lifecycle ran.")
     return _cache
+
+
+async def get_cache() -> Cache:
+    """DI provider for the application-wide cache instance."""
+    return get_cache_instance()

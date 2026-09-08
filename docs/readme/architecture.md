@@ -11,8 +11,7 @@ The `src/core/database/uow/` package keeps DB work transactional and coordinates
 - Exit contract: leaving the UoW context without an explicit `commit()` rolls the transaction back - commit is never implicit.
 
 Implementations:
-- `UnitOfWork`: abstract contract (`uow/abstract.py`).
-- `SQLAlchemyUnitOfWork`: AsyncSession-based implementation (`uow/sqlalchemy.py`).
+- `SQLAlchemyUnitOfWork`: AsyncSession-based implementation and the contract itself (`uow/sqlalchemy.py`).
 - `ApplicationUnitOfWork`: app-specific factory wiring repositories (`uow/application.py`).
 
 ### Main Module Architecture

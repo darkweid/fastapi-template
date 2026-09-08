@@ -1,5 +1,3 @@
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 import hashlib
 
 from sqlalchemy import func, select
@@ -43,22 +41,3 @@ async def try_advisory_xact_lock(session: AsyncSession, key: str) -> bool:
     lock_key = _string_to_int64(key)
     result = await session.execute(select(func.pg_try_advisory_xact_lock(lock_key)))
     return bool(result.scalar_one())
-
-
-@asynccontextmanager
-async def maybe_begin(session: AsyncSession) -> AsyncGenerator[None]:
-    """
-    Context manager that ensures an AsyncSession transaction is active.
-
-    If the session is already in a transaction, yields immediately without
-    starting a new one. Otherwise, begins a new transaction and automatically
-    commits on successful exit or rolls back on exception.
-
-    Args:
-        session (AsyncSession): The SQLAlchemy async session to manage.
-    """
-    if session.in_transaction():
-        yield
-    else:
-        async with session.begin():
-            yield

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 from math import ceil
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, TypeVar
 
 from pydantic import Field, field_validator
 
@@ -11,7 +11,6 @@ from src.core.schemas import Base
 
 T = TypeVar("T")
 SchemaT = TypeVar("SchemaT", bound=Base)
-ItemT = TypeVar("ItemT")
 
 
 class PaginationParams(Base):
@@ -82,26 +81,6 @@ class PaginatedResponse(Base, Generic[T]):
     page: int
     size: int
     pages: int
-
-
-@overload
-def make_paginated_response(
-    *,
-    items: Sequence[ItemT],
-    total: int,
-    pagination: PaginationParams,
-    schema: None = None,
-) -> PaginatedResponse[ItemT]: ...
-
-
-@overload
-def make_paginated_response(
-    *,
-    items: Sequence[Any],
-    total: int,
-    pagination: PaginationParams,
-    schema: type[SchemaT],
-) -> PaginatedResponse[SchemaT]: ...
 
 
 def make_paginated_response(

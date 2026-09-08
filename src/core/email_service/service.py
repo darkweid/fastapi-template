@@ -150,36 +150,6 @@ class EmailService:
                     with contextlib.suppress(FileNotFoundError, PermissionError):
                         os.unlink(file_path)
 
-    async def send_email_with_single_attachment(
-        self,
-        subject: str,
-        recipients: str | list[str],
-        body_text: str,
-        file_path: Path,
-        subtype: MessageType = MessageType.PLAIN,
-        *,
-        cleanup: bool = False,
-    ) -> None:
-        """
-        Send an email with a single attachment.
-
-        Args:
-            subject (str): Email subject.
-            recipients (Union[str, List[str]]): One or more recipient email addresses.
-            body_text (str): Email body.
-            file_path (Path): Path to the single file attachment.
-            subtype (MessageType): Email content type. Defaults to plain.
-            cleanup (bool): Delete the file after a successful send. Defaults to False.
-        """
-        await self.send_email_with_attachments(
-            subject=subject,
-            recipients=recipients,
-            body_text=body_text,
-            file_paths=[file_path],
-            subtype=subtype,
-            cleanup=cleanup,
-        )
-
     def _require_dispatcher(self) -> TaskDispatcher:
         # Worker-side tasks build EmailService(mailer) for immediate sends only;
         # delayed sends are an API-side path and always get the dispatcher via DI.
