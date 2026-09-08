@@ -160,10 +160,7 @@ class ListQuery:
         for primary_key_column in inspect(model).primary_key:
             if chosen_name is not None and primary_key_column.name == chosen_name:
                 continue
-            # The primary key is NOT NULL by definition, so `nulls_last()`
-            # buys nothing here and only prevents a plain btree index from
-            # serving the query, forcing a `Sort` node on deep-offset pages.
-            clauses.append(self._pk_directed(primary_key_column))
+            clauses.append(self._directed(primary_key_column, nulls_last=False))
 
         return clauses
 
@@ -186,19 +183,20 @@ class ListQuery:
                 return column
         return None
 
-    def _directed(self, column: Any) -> UnaryExpression[Any]:
-        ordered = column.asc() if self.order == "asc" else column.desc()
-        # SQLAlchemy's operator mixins type `.nulls_last()` as `ColumnOperators`,
-        # the loosest common return type across all its column-like inputs; the
-        # concrete runtime type is always a `UnaryExpression`.
-        return cast(UnaryExpression[Any], ordered.nulls_last())
+    def _directed(
+        self, column: Any, *, nulls_last: bool = True
+    ) -> UnaryExpression[Any]:
+        """Order one column in this query's direction.
 
-    def _pk_directed(self, column: Any) -> UnaryExpression[Any]:
-        """Direct a primary-key tiebreaker clause without `nulls_last()`.
-
-        A primary key is `NOT NULL`, so the modifier is a no-op for
-        correctness and only costs a `Sort` node PostgreSQL would otherwise
-        avoid via a plain btree index scan.
+        `nulls_last=False` is for the primary-key tiebreaker: a primary key is
+        `NOT NULL`, so the modifier is a no-op for correctness there and only
+        costs a `Sort` node PostgreSQL would otherwise avoid via a plain btree
+        index scan.
         """
         ordered = column.asc() if self.order == "asc" else column.desc()
+        if nulls_last:
+            ordered = ordered.nulls_last()
+        # SQLAlchemy's operator mixins type `.asc()`/`.nulls_last()` as
+        # `ColumnOperators`, the loosest common return type across all its
+        # column-like inputs; the concrete runtime type is a `UnaryExpression`.
         return cast(UnaryExpression[Any], ordered)

@@ -2,7 +2,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import re
 import time
-import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -95,21 +94,15 @@ def register_middlewares(app: FastAPI) -> None:
         process_time = time.perf_counter() - start_time
 
         if process_time < 0.5:
-            level = timing_logger.info
-            category = "[FAST]"
-        elif process_time < 2:
-            level = timing_logger.warning
-            category = "[MODERATE]"
+            category, level = "[FAST]", timing_logger.info
         else:
+            category = "[MODERATE]" if process_time < 2 else "[SLOW]"
             level = timing_logger.warning
-            category = "[SLOW]"
 
-        method = request.method
-        path = request.url.path
-        status_code = response.status_code
-        duration = f"{process_time:.3f}s"
-
-        level(f"{category} {method} {path} |{duration}|{status_code}")
+        level(
+            f"{category} {request.method} {request.url.path} "
+            f"|{process_time:.3f}s|{response.status_code}"
+        )
 
         return response
 
@@ -154,13 +147,7 @@ def register_middlewares(app: FastAPI) -> None:
         try:
             return await call_next(request)
         except Exception as e:
-            error_traceback = traceback.format_exc()
-            logger.error(
-                "Unexpected error at %s: %s\n%s",
-                request.url.path,
-                str(e),
-                error_traceback,
-            )
+            logger.exception("Unexpected error at %s: %s", request.url.path, e)
             sentry_sdk.capture_exception(e)
             return _internal_error_response()
 
@@ -187,7 +174,7 @@ def handle_postgresql_error(
     error: IntegrityError,
 ) -> PostgresqlErrorHandlingResult:
     """
-    Build a structured handling result for PostgreSQL IntegrityError with HTTP response, Sentry flag, and log severity.
+    Map a PostgreSQL IntegrityError onto a response, a Sentry flag and a log severity.
 
     A unique violation answers 409, which on registration tells a caller that
     an address is already taken. That is a deliberate trade: account
@@ -196,18 +183,13 @@ def handle_postgresql_error(
     a generic failure sends the user in circles. The conflicting value itself
     is never echoed back — the DB DETAIL can carry someone else's data (an
     email, a phone number), so only the status and code are client-facing.
+
+    Everything else (check and exclusion violations, NOT NULL, unknown states)
+    is a bug in the application rather than bad input: it answers 500 and goes
+    to Sentry.
     """
     orig_error = error.orig
     sqlstate = getattr(orig_error, "sqlstate", None)
-    detail_message = getattr(orig_error, "detail", None)
-
-    raw_message = str(orig_error)
-
-    if not detail_message:
-        if "DETAIL:" in raw_message:
-            detail_message = raw_message.split("DETAIL:")[-1].strip()
-        else:
-            detail_message = "No additional details provided."
 
     if sqlstate == "23505":  # UniqueViolation
         return PostgresqlErrorHandlingResult(
@@ -219,22 +201,6 @@ def handle_postgresql_error(
             ),
             send_to_sentry=False,
             is_server_error=False,
-        )
-    if sqlstate == "23502":  # NotNullViolation
-        column_name = getattr(orig_error, "column_name", None)
-        column_match = (
-            re.search(r'column "([^"]+)"', raw_message) if not column_name else None
-        )
-        missing_field = column_name or (column_match.group(1) if column_match else None)
-        logger.error(
-            "NotNullViolation on column=%s | detail=%s",
-            missing_field,
-            detail_message,
-        )
-        return PostgresqlErrorHandlingResult(
-            response=_internal_error_response(),
-            send_to_sentry=True,
-            is_server_error=True,
         )
     if sqlstate == "23503":  # ForeignKeyViolation
         return PostgresqlErrorHandlingResult(
@@ -248,17 +214,17 @@ def handle_postgresql_error(
             send_to_sentry=False,
             is_server_error=False,
         )
-    if sqlstate == "23514":  # CheckViolation
-        return PostgresqlErrorHandlingResult(
-            response=_internal_error_response(),
-            send_to_sentry=True,
-            is_server_error=True,
+    if sqlstate == "23502":  # NotNullViolation
+        # The column name is the one detail that says which model is out of sync
+        # with its table, and it is not in the generic log line below.
+        raw_message = str(orig_error)
+        column_name = getattr(orig_error, "column_name", None)
+        column_match = (
+            re.search(r'column "([^"]+)"', raw_message) if not column_name else None
         )
-    if sqlstate == "23P01":  # ExclusionViolation
-        return PostgresqlErrorHandlingResult(
-            response=_internal_error_response(),
-            send_to_sentry=True,
-            is_server_error=True,
+        logger.error(
+            "NotNullViolation on column=%s",
+            column_name or (column_match.group(1) if column_match else None),
         )
 
     return PostgresqlErrorHandlingResult(

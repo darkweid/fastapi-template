@@ -1,4 +1,6 @@
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, fields
+import operator
 from typing import Any
 
 from sqlalchemy import ColumnElement
@@ -6,13 +8,15 @@ from sqlalchemy.orm import DeclarativeBase
 
 from src.core.errors.exceptions import FilteringError
 
-_FILTER_OPERATORS: dict[str, str] = {
-    "eq": "__eq__",
-    "ne": "__ne__",
-    "lt": "__lt__",
-    "gt": "__gt__",
-    "lte": "__le__",
-    "gte": "__ge__",
+# Field name -> the comparison it builds. The dataclass fields below are named
+# after these keys, so adding an operator means adding both together.
+_FILTER_OPERATORS: dict[str, Callable[[Any, Any], Any]] = {
+    "eq": operator.eq,
+    "ne": operator.ne,
+    "lt": operator.lt,
+    "gt": operator.gt,
+    "lte": operator.le,
+    "gte": operator.ge,
 }
 
 
@@ -21,7 +25,7 @@ class FilterCondition:
     """
     Typed filter specification for database queries.
 
-    Supports explicit comparison operators via named dictionaries:
+    Each field maps column name -> value under one comparison operator:
       eq:  field == value
       ne:  field != value
       lt:  field < value
@@ -37,8 +41,11 @@ class FilterCondition:
     lte: dict[str, Any] = field(default_factory=dict)
     gte: dict[str, Any] = field(default_factory=dict)
 
+    def _conditions(self) -> list[tuple[str, dict[str, Any]]]:
+        return [(f.name, getattr(self, f.name)) for f in fields(self)]
+
     def has_conditions(self) -> bool:
-        return any((self.eq, self.ne, self.lt, self.gt, self.lte, self.gte))
+        return any(values for _, values in self._conditions())
 
     def validate(self) -> None:
         if not self.has_conditions():
@@ -50,24 +57,15 @@ class FilterCondition:
         self.validate()
         clauses: list[ColumnElement[bool]] = []
 
-        operator_map: dict[str, dict[str, Any]] = {
-            "eq": self.eq,
-            "ne": self.ne,
-            "lt": self.lt,
-            "gt": self.gt,
-            "lte": self.lte,
-            "gte": self.gte,
-        }
-
-        for op_name, fields in operator_map.items():
-            sa_method = _FILTER_OPERATORS[op_name]
-            for col_name, value in fields.items():
-                column = getattr(model, col_name, None)
+        for operator_name, values in self._conditions():
+            compare = _FILTER_OPERATORS[operator_name]
+            for column_name, value in values.items():
+                column = getattr(model, column_name, None)
                 if column is None:
                     raise FilteringError(
-                        f"Unknown filter column '{col_name}' for model "
+                        f"Unknown filter column '{column_name}' for model "
                         f"'{model.__name__}'"
                     )
-                clauses.append(getattr(column, sa_method)(value))
+                clauses.append(compare(column, value))
 
         return clauses
