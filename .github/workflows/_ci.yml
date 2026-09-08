@@ -26,8 +26,36 @@ permissions:
   pull-requests: read
 
 jobs:
+  # Runs on every event so the workflow always reports. Skipping a workflow
+  # outright with paths-ignore leaves a required status check waiting forever,
+  # while a job skipped through `if:` closes it as passed.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # The action diffs two commits; shallow history cannot reach the base.
+          fetch-depth: 0
+
+      - name: Classify the changed paths
+        id: classify
+        uses: ./.github/actions/docs-only-change
+        with:
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
   lint:
     name: Lint
+    needs: changes
+    # Compared against 'true', never 'false': an empty or unexpected value has
+    # to run the job, not skip it.
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -80,6 +108,8 @@ jobs:
 
   migration-heads:
     name: Migration HEADs
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -132,6 +162,8 @@ jobs:
 
   unit-tests:
     name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -185,6 +217,8 @@ jobs:
 
   integration-tests:
     name: Integration tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -258,6 +292,8 @@ jobs:
 
   bandit:
     name: Bandit
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -284,6 +320,8 @@ jobs:
 
   pip-audit:
     name: pip-audit
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -341,10 +379,10 @@ jobs:
   # human reaches for when they mean production.
   build-and-push:
     name: Build & push image
-    needs: [lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
+    needs: [changes, lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
     # Branch and event filtering happens in the caller; here the decision arrives
     # as a single input so stage and prod share one implementation.
-    if: ${{ inputs.push_image }}
+    if: ${{ needs.changes.outputs.docs_only != 'true' && inputs.push_image }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

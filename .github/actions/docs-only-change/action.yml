@@ -1,0 +1,47 @@
+name: Docs-only change
+description: >-
+  Answers whether a commit range touches documentation only, so a caller can
+  skip work that such a change cannot affect.
+
+inputs:
+  base:
+    description: >-
+      Commit the range starts at. An empty or unresolvable value answers
+      "false" - there is nothing to compare against, so the caller does its
+      full work.
+    required: true
+  head:
+    description: Commit the range ends at.
+    required: true
+
+outputs:
+  docs_only:
+    description: '"true" only when every changed path is documentation.'
+    value: ${{ steps.classify.outputs.docs_only }}
+
+runs:
+  using: composite
+  steps:
+    - id: classify
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+      run: |
+        set -euo pipefail
+        # A branch's first push sends an all-zero before-sha, a force-push can
+        # orphan the previous tip, and a manual dispatch carries no before-sha
+        # at all. None of them leaves a commit to diff against, and the safe
+        # answer there is the one that runs everything.
+        if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+          echo "No usable base commit - treating the change as code."
+          echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        changed="$(git diff --name-only "${BASE}...${HEAD}")"
+        echo "Changed paths:"
+        printf '%s\n' "$changed"
+        verdict="$(printf '%s\n' "$changed" \
+          | python3 "${GITHUB_WORKSPACE}/scripts/docs_only_change.py")"
+        echo "docs_only=${verdict}"
+        echo "docs_only=${verdict}" >> "$GITHUB_OUTPUT"
