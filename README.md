@@ -1,6 +1,6 @@
 # FastAPI Template
 
-![CI](https://github.com/darkweid/fastapi-template/actions/workflows/ci.yml/badge.svg?branch=main)
+![CI](https://github.com/darkweid/fastapi-template/actions/workflows/prod_ci.yml/badge.svg?branch=main)
 ![Coverage](https://coveralls.io/repos/github/darkweid/fastapi-template/badge.svg?branch=main)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![Mypy](https://img.shields.io/badge/mypy-strict-success)
@@ -171,7 +171,7 @@ Redis increment however many entries carry it.
 ![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)
 
 ## Security Checks
-- CI runs dedicated security jobs in `.github/workflows/ci.yml`.
+- CI runs dedicated security jobs in `.github/workflows/_ci.yml`.
 - `bandit` scans application, migration, and script code for insecure patterns.
 - `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages. Advisories that cannot be fixed yet are ignored explicitly via `--ignore-vuln`, with the reason documented next to the flag in the workflow.
 - `gitleaks` scans the repository for committed secrets.
@@ -287,14 +287,16 @@ missing or the password fails validation; the password itself is never logged
 or printed.
 
 ## Manual Deploy Dispatch
-CD (`.github/workflows/deploy.yml`) normally runs automatically once CI
-succeeds on `main`. It can also be triggered manually — Actions tab → *CD* →
-*Run workflow*, or `gh workflow run deploy.yml` — via `workflow_dispatch`,
-with an optional `image_tag` input: leave it blank to deploy `sha-<12>` of the
-dispatched commit (`main` HEAD by default), or set it to redeploy a specific
-image CI already built and pushed to GHCR. The same `DEPLOY_ENABLED` gate and
-`deploy` concurrency group apply, so a manual run still waits behind any
-in-flight automatic deploy.
+CD (prod) (`.github/workflows/prod_deploy.yml`) normally runs automatically
+once CI (prod) succeeds on `main`. It can also be triggered manually — Actions
+tab → *CD (prod)* → *Run workflow*, or `gh workflow run prod_deploy.yml` — via
+`workflow_dispatch`, with an optional `image_tag` input: leave it blank to
+deploy `sha-<12>` of the dispatched commit (`main` HEAD by default), or set it
+to redeploy a specific image CI already built and pushed to GHCR. The same
+`PROD_DEPLOY_ENABLED` gate and `deploy-production` concurrency group apply, so
+a manual run still waits behind any in-flight automatic deploy.
+`stage_deploy.yml` is the same file bound to the `stage` branch, the `staging`
+environment and `STAGE_DEPLOY_ENABLED`.
 
 ## Pre-commit Hooks
 - Install dev deps: `make req-sync-dev`

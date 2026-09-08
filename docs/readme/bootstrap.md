@@ -254,21 +254,32 @@ The layer rules (Router → UseCase → Service → Repository) live in
 
 ## 8. GitHub: CI now, CD when you are ready
 
-CI needs no setup. It authenticates to GHCR with the automatic `GITHUB_TOKEN`
-and pushes `ghcr.io/<owner>/<repo>` on every push to `main`. The package is
-private by default.
+CI needs no setup. *CI (prod)* authenticates to GHCR with the automatic
+`GITHUB_TOKEN` and pushes `ghcr.io/<owner>/<repo>` as `sha-<12>` plus `latest`
+on every push to `main`. The package is private by default.
 
-CD stays skipped until you arm it. In *Settings → Secrets and variables →
-Actions*:
+*CI (stage)* is the same pipeline bound to a `stage` branch, tagging `stage`
+instead of `latest`. That branch does not exist here, so the workflow stays
+dormant until you create it; a project with no staging contour deletes
+`stage_ci.yml` and `stage_deploy.yml`.
 
-| Name | Kind | Purpose |
+CD stays skipped until you arm it. Everything the deploy reads belongs to a
+GitHub Environment — create `production` (and `staging`, if you run one) under
+*Settings → Environments* and put the secrets and `APP_DIR` there, one set per
+box. The two `*_DEPLOY_ENABLED` gates are the exception: they live in *Settings
+→ Secrets and variables → Actions → Variables*, because a job-level `if` runs
+before the environment resolves and would read an environment variable as empty.
+
+| Name | Where | What it is |
 | --- | --- | --- |
-| `DEPLOY_ENABLED` | Variable | Set to `true` to arm CD. Until then CD is skipped. |
-| `SSH_PRIVATE_KEY`, `SERVER_IP`, `SSH_USER` | Secret | Server access. |
-| `SSH_KNOWN_HOSTS` | Secret | `ssh-keyscan <server-ip>`, verified by hand against the host key. |
-| `GHCR_USER`, `GHCR_PULL_TOKEN` | Secret | The server's GHCR pull credentials (classic PAT, `read:packages`). |
-| `ALERT_BOT_TOKEN`, `ALERT_CHAT_ID` | Secret | Telegram deploy notifications. |
-| `PRECOMMIT_BOT_TOKEN` | Secret, optional | Lets the pre-commit autoupdate workflow open PRs that trigger CI. |
+| `PROD_DEPLOY_ENABLED` | Repository variable | Set to `true` to arm production CD. Until then CD (prod) is skipped. |
+| `STAGE_DEPLOY_ENABLED` | Repository variable | Same for CD (stage). Leave unset if the project has no staging box. |
+| `APP_DIR` | Environment variable | Deploy directory on that environment's box, e.g. `/root/app`. CD fails with a named error if it is unset. |
+| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_USER`, `SERVER_IP` | Environment secret | Access to that environment's box. Per environment, so a staging key cannot reach production. `SSH_KNOWN_HOSTS` is `ssh-keyscan <server-ip>`, verified by hand against the host key. |
+| `GHCR_USER`, `GHCR_PULL_TOKEN` | Environment secret | Pull the image from GHCR on the box (classic PAT, `read:packages`). |
+| `ALERT_BOT_TOKEN`, `ALERT_CHAT_ID` | Environment secret | Telegram deploy notifications. |
+| `GITLEAKS_LICENSE` | Repository secret, optional | Only needed when the repository is owned by an organization. |
+| `PRECOMMIT_BOT_TOKEN` | Repository secret, optional | Lets the pre-commit autoupdate workflow open PRs that trigger CI. |
 
 Details, including how to mint `PRECOMMIT_BOT_TOKEN`, are in
 [contributing.md](contributing.md).
@@ -331,6 +342,6 @@ hardening in [security.md](security.md).
 [ ] /live/, /ready/, /health/ answer; /docs opens
 [ ] make lint && make test green
 [ ] src/note copied for the first domain, then deleted
-[ ] CD secrets set and DEPLOY_ENABLED=true (when a server exists)
+[ ] production environment holds the CD secrets and APP_DIR; PROD_DEPLOY_ENABLED=true (when a server exists)
 [ ] Host hardened, TLS in place, first make deploy-prod done
 ```
