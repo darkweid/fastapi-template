@@ -69,8 +69,8 @@ jobs:
 
       # image_tag is dispatcher-controlled input, so it is read from `env:` here -
       # never interpolated into the script - and only a bare sha-<12 lowercase hex>
-      # shape is accepted, since that is the only tag CI ever produces from a main
-      # push. A matching tag is resolved against the full history fetched above and
+      # shape is accepted, since that is the only shape CI ever produces, on either
+      # contour. A matching tag is resolved against the full history fetched above and
       # checked out locally, so the runner's checkout, the image tag pushed to GHCR
       # and the remote box all agree on the exact same commit; a workflow_run keeps
       # deploying the commit CI itself validated, unchanged.
@@ -133,9 +133,12 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
+          # Read from the env copies above rather than interpolated again: a key
+          # whose first line began with a backslash would otherwise reach echo as
+          # an escape sequence on the shells that honour them.
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy_key
           chmod 600 ~/.ssh/id_deploy_key
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" | tr -d '\r' > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Deploy over SSH
@@ -143,8 +146,14 @@ jobs:
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
           TAG: ${{ steps.meta.outputs.tag }}
+          # An environment variable, so an operator sets it per environment. It is
+          # read through env rather than interpolated into the heredoc below: the
+          # heredoc is unquoted, so an interpolated `$(...)` in the value would be
+          # executed on the runner, while an expanded variable's contents are not
+          # re-evaluated.
+          APP_DIR: ${{ vars.APP_DIR }}
         run: |
-          if [ -z "${{ vars.APP_DIR }}" ]; then
+          if [ -z "$APP_DIR" ]; then
             echo "::error::APP_DIR is not set for the ${{ inputs.environment }} environment (Settings -> Environments -> Variables)."
             exit 1
           fi
@@ -153,7 +162,7 @@ jobs:
           ssh -i ~/.ssh/id_deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" bash -s <<EOF
           set -euo pipefail
-          cd "${{ vars.APP_DIR }}"
+          cd "$APP_DIR"
           git fetch --quiet origin
           git checkout --quiet ${{ steps.ref.outputs.sha }}
           echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
@@ -167,8 +176,9 @@ jobs:
       - name: Telegram notification
         if: always()
         run: |
-          # No `set -e` here: this step must still reach curl when an earlier
-          # step failed, which is the case the alert exists for.
+          # `if: always()` above is what keeps this step alive after a failed
+          # deploy - the case the alert exists for. The step's own shell is still
+          # `bash -e`, GitHub's default for a `run:` with no `shell:` key.
           sanitize_html() {
             echo "$1" \
               | sed 's/&/\&amp;/g' \
@@ -208,7 +218,6 @@ jobs:
 
           MESSAGE="${STATUS}
           🚀 <b>Project</b>: ${PROJECT}
-          🌍 <b>Environment</b>: ${ENVIRONMENT_LABEL}
           🔖 <b>Version</b>: <code>${{ steps.ref.outputs.sha }}</code>
           👤 <b>Author</b>: ${AUTHOR}
           ⏱️ <b>Duration</b>: ${DURATION_HUMAN}

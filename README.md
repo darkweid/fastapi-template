@@ -173,7 +173,7 @@ Redis increment however many entries carry it.
 ## Security Checks
 - CI runs dedicated security jobs in `.github/workflows/_ci.yml`.
 - `bandit` scans application, migration, and script code for insecure patterns.
-- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages. Advisories that cannot be fixed yet are ignored explicitly via `--ignore-vuln`, with the reason documented next to the flag in the workflow.
+- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages. It runs unfiltered: an advisory that cannot be fixed yet has to be ignored with an explicit `--ignore-vuln` in the workflow, and the reason belongs next to the flag.
 - `gitleaks` scans the repository for committed secrets.
 - `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
@@ -296,7 +296,9 @@ to redeploy a specific image CI already built and pushed to GHCR. The same
 `PROD_DEPLOY_ENABLED` gate and `deploy-production` concurrency group apply, so
 a manual run still waits behind any in-flight automatic deploy.
 `stage_deploy.yml` is the same file bound to the `stage` branch, the `staging`
-environment and `STAGE_DEPLOY_ENABLED`.
+environment and `STAGE_DEPLOY_ENABLED`. Dispatching it needs one extra step: the
+ref selector still defaults to `main`, so a blank `image_tag` there deploys
+`main` HEAD to staging unless `stage` is picked in the UI.
 
 ## Pre-commit Hooks
 - Install dev deps: `make req-sync-dev`
