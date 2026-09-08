@@ -38,6 +38,15 @@ Pick a slug — lowercase, no spaces — and replace:
 | Volume names `template-postgres-data`, `template-redis-data` | `infra/docker-compose.yml:187,189` | `myapp-postgres-data`, `myapp-redis-data` |
 | Integration-suite project prefix `template-test-$$` | `Makefile:145` | `myapp-test-$$` |
 
+If the stack has already run once, tear it down **before** renaming. `make down`
+resolves the project name from `infra/docker-compose.yml`, so after the rename it
+addresses a project that never existed while the old containers keep running and
+keep holding the old volumes:
+
+```bash
+make down
+```
+
 One pass covers all of them:
 
 ```bash
@@ -56,11 +65,14 @@ git grep -n 'template-\|fastapi-template' -- Makefile infra docs   # expect no o
 
 **Volumes are the one irreversible bit.** The names are pinned explicitly, so
 renaming after the stack has run once points the new names at fresh, empty
-volumes while the old data sits in `template-postgres-data` untouched. If you
-already ran it and have nothing worth keeping:
+volumes while the old data sits in `template-postgres-data` untouched.
+
+If you renamed first and the old stack is still up, address it by its original
+project name — the `-p` flag overrides the `name:` inside the compose file — and
+then drop the volumes, assuming nothing in them is worth keeping:
 
 ```bash
-make down
+docker compose -p fastapi-template -f infra/docker-compose.yml down
 docker volume rm template-postgres-data template-redis-data
 ```
 
@@ -108,15 +120,19 @@ the *deploy* gate (`infra/deploy/deploy.sh` runs it first), not a local one. A
 placeholder left in place therefore boots fine locally and blocks the first
 deploy.
 
-### Signing secrets — the four that fail startup
+### Signing secrets
 
-`JWTConfig.reject_shared_secrets` walks every `*_SECRET_KEY` field and refuses
-to start when two of them match. Each is also `min_length=32`.
+Four values, each at least 32 characters, and all four different:
 
 - `JWT_USER_SECRET_KEY`
 - `JWT_USER_VERIFY_SECRET_KEY`
 - `JWT_USER_RESET_PASSWORD_SECRET_KEY`
 - `CSRF_SECRET_KEY`
+
+Sharing one would let a value minted for one purpose pass the check of another.
+`JWTConfig.reject_shared_secrets` refuses to start when two of the three JWT keys
+match, but it walks `JWTConfig`'s own fields only: `CSRF_SECRET_KEY` belongs to
+`CookieConfig` and nothing compares it against them. That fourth one is on you.
 
 Generate four distinct values and paste them over the placeholders:
 
@@ -211,7 +227,11 @@ debugging the template, not your project.
 
 - **`src/note` is the domain template.** Flat layout with the full CRUD +
   ownership + list-query pattern and no auth baggage. Copy it for the first real
-  domain, then delete it.
+  domain. Deleting it afterwards means unwiring it in the same commit, or the
+  checkout stops importing: the router in `src/main/presentation.py`, the model
+  in `models/__init__.py`, the `notes` property on
+  `src/core/database/uow/application.py`, and `tests/unit/src/note/`. Point each
+  of those at your own domain rather than dropping the module on its own.
 - **`src/user` is authentication infrastructure, not a copy source** — accounts,
   sessions, permissions. So is `src/core/auth`.
 - A second class of principal (staff, partner, …) is a six-line `AuthRealm`
@@ -265,8 +285,22 @@ On the target box:
 3. Close the host: `scp -r infra/firewall <host>:/tmp/firewall` then
    `ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'`. Docker-published ports
    bypass UFW, which is why this installs a `DOCKER-USER` chain as well.
-4. Terminate TLS at Nginx: put the certificate under `infra/nginx/certs/` and
-   mount `infra/nginx/tls.conf.example` in place of `app.conf`.
+4. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
+   the exact steps, and swapping the config file is only the first of them: the
+   server block reads `/etc/nginx/certs/fullchain.pem`, and the `nginx` service
+   currently mounts configuration files only. Put the certificate and key under
+   `infra/nginx/certs/`, mount `tls.conf.example` **over** the `app.conf` mount,
+   and add the mounts those paths need:
+
+   ```yaml
+   - ./nginx/certs:/etc/nginx/certs:ro
+   - certbot-webroot:/var/www/certbot:ro
+   ```
+
+   The second one belongs to the ACME challenge location; keep it only if you
+   renew through certbot, and declare `certbot-webroot` under `volumes:` in the
+   same file. Without the certificate mount Nginx cannot start and the first
+   deploy fails at the last step.
 5. `make deploy-prod` — the bootstrap path, which builds the image on the box
    because no registry image exists yet.
 
