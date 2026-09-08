@@ -1,25 +1,19 @@
-from typing import Annotated, Final
+from typing import Final
 
-from fastapi import Depends, Response
+from fastapi import Response
 
 from loggers import get_logger
+from src.core.auth.csrf import build_csrf_token, verify_csrf_token
+from src.core.auth.errors import CsrfFailedError
+from src.core.auth.realm import AuthRealm
+from src.core.auth.token_transport import TokenTransport
 from src.core.errors.exceptions import InfrastructureException
 from src.core.schemas import TokenModel
-from src.main.config import Config, CookieConfig, get_settings
-from src.user.auth.csrf import build_csrf_token, verify_csrf_token
-from src.user.auth.errors import CsrfFailedError
-from src.user.auth.token_transport import TokenTransport
+from src.main.config import CookieConfig
 
 logger = get_logger(__name__)
 
-REFRESH_COOKIE_NAME: Final[str] = "refresh_token"
-CSRF_COOKIE_NAME: Final[str] = "csrf_token"
 CSRF_HEADER_NAME: Final[str] = "X-CSRF-Token"
-# Scope the refresh cookie to the refresh endpoint only, so the browser never attaches
-# it to ordinary API calls. Must stay in sync with where the auth router is mounted;
-# a test pins this constant to the mounted route, because a mismatch breaks refresh
-# silently - the browser simply does not send the cookie.
-REFRESH_COOKIE_PATH: Final[str] = "/v1/users/auth/login/refresh"
 # The CSRF cookie is deliberately site-wide: per RFC 6265 path matching, a
 # same-origin SPA served at "/" could never read a cookie scoped to the refresh
 # route, breaking every browser refresh. This costs nothing since the value is a
@@ -39,9 +33,11 @@ class TokenCookieResponder:
 
     def __init__(
         self,
+        realm: AuthRealm,
         cookie_config: CookieConfig,
         refresh_token_expire_minutes: int,
     ) -> None:
+        self._realm = realm
         self._config = cookie_config
         self._max_age = refresh_token_expire_minutes * 60
 
@@ -74,14 +70,14 @@ class TokenCookieResponder:
         csrf_token = build_csrf_token(refresh_token, self._config.CSRF_SECRET_KEY)
         self._set_cookie(
             response,
-            REFRESH_COOKIE_NAME,
+            self._realm.refresh_cookie,
             refresh_token,
-            path=REFRESH_COOKIE_PATH,
+            path=self._realm.refresh_cookie_path,
             httponly=True,
         )
         self._set_cookie(
             response,
-            CSRF_COOKIE_NAME,
+            self._realm.csrf_cookie,
             csrf_token,
             path=CSRF_COOKIE_PATH,
             httponly=False,
@@ -100,15 +96,15 @@ class TokenCookieResponder:
 
         self._set_cookie(
             response,
-            REFRESH_COOKIE_NAME,
+            self._realm.refresh_cookie,
             "",
-            path=REFRESH_COOKIE_PATH,
+            path=self._realm.refresh_cookie_path,
             httponly=True,
             max_age=0,
         )
         self._set_cookie(
             response,
-            CSRF_COOKIE_NAME,
+            self._realm.csrf_cookie,
             "",
             path=CSRF_COOKIE_PATH,
             httponly=False,
@@ -152,12 +148,3 @@ class TokenCookieResponder:
             httponly=httponly,
             samesite=self._config.COOKIE_SAMESITE,
         )
-
-
-def get_token_cookie_responder(
-    settings: Annotated[Config, Depends(get_settings)],
-) -> TokenCookieResponder:
-    return TokenCookieResponder(
-        cookie_config=settings.cookie,
-        refresh_token_expire_minutes=settings.jwt.REFRESH_TOKEN_EXPIRE_MINUTES,
-    )

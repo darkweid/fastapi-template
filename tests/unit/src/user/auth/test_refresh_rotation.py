@@ -3,14 +3,16 @@ from unittest.mock import AsyncMock
 import jwt
 import pytest
 
+import src.core.auth.token_helpers as token_helpers
+from src.core.auth.tokens import rotate_refresh_token
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
-from src.user.auth.redis_keys import auth_redis_keys
-from src.user.auth.security import rotate_refresh_token
-import src.user.auth.token_helpers as token_helpers
+from src.user.auth.realm import USER_AUTH_REALM
 from tests.fakes.redis import InMemoryRedis
 
 TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
+
+AUTH_KEYS = USER_AUTH_REALM.keys
 
 # Pinned wall clock for grace-window math; the fake's key expiry runs on
 # time.monotonic(), so freezing this cannot make keys expire mid-test.
@@ -44,12 +46,12 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
     """
     payload = _base_payload()
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
 
-    token = await rotate_refresh_token(payload, fake_redis)
+    token = await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
     decoded = jwt.decode(
         token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
     )
@@ -57,8 +59,8 @@ async def test_rotate_refresh_token_success(fake_redis: InMemoryRedis) -> None:
     assert decoded["session_id"] == payload["session_id"]
     assert decoded["jti"] != payload["jti"]
 
-    used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
-    old_refresh_key = auth_redis_keys.refresh(
+    used_key = AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"]))
+    old_refresh_key = AUTH_KEYS.refresh(
         str(payload["sub"]),
         str(payload["session_id"]),
     )
@@ -76,14 +78,14 @@ async def test_used_marker_ttl_tracks_the_refresh_token_lifetime(
     # of REUSED; longer buys nothing because the token itself has expired.
     payload = _base_payload()
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
 
-    await rotate_refresh_token(payload, fake_redis)
+    await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
+    used_key = AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"]))
     assert (
         await fake_redis.ttl(used_key) == config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
     )
@@ -98,14 +100,14 @@ async def test_rotation_stores_a_unix_timestamp_in_the_used_marker(
     payload = _base_payload()
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
 
-    await rotate_refresh_token(payload, fake_redis)
+    await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    used_key = auth_redis_keys.used(str(payload["sub"]), str(payload["jti"]))
+    used_key = AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"]))
     assert await fake_redis.get(used_key) == str(FROZEN_NOW)
 
 
@@ -124,17 +126,17 @@ async def test_second_rotation_within_grace_rejects_without_family_wipe(
     payload = _base_payload()
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
-    await rotate_refresh_token(payload, fake_redis)
+    await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
-        await rotate_refresh_token(payload, fake_redis)
+        await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock.assert_not_awaited()
 
@@ -147,20 +149,20 @@ async def test_replay_after_the_grace_window_wipes_the_family(
     payload = _base_payload()
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
-    await rotate_refresh_token(payload, fake_redis)
+    await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
     fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
-        await rotate_refresh_token(payload, fake_redis)
+        await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -171,19 +173,19 @@ async def test_zero_grace_disables_the_window(
     payload = _base_payload()
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
-    await rotate_refresh_token(payload, fake_redis)
+    await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
-        await rotate_refresh_token(payload, fake_redis)
+        await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -199,17 +201,17 @@ async def test_rotate_refresh_token_reuse_detected(
     """
     payload = _base_payload()
     await fake_redis.setex(
-        auth_redis_keys.used(str(payload["sub"]), str(payload["jti"])),
+        AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"])),
         100,
         "used",
     )
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload, fake_redis)
+        await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -223,17 +225,17 @@ async def test_rotate_refresh_token_invalid_state(
     """
     payload = _base_payload()
     await fake_redis.set(
-        auth_redis_keys.refresh(str(payload["sub"]), str(payload["session_id"])),
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         "wrong-jti",
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload, fake_redis)
+        await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -246,12 +248,12 @@ async def test_rotate_refresh_token_missing_jti_invalidates(
     Then: UnauthorizedException is raised and all sessions for the user are invalidated.
     """
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_user_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
 
     payload = _base_payload()
     payload.pop("jti")
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload, fake_redis)
+        await rotate_refresh_token(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)

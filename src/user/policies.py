@@ -1,11 +1,8 @@
 from enum import StrEnum
 from typing import Protocol
 
-from src.user.auth.errors import (
-    InvalidCredentialsError,
-    UserBlockedError,
-    UserNotVerifiedError,
-)
+from src.core.auth.errors import InvalidCredentialsError
+from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 
 INVALID_CREDENTIALS_MESSAGE = "Incorrect email or password."
 

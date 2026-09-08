@@ -6,27 +6,20 @@ from fastapi.routing import APIRoute
 from httpx2 import ASGITransport, AsyncClient
 import pytest
 
+from src.core.auth.cookies import CSRF_HEADER_NAME
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.database.session import get_session
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.system import routers as system_routers
 from src.user import routers as user_routers
 from src.user.auth import routers as user_auth_routers
-from src.user.auth.cookies import (
-    CSRF_COOKIE_NAME,
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    REFRESH_COOKIE_PATH,
-)
 from src.user.auth.dependencies import get_access_by_refresh_token
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.token_transport import TokenTransport, get_token_transport
-from src.user.auth.usecases.get_access_by_refresh import (
-    get_tokens_by_refresh_user_use_case,
-)
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.usecases.login import get_login_user_use_case
-from src.user.dependencies import get_user_repository
-from src.user.models import User
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
+from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_refresh_payload, build_refresh_token
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
@@ -35,15 +28,14 @@ from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
 from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
+CSRF_COOKIE_NAME = USER_AUTH_REALM.csrf_cookie
+REFRESH_COOKIE_PATH = USER_AUTH_REALM.refresh_cookie_path
+
 
 class FakeUseCase:
     def __init__(self, result) -> None:
         self.execute = AsyncMock(return_value=result)
-
-
-class FakeUserRepository:
-    def __init__(self, user: User | None) -> None:
-        self.get_single = AsyncMock(return_value=user)
 
 
 @pytest.fixture(autouse=True)
@@ -207,7 +199,7 @@ async def test_refresh_with_body_transport_returns_both_tokens_and_sets_no_cooki
     dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
     tokens = TokenModel(access_token="a2", refresh_token="r2")
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(tokens))
+        get_refresh_access_use_case, ProvideValue(FakeUseCase(tokens))
     )
 
     response = await async_client.post(
@@ -230,6 +222,7 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     dependency_overrides: DependencyOverrides,
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     Drives the assembled default path end to end with nothing stubbed out below the
@@ -239,6 +232,10 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
     decide the outcome. Only the use cases and the repository/session/redis
     infrastructure are faked - the CSRF and credential-resolution logic under test
     runs unmodified.
+
+    The realm-auth factory resolves its repository itself rather than through
+    FastAPI DI (see build_realm_auth), so the fake is installed on the
+    UserRepository class instead of via a dependency override.
     """
     user = build_user()
     refresh_token = await build_refresh_token({"sub": str(user.id)}, fake_redis)
@@ -249,13 +246,11 @@ async def test_login_refresh_via_cookie_and_csrf_header_succeeds(
         get_login_user_use_case, ProvideValue(FakeUseCase(login_tokens))
     )
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(refreshed_tokens))
+        get_refresh_access_use_case, ProvideValue(FakeUseCase(refreshed_tokens))
     )
     dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
-    dependency_overrides.set(
-        get_user_repository, ProvideValue(FakeUserRepository(user))
-    )
+    monkeypatch.setattr(UserRepository, "get_single", AsyncMock(return_value=user))
 
     login_response = await async_client.post(
         "/v1/users/auth/login",

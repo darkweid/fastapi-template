@@ -3,8 +3,8 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from src.core.auth.errors import PermissionDeniedError
 from src.user.auth.dependencies import get_current_user
-from src.user.auth.errors import PermissionDeniedError
 from src.user.auth.permissions.enum import Permission
 from src.user.auth.permissions.role_matrix import has_permission
 from src.user.models import User

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.core.errors.exceptions import InstanceProcessingException
-from src.core.utils.security import build_email_throttle_key
+from src.core.utils.security import build_throttle_key
 from src.user.auth.services.email_notifier import EmailNotifier
 from src.user.auth.tasks import (
     send_reset_password_email_task,
@@ -91,7 +91,7 @@ async def test_email_notifier_rejects_throttled_requests(
         AsyncMock(), fake_redis, task, throttle_message, log_label
     )
     user = build_user(email="user@example.com")
-    throttle_key = build_email_throttle_key(throttle_namespace, user.email)
+    throttle_key = build_throttle_key(throttle_namespace, user.email)
     await fake_redis.set(throttle_key, "1", ex=60)
 
     with pytest.raises(InstanceProcessingException, match=throttle_message):
@@ -114,7 +114,7 @@ async def test_email_notifier_cleans_throttle_key_when_queueing_fails(
     dispatcher.enqueue_transactional.side_effect = RuntimeError("outbox insert failed")
     notifier = build_notifier(dispatcher, fake_redis, task, throttle_message, log_label)
     user = build_user(email="user@example.com")
-    throttle_key = build_email_throttle_key(throttle_namespace, user.email)
+    throttle_key = build_throttle_key(throttle_namespace, user.email)
 
     with pytest.raises(RuntimeError, match="outbox insert failed"):
         await notifier.send(uow=fake_uow, user=user, throttle_key=throttle_key)
@@ -136,7 +136,7 @@ async def test_release_throttle_deletes_key(
     notifier = build_notifier(
         AsyncMock(), fake_redis, task, throttle_message, log_label
     )
-    throttle_key = build_email_throttle_key(throttle_namespace, "user@example.com")
+    throttle_key = build_throttle_key(throttle_namespace, "user@example.com")
     await fake_redis.set(throttle_key, "1", ex=60)
 
     await notifier.release_throttle(throttle_key)

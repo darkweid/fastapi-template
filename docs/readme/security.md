@@ -4,12 +4,12 @@ Overview of security mechanisms implemented in the template and the rationale be
 
 ## JWT Token Architecture
 
-`src/user/auth/security.py`, `src/main/config.py`
+`src/core/auth/tokens.py`, `src/user/auth/realm.py`, `src/main/config.py`
 
 **Separate secret keys per token purpose:**
 - `JWT_USER_SECRET_KEY` — access and refresh tokens.
-- `JWT_VERIFY_SECRET_KEY` — email verification tokens.
-- `JWT_RESET_PASSWORD_SECRET_KEY` — password reset tokens.
+- `JWT_USER_VERIFY_SECRET_KEY` — email verification tokens.
+- `JWT_USER_RESET_PASSWORD_SECRET_KEY` — password reset tokens.
 
 Key compromise is isolated: leaking the reset-password key does not allow forging access tokens. Each token carries a unique JTI (JWT ID) tracked in Redis, enabling per-token revocation.
 
@@ -17,7 +17,7 @@ Key compromise is isolated: leaking the reset-password key does not allow forgin
 
 ## Refresh Token Rotation and Reuse Detection
 
-`src/user/auth/rotate_refresh_token.lua`, `src/user/auth/token_helpers.py`
+`src/core/auth/rotate_refresh_token.lua`, `src/core/auth/token_helpers.py`
 
 Every refresh request atomically (via Lua script):
 1. Checks if the presented JTI was already consumed - within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` of the rotation that consumed it the replay is treated as a benign double-submit (`GRACE`, plain 401, no wipe); later it is `REUSED`.
@@ -83,13 +83,16 @@ Redis-backed **fixed window** counter via Lua script:
 
 ## Session Management
 
-`src/user/auth/redis_keys.py`, `src/user/auth/token_helpers.py`
+`src/core/auth/redis_keys.py`, `src/core/auth/realm.py`, `src/core/auth/token_helpers.py`
 
-Sessions are Redis-backed with a key structure: `{token_type}:{user_id}:{session_id}`.
+Sessions are Redis-backed with a key structure: `{realm}:{token_type}:{user_id}:{session_id}`.
+The realm prefix (`AuthRealm`, `src/user/auth/realm.py` for the user realm) namespaces every
+auth key so a second principal class (staff, partner) can never collide with or be wiped by
+another realm's session invalidation.
 
 - Each login creates a unique `session_id` (UUID4), enabling multi-device support.
-- `invalidate_user_session()` — single device logout.
-- `invalidate_all_user_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
+- `invalidate_session()` — single device logout.
+- `invalidate_all_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
 - Logout endpoint supports both modes via `terminate_all_sessions` flag.
 
 **Why it matters:** Stateless JWT alone cannot be revoked. Redis-backed JTI tracking adds revocation capability while preserving JWT's stateless verification for normal requests.

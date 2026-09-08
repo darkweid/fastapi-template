@@ -190,8 +190,8 @@ def test_shipped_env_example_is_rejected_as_a_deploy_config() -> None:
         "DOCS_PASSWORD",
         "CSRF_SECRET_KEY",
         "JWT_USER_SECRET_KEY",
-        "JWT_VERIFY_SECRET_KEY",
-        "JWT_RESET_PASSWORD_SECRET_KEY",
+        "JWT_USER_VERIFY_SECRET_KEY",
+        "JWT_USER_RESET_PASSWORD_SECRET_KEY",
         "SENTRY_DSN",
         "PUBLIC_BASE_URL",
     } <= flagged

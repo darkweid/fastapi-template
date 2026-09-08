@@ -193,8 +193,8 @@ class JWTConfig(BaseModel):
     # A signing key shorter than the HMAC block size weakens HS256 and is almost
     # always a placeholder left over from .env.example.
     JWT_USER_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
-    JWT_VERIFY_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
-    JWT_RESET_PASSWORD_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_USER_VERIFY_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
+    JWT_USER_RESET_PASSWORD_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
     ALGORITHM: Literal["HS256", "HS384", "HS512"]
 
@@ -212,6 +212,22 @@ class JWTConfig(BaseModel):
     REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(10, ge=0, le=60)
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def reject_shared_secrets(self) -> "JWTConfig":
+        """A shared signing secret would let a token minted for one realm or one
+        purpose pass the signature check of another, collapsing the isolation the
+        separate key namespaces buy."""
+        secret_fields = [
+            name for name in type(self).model_fields if name.endswith("_SECRET_KEY")
+        ]
+        seen: dict[str, str] = {}
+        for name in secret_fields:
+            value = str(getattr(self, name))
+            if value in seen:
+                raise ValueError(f"{name} must differ from {seen[value]}")
+            seen[value] = name
+        return self
 
 
 class PostgresConfig(BaseModel):

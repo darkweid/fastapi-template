@@ -3,30 +3,40 @@ import json
 from fastapi import Response
 import pytest
 
+from src.core.auth.cookies import (
+    CSRF_COOKIE_PATH,
+    CSRF_FAILURE_MESSAGE,
+    TokenCookieResponder,
+)
+from src.core.auth.csrf import build_csrf_token
+from src.core.auth.errors import CsrfFailedError
+from src.core.auth.realm import AuthRealm
+from src.core.auth.token_transport import TokenTransport
 from src.core.errors.codes import ErrorCode
 from src.core.errors.exceptions import InfrastructureException
 from src.core.errors.handlers import handle_core_exception
 from src.core.schemas import TokenModel
-from src.main.config import CookieConfig
-from src.user.auth.cookies import (
-    CSRF_COOKIE_NAME,
-    CSRF_COOKIE_PATH,
-    CSRF_FAILURE_MESSAGE,
-    REFRESH_COOKIE_NAME,
-    REFRESH_COOKIE_PATH,
-    TokenCookieResponder,
-)
-from src.user.auth.csrf import build_csrf_token
-from src.user.auth.errors import CsrfFailedError
-from src.user.auth.token_transport import TokenTransport
+from src.main.config import CookieConfig, config
+from src.user.auth.realm import USER_AUTH_REALM
 from tests.helpers.requests import build_request
 
 SECRET = "unit-test-csrf-secret-key-value-32"
+
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
+CSRF_COOKIE_NAME = USER_AUTH_REALM.csrf_cookie
+REFRESH_COOKIE_PATH = USER_AUTH_REALM.refresh_cookie_path
+
+STAFF_REALM = AuthRealm(
+    name="staff",
+    session_secret=lambda: "staff-secret-not-real-value-32-chars",
+    refresh_cookie_path="/v1/staff/auth/login/refresh",
+)
 
 
 @pytest.fixture
 def responder() -> TokenCookieResponder:
     return TokenCookieResponder(
+        realm=USER_AUTH_REALM,
         cookie_config=CookieConfig(CSRF_SECRET_KEY=SECRET),
         refresh_token_expire_minutes=60,
     )
@@ -48,6 +58,26 @@ def _cookie_path(set_cookie_header: str) -> str:
             return value
 
     raise AssertionError(f"No Path attribute in {set_cookie_header!r}")
+
+
+def test_cookie_names_are_derived_from_the_realm_name() -> None:
+    responder = TokenCookieResponder(
+        realm=STAFF_REALM,
+        cookie_config=config.cookie,
+        refresh_token_expire_minutes=60,
+    )
+    response = Response()
+
+    responder.apply(
+        TokenModel(access_token="a", refresh_token="r"),
+        response,
+        TokenTransport.COOKIE,
+    )
+
+    written = response.headers.getlist("set-cookie")
+    assert any(header.startswith("staff_refresh_token=") for header in written)
+    assert any(header.startswith("staff_csrf_token=") for header in written)
+    assert not any(header.startswith("refresh_token=") for header in written)
 
 
 def test_cookie_transport_moves_refresh_out_of_the_body(

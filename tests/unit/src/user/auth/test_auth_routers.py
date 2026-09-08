@@ -5,23 +5,18 @@ from unittest.mock import AsyncMock
 from fastapi.routing import APIRoute
 import pytest
 
+from src.core.auth.credentials import SessionIdentity
+from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.database.session import get_unit_of_work
 from src.core.limiter.depends import RateLimiter
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
-from src.user.auth.cookies import CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME
-from src.user.auth.dependencies import (
-    SessionIdentity,
-    get_access_by_refresh_token,
-    get_logout_identity,
-)
-from src.user.auth.jwt_payload_schema import JWTPayload
+from src.user.auth.dependencies import get_access_by_refresh_token, get_logout_identity
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.routers import router
-from src.user.auth.usecases.get_access_by_refresh import (
-    get_tokens_by_refresh_user_use_case,
-)
 from src.user.auth.usecases.login import get_login_user_use_case
 from src.user.auth.usecases.logout import get_logout_use_case
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.auth.usecases.register import get_register_use_case
 from src.user.auth.usecases.resend_verification import get_send_verification_use_case
 from src.user.auth.usecases.reset_password_confirm import (
@@ -43,6 +38,9 @@ from tests.fakes.redis import InMemoryRedis
 from tests.helpers.limiter import noop_rate_limiter
 from tests.helpers.overrides import DependencyOverrides
 from tests.helpers.providers import ProvideAsyncValue, ProvideValue
+
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
+CSRF_COOKIE_NAME = USER_AUTH_REALM.csrf_cookie
 
 
 class FakeUseCase:
@@ -136,7 +134,7 @@ async def test_refresh_endpoint(
     dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
     tokens = TokenModel(access_token="a", refresh_token="r")
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(tokens))
+        get_refresh_access_use_case, ProvideValue(FakeUseCase(tokens))
     )
 
     # The route-level CSRF gate resolves the refresh credentials itself, so a request
@@ -189,8 +187,8 @@ async def test_refresh_of_blocked_user_reports_user_blocked(
     dependency_overrides: DependencyOverrides,
     fake_redis: InMemoryRedis,
 ) -> None:
-    # The real GetTokensByRefreshUserUseCase must run here too: a caller who
-    # already holds a valid refresh token gets the real reason, unlike login.
+    # The real RefreshAccessUseCase must run here too: a caller who already
+    # holds a valid refresh token gets the real reason, unlike login.
     user = build_user(is_active=False)
     payload: JWTPayload = build_refresh_payload(str(user.id))
     dependency_overrides.set(get_access_by_refresh_token, ProvideValue((user, payload)))
@@ -236,7 +234,7 @@ async def test_logout_endpoint(
     user = build_user()
     dependency_overrides.set(
         get_logout_identity,
-        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
+        ProvideValue(SessionIdentity(subject_id=str(user.id), session_id="session-1")),
     )
     logout_use_case = FakeUseCase(SuccessResponse(success=True))
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
@@ -246,7 +244,7 @@ async def test_logout_endpoint(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        user_id=str(user.id),
+        subject_id=str(user.id),
         session_id="session-1",
         terminate_all_sessions=False,
     )
@@ -262,7 +260,7 @@ async def test_logout_endpoint_expires_both_auth_cookies(
     user = build_user()
     dependency_overrides.set(
         get_logout_identity,
-        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
+        ProvideValue(SessionIdentity(subject_id=str(user.id), session_id="session-1")),
     )
     dependency_overrides.set(
         get_logout_use_case, ProvideValue(FakeUseCase(SuccessResponse(success=True)))
@@ -288,7 +286,7 @@ async def test_logout_with_body_transport_writes_no_cookies(
     user = build_user()
     dependency_overrides.set(
         get_logout_identity,
-        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
+        ProvideValue(SessionIdentity(subject_id=str(user.id), session_id="session-1")),
     )
     dependency_overrides.set(
         get_logout_use_case, ProvideValue(FakeUseCase(SuccessResponse(success=True)))
@@ -310,7 +308,7 @@ async def test_logout_endpoint_can_terminate_all_sessions(
     user = build_user()
     dependency_overrides.set(
         get_logout_identity,
-        ProvideValue(SessionIdentity(user_id=str(user.id), session_id="session-1")),
+        ProvideValue(SessionIdentity(subject_id=str(user.id), session_id="session-1")),
     )
     logout_use_case = FakeUseCase(SuccessResponse(success=True))
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
@@ -323,7 +321,7 @@ async def test_logout_endpoint_can_terminate_all_sessions(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        user_id=str(user.id),
+        subject_id=str(user.id),
         session_id="session-1",
         terminate_all_sessions=True,
     )
@@ -484,7 +482,7 @@ async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        user_id="user-1",
+        subject_id="user-1",
         session_id="session-1",
         terminate_all_sessions=False,
     )

@@ -4,6 +4,7 @@ import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
+from src.core.schemas import TokenModel
 from src.core.utils.security import DUMMY_PASSWORD_HASH
 from src.user.auth.schemas import LoginUserModel
 import src.user.auth.usecases.login as login_usecase
@@ -50,14 +51,14 @@ async def test_login_rehashes_password_when_needed(
     needs_rehash_mock = Mock(return_value=True)
     hash_mock = AsyncMock(return_value="new-hash")
     verify_mock = AsyncMock(return_value=True)
-    access_mock = AsyncMock(return_value="access")
-    refresh_mock = AsyncMock(return_value="refresh")
+    issue_session_pair_mock = AsyncMock(
+        return_value=TokenModel(access_token="access", refresh_token="refresh")
+    )
 
     monkeypatch.setattr(login_usecase, "needs_password_rehash", needs_rehash_mock)
     monkeypatch.setattr(login_usecase, "hash_password", hash_mock)
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
-    monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
-    monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
+    monkeypatch.setattr(login_usecase, "issue_session_pair", issue_session_pair_mock)
     cache_key = user_cache_keys.summary(user.id)
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
     cache_invalidate_spy = AsyncMock(wraps=cache.invalidate)
@@ -97,13 +98,13 @@ async def test_login_does_not_rehash_when_not_needed(
 
     needs_rehash_mock = Mock(return_value=False)
     verify_mock = AsyncMock(return_value=True)
-    access_mock = AsyncMock(return_value="access")
-    refresh_mock = AsyncMock(return_value="refresh")
+    issue_session_pair_mock = AsyncMock(
+        return_value=TokenModel(access_token="access", refresh_token="refresh")
+    )
 
     monkeypatch.setattr(login_usecase, "needs_password_rehash", needs_rehash_mock)
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
-    monkeypatch.setattr(login_usecase, "create_access_token", access_mock)
-    monkeypatch.setattr(login_usecase, "create_refresh_token", refresh_mock)
+    monkeypatch.setattr(login_usecase, "issue_session_pair", issue_session_pair_mock)
     cache_key = user_cache_keys.summary(user.id)
     await cache.set(cache_key, {"name": "stale"}, ttl=60)
 

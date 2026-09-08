@@ -16,8 +16,8 @@ from src.main.config import (
 def _base_jwt_config_data() -> dict[str, object]:
     return {
         "JWT_USER_SECRET_KEY": "unit-test-user-secret-key-long-enough",
-        "JWT_VERIFY_SECRET_KEY": "unit-test-verify-secret-key-long-enough",
-        "JWT_RESET_PASSWORD_SECRET_KEY": "unit-test-reset-secret-key-long-enough",
+        "JWT_USER_VERIFY_SECRET_KEY": "unit-test-verify-secret-key-long-enough",
+        "JWT_USER_RESET_PASSWORD_SECRET_KEY": "unit-test-reset-secret-key-long-enough",
         "ALGORITHM": "HS256",
         "ACCESS_TOKEN_EXPIRE_MINUTES": 15,
         "REFRESH_TOKEN_EXPIRE_MINUTES": 129_600,
@@ -377,3 +377,29 @@ def test_postgres_pool_sizes_default_and_validate() -> None:
             POSTGRES_DB="app",
             DB_POOL_SIZE=0,
         )
+
+
+def _jwt_config_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "JWT_USER_SECRET_KEY": "a" * 32,
+        "JWT_USER_VERIFY_SECRET_KEY": "b" * 32,
+        "JWT_USER_RESET_PASSWORD_SECRET_KEY": "c" * 32,
+        "ALGORITHM": "HS256",
+        "ACCESS_TOKEN_EXPIRE_MINUTES": 15,
+        "REFRESH_TOKEN_EXPIRE_MINUTES": 60,
+        "VERIFICATION_TOKEN_EXPIRE_MINUTES": 60,
+        "RESET_PASSWORD_TOKEN_EXPIRE_MINUTES": 30,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_distinct_jwt_secrets_are_accepted() -> None:
+    assert JWTConfig(**_jwt_config_payload()).ALGORITHM == "HS256"
+
+
+def test_two_equal_jwt_secrets_are_rejected() -> None:
+    payload = _jwt_config_payload(JWT_USER_VERIFY_SECRET_KEY="a" * 32)
+
+    with pytest.raises(ValidationError, match="must differ"):
+        JWTConfig(**payload)

@@ -7,37 +7,34 @@ import jwt
 import pytest
 from starlette.requests import Request as StarletteRequest
 
+from src.core.auth import dependencies as core_auth_dependencies
+from src.core.auth.cookies import CSRF_HEADER_NAME, TokenCookieResponder
+from src.core.auth.credentials import (
+    RefreshCredentials,
+    read_refresh_credentials,
+    verify_jti,
+)
+from src.core.auth.csrf import build_csrf_token
+from src.core.auth.dependencies import Authenticated
+from src.core.auth.errors import CsrfFailedError, TokenExpiredError
 from src.core.errors.codes import ErrorCode
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
-from src.user.auth.cookies import (
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    TokenCookieResponder,
-)
-from src.user.auth.csrf import build_csrf_token
 from src.user.auth.dependencies import (
     AuthenticatedUser,
-    RefreshCredentials,
     authenticate_access_token,
     get_access_by_refresh_token,
     get_authenticated_user,
     get_current_user,
     get_current_user_with_session,
     get_user_id_from_token,
-    read_refresh_credentials,
     verify_csrf,
-    verify_jti,
 )
-from src.user.auth.errors import (
-    CsrfFailedError,
-    TokenExpiredError,
-    UserBlockedError,
-    UserNotVerifiedError,
-)
-from src.user.auth.redis_keys import auth_redis_keys
+from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.models import User
+from src.user.repositories import UserRepository
 from tests.factories.token_factory import (
     build_access_payload,
     build_refresh_payload,
@@ -52,14 +49,12 @@ from tests.helpers.requests import build_request
 # time.monotonic(), so freezing this cannot make keys expire mid-test.
 FROZEN_NOW = 1_755_000_000
 
+AUTH_KEYS = USER_AUTH_REALM.keys
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
+
 
 def encode_token(payload: dict[str, object], secret: str) -> str:
     return jwt.encode(payload, secret, config.jwt.ALGORITHM)
-
-
-class FakeUserRepository:
-    def __init__(self, user: User | None) -> None:
-        self.get_single = AsyncMock(return_value=user)
 
 
 @pytest.mark.asyncio
@@ -67,12 +62,12 @@ async def test_verify_jti_accepts_bearer_prefix(fake_redis: InMemoryRedis) -> No
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
 
-    result = await verify_jti(f"Bearer {token}", fake_redis)
+    result = await verify_jti(f"Bearer {token}", fake_redis, realm=USER_AUTH_REALM)
 
     assert result["sub"] == "user-1"
 
@@ -84,7 +79,7 @@ async def test_verify_jti_expired_token(fake_redis: InMemoryRedis) -> None:
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
 
     with pytest.raises(TokenExpiredError, match="Token expired") as exc_info:
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
     assert exc_info.value.error_code is ErrorCode.TOKEN_EXPIRED
 
@@ -95,7 +90,7 @@ async def test_verify_jti_invalid_signature(fake_redis: InMemoryRedis) -> None:
     token = encode_token(payload, "wrong_secret_key_for_tests_more_than_32")
 
     with pytest.raises(UnauthorizedException, match="Invalid token"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
 
 @pytest.mark.asyncio
@@ -105,7 +100,7 @@ async def test_verify_jti_invalid_structure(fake_redis: InMemoryRedis) -> None:
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
 
     with pytest.raises(UnauthorizedException, match="Invalid token structure"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
 
 @pytest.mark.asyncio
@@ -115,25 +110,25 @@ async def test_verify_jti_refresh_reuse_invalidates(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
     await fake_redis.setex(
-        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        AUTH_KEYS.used(payload["sub"], payload["jti"]),
         60,
         "used",
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        "src.core.auth.credentials.invalidate_all_sessions",
         invalidate_mock,
     )
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -147,18 +142,18 @@ async def test_verify_jti_used_marker_within_grace_rejects_without_wipe(
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.setex(
-        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        AUTH_KEYS.used(payload["sub"], payload["jti"]),
         60,
         str(FROZEN_NOW),
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        "src.core.auth.credentials.invalidate_all_sessions",
         invalidate_mock,
     )
 
     with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
     invalidate_mock.assert_not_awaited()
 
@@ -172,20 +167,20 @@ async def test_verify_jti_used_marker_past_grace_wipes(
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
     await fake_redis.setex(
-        auth_redis_keys.used(payload["sub"], payload["jti"]),
+        AUTH_KEYS.used(payload["sub"], payload["jti"]),
         60,
         str(FROZEN_NOW),
     )
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.dependencies.invalidate_all_user_sessions",
+        "src.core.auth.credentials.invalidate_all_sessions",
         invalidate_mock,
     )
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis)
+    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
@@ -193,41 +188,42 @@ async def test_verify_jti_active_token_mismatch(fake_redis: InMemoryRedis) -> No
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         "other-jti",
         ex=60,
     )
 
     with pytest.raises(UnauthorizedException, match="Token invalidated"):
-        await verify_jti(token, fake_redis)
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
 
 
 @pytest.mark.asyncio
 async def test_authenticate_access_token_success(
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = build_user()
     payload = build_access_payload(str(user.id))
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
-    user_repository = FakeUserRepository(user)
+    get_single_mock = AsyncMock(return_value=user)
+    monkeypatch.setattr(UserRepository, "get_single", get_single_mock)
 
     result = await authenticate_access_token(
         token=token,
         session=fake_session,
         redis_client=fake_redis,
-        user_repository=user_repository,
     )
 
-    assert isinstance(result, AuthenticatedUser)
-    assert result.user.id == user.id
+    assert isinstance(result, Authenticated)
+    assert result.principal.id == user.id
     assert result.session_id == payload["session_id"]
-    user_repository.get_single.assert_awaited_once_with(fake_session, id=str(user.id))
+    get_single_mock.assert_awaited_once_with(fake_session, id=str(user.id))
 
 
 @pytest.mark.asyncio
@@ -237,7 +233,7 @@ async def test_authenticate_access_token_wrong_mode(
     payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -247,14 +243,13 @@ async def test_authenticate_access_token_wrong_mode(
             token=token,
             session=fake_session,
             redis_client=fake_redis,
-            user_repository=FakeUserRepository(None),
         )
 
 
 @pytest.mark.asyncio
 async def test_get_current_user_returns_user_when_admitted() -> None:
     user = build_user()
-    authenticated = AuthenticatedUser(user=user, session_id="sid")
+    authenticated = AuthenticatedUser(principal=user, session_id="sid")
 
     result = await get_current_user(authenticated)
 
@@ -265,7 +260,7 @@ async def test_get_current_user_returns_user_when_admitted() -> None:
 @pytest.mark.asyncio
 async def test_get_current_user_blocks_inactive_user() -> None:
     blocked = build_user(is_active=False)
-    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+    authenticated = AuthenticatedUser(principal=blocked, session_id="sid")
 
     with pytest.raises(UserBlockedError):
         await get_current_user(authenticated)
@@ -274,7 +269,7 @@ async def test_get_current_user_blocks_inactive_user() -> None:
 @pytest.mark.asyncio
 async def test_get_current_user_blocks_unverified_user() -> None:
     unverified = build_user(is_verified=False)
-    authenticated = AuthenticatedUser(user=unverified, session_id="sid")
+    authenticated = AuthenticatedUser(principal=unverified, session_id="sid")
 
     with pytest.raises(UserNotVerifiedError):
         await get_current_user(authenticated)
@@ -283,7 +278,7 @@ async def test_get_current_user_blocks_unverified_user() -> None:
 @pytest.mark.asyncio
 async def test_get_current_user_with_session_returns_when_admitted() -> None:
     user = build_user()
-    authenticated = AuthenticatedUser(user=user, session_id="sid")
+    authenticated = AuthenticatedUser(principal=user, session_id="sid")
 
     result = await get_current_user_with_session(authenticated)
 
@@ -293,7 +288,7 @@ async def test_get_current_user_with_session_returns_when_admitted() -> None:
 @pytest.mark.asyncio
 async def test_get_current_user_with_session_blocks_inactive_user() -> None:
     blocked = build_user(is_active=False)
-    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+    authenticated = AuthenticatedUser(principal=blocked, session_id="sid")
 
     with pytest.raises(UserBlockedError):
         await get_current_user_with_session(authenticated)
@@ -302,7 +297,7 @@ async def test_get_current_user_with_session_blocks_inactive_user() -> None:
 @pytest.mark.asyncio
 async def test_get_authenticated_user_bypasses_the_gate_for_a_blocked_user() -> None:
     blocked = build_user(is_active=False)
-    authenticated = AuthenticatedUser(user=blocked, session_id="sid")
+    authenticated = AuthenticatedUser(principal=blocked, session_id="sid")
 
     result = await get_authenticated_user(authenticated)
 
@@ -314,7 +309,7 @@ async def test_get_authenticated_user_bypasses_the_gate_for_an_unverified_user()
     None
 ):
     unverified = build_user(is_verified=False)
-    authenticated = AuthenticatedUser(user=unverified, session_id="sid")
+    authenticated = AuthenticatedUser(principal=unverified, session_id="sid")
 
     result = await get_authenticated_user(authenticated)
 
@@ -325,28 +320,29 @@ async def test_get_authenticated_user_bypasses_the_gate_for_an_unverified_user()
 async def test_get_access_by_refresh_token_success(
     fake_redis: InMemoryRedis,
     fake_session: FakeAsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = build_user()
     payload = build_refresh_payload(str(user.id))
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.refresh(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
-    user_repository = FakeUserRepository(user)
+    get_single_mock = AsyncMock(return_value=user)
+    monkeypatch.setattr(UserRepository, "get_single", get_single_mock)
 
     result_user, result_payload = await get_access_by_refresh_token(
         credentials=RefreshCredentials(token=token, from_cookie=False),
         _csrf=None,
         session=fake_session,
         redis_client=fake_redis,
-        user_repository=user_repository,
     )
 
     assert result_user.id == user.id
     assert result_payload["mode"] == "refresh_token"
-    user_repository.get_single.assert_awaited_once_with(
+    get_single_mock.assert_awaited_once_with(
         fake_session,
         id=str(user.id),
     )
@@ -369,13 +365,13 @@ async def test_get_user_id_from_token_success(
     payload = build_access_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        auth_redis_keys.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
     request = build_request(headers={"Authorization": token})
     get_redis_mock = AsyncMock(return_value=fake_redis)
-    monkeypatch.setattr(dependencies, "get_redis_client", get_redis_mock)
+    monkeypatch.setattr(core_auth_dependencies, "get_redis_client", get_redis_mock)
 
     result = await get_user_id_from_token(request)
 
@@ -402,7 +398,8 @@ def _request(
 
 def test_cookie_is_preferred_over_the_header() -> None:
     credentials = read_refresh_credentials(
-        _request(cookie="from-cookie", authorization="from-header")
+        _request(cookie="from-cookie", authorization="from-header"),
+        realm=USER_AUTH_REALM,
     )
 
     assert credentials is not None
@@ -411,7 +408,9 @@ def test_cookie_is_preferred_over_the_header() -> None:
 
 
 def test_header_is_used_when_there_is_no_cookie() -> None:
-    credentials = read_refresh_credentials(_request(authorization="from-header"))
+    credentials = read_refresh_credentials(
+        _request(authorization="from-header"), realm=USER_AUTH_REALM
+    )
 
     assert credentials is not None
     assert credentials.token == "from-header"
@@ -419,7 +418,7 @@ def test_header_is_used_when_there_is_no_cookie() -> None:
 
 
 def test_no_credentials_returns_none() -> None:
-    assert read_refresh_credentials(_request()) is None
+    assert read_refresh_credentials(_request(), realm=USER_AUTH_REALM) is None
 
 
 CSRF_SECRET = "unit-test-csrf-secret-key-value-32"
@@ -427,6 +426,7 @@ CSRF_SECRET = "unit-test-csrf-secret-key-value-32"
 
 def _refresh_responder() -> TokenCookieResponder:
     return TokenCookieResponder(
+        realm=USER_AUTH_REALM,
         cookie_config=CookieConfig(CSRF_SECRET_KEY=CSRF_SECRET),
         refresh_token_expire_minutes=60,
     )
@@ -529,7 +529,7 @@ async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
     identity = await dependencies.get_logout_identity(token=token)
 
     assert identity == dependencies.SessionIdentity(
-        user_id="user-1", session_id="session-1"
+        subject_id="user-1", session_id="session-1"
     )
 
 
@@ -541,7 +541,7 @@ async def test_get_logout_identity_reads_a_bearer_prefixed_token() -> None:
     identity = await dependencies.get_logout_identity(token=f"Bearer {token}")
 
     assert identity == dependencies.SessionIdentity(
-        user_id="user-1", session_id="session-1"
+        subject_id="user-1", session_id="session-1"
     )
 
 

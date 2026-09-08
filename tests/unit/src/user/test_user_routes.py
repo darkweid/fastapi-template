@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.auth.errors import InvalidCredentialsError
+from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.errors.exceptions import (
     InstanceNotFoundException,
     InstanceProcessingException,
@@ -15,8 +17,6 @@ from src.user.auth.dependencies import (
     get_authenticated_user,
     get_current_user,
 )
-from src.user.auth.errors import InvalidCredentialsError
-from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.dependencies import get_user_service
 from src.user.enums import UserRole
 from src.user.schemas import UserProfileViewModel
@@ -347,7 +347,7 @@ async def test_blocked_user_cannot_update_profile(
     blocked = build_user(is_active=False)
     dependency_overrides.set(
         authenticate_access_token,
-        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+        ProvideValue(AuthenticatedUser(principal=blocked, session_id="sid")),
     )
 
     response = await async_client.patch("/v1/users/me", json={"username": "new-name"})
@@ -363,7 +363,7 @@ async def test_blocked_user_cannot_change_password(
     blocked = build_user(is_active=False)
     dependency_overrides.set(
         authenticate_access_token,
-        ProvideValue(AuthenticatedUser(user=blocked, session_id="sid")),
+        ProvideValue(AuthenticatedUser(principal=blocked, session_id="sid")),
     )
 
     response = await async_client.patch(
@@ -382,7 +382,7 @@ async def test_unverified_user_still_reads_own_profile(
     unverified = build_user(is_verified=False)
     dependency_overrides.set(
         authenticate_access_token,
-        ProvideValue(AuthenticatedUser(user=unverified, session_id="sid")),
+        ProvideValue(AuthenticatedUser(principal=unverified, session_id="sid")),
     )
 
     response = await async_client.get("/v1/users/me")

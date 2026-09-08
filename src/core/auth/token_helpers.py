@@ -10,36 +10,38 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.redis_keys import AuthRedisKeyBuilder
+from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 from src.core.errors.exceptions import UnauthorizedException
-from src.core.utils.security import normalize_email
 from src.main.config import config
-from src.user.auth.jwt_payload_schema import JWTPayload
-from src.user.auth.redis_keys import OneTimeTokenPurpose, auth_redis_keys
-from src.user.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 
 
-async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> None:
+async def invalidate_all_sessions(
+    subject_id: str, redis_client: Redis, *, keys: AuthRedisKeyBuilder
+) -> None:
     """
-    Invalidates all sessions for a given user by walking the sessions:{uid}
+    Invalidates all sessions for a given subject by walking the sessions:{uid}
     index - one ZRANGE, one DEL of the token keys and one ZREM instead of a
     keyspace SCAN, whose cost grows with the whole database rather than with
-    this user's sessions.
+    this subject's sessions.
 
     used:* markers are deliberately left to their TTL: the refresh keys are
     gone after the wipe, so a replayed rotated-out token cannot rotate anyway.
 
     Args:
-        user_id: The user ID whose sessions should be invalidated
+        subject_id: The subject ID whose sessions should be invalidated
+        keys: The realm's Redis key builder.
     """
-    index_key = auth_redis_keys.sessions(user_id)
+    index_key = keys.sessions(subject_id)
     # The shared client decodes responses, so members arrive as str; the cast
     # narrows redis-py's union return type.
     session_ids = cast(list[str], await redis_client.zrange(index_key, 0, -1))
 
     token_keys: list[str] = []
     for session_id in session_ids:
-        token_keys.append(auth_redis_keys.access(user_id, session_id))
-        token_keys.append(auth_redis_keys.refresh(user_id, session_id))
+        token_keys.append(keys.access(subject_id, session_id))
+        token_keys.append(keys.refresh(subject_id, session_id))
 
     if token_keys:
         await redis_client.delete(*token_keys)
@@ -50,103 +52,56 @@ async def invalidate_all_user_sessions(user_id: str, redis_client: Redis) -> Non
         await redis_client.zrem(index_key, *session_ids)
 
 
-async def invalidate_user_session(
-    user_id: str,
+async def invalidate_session(
+    subject_id: str,
     session_id: str,
     redis_client: Redis,
+    *,
+    keys: AuthRedisKeyBuilder,
 ) -> None:
     """
-    Invalidates a single user session by deleting its active auth keys and
+    Invalidates a single session by deleting its active auth keys and
     removing it from the sessions:{uid} index.
 
     Args:
-        user_id: The user ID whose session should be invalidated.
+        subject_id: The subject ID whose session should be invalidated.
         session_id: The session identifier to invalidate.
         redis_client: Redis client used to delete the active token keys.
+        keys: The realm's Redis key builder.
     """
     await redis_client.delete(
-        auth_redis_keys.access(user_id, session_id),
-        auth_redis_keys.refresh(user_id, session_id),
+        keys.access(subject_id, session_id),
+        keys.refresh(subject_id, session_id),
     )
-    await redis_client.zrem(auth_redis_keys.sessions(user_id), session_id)
-
-
-async def store_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
-    email: str,
-    jti: str,
-    ttl_seconds: int,
-    redis_client: Redis,
-) -> None:
-    """
-    Stores the active JTI for a single-use token identified by purpose and email.
-    """
-    normalized_email = normalize_email(email)
-    await redis_client.set(
-        auth_redis_keys.one_time_token(purpose, normalized_email),
-        jti,
-        ex=ttl_seconds,
-    )
-
-
-async def validate_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
-    email: str,
-    jti: str | None,
-    redis_client: Redis,
-) -> None:
-    """
-    Ensures the provided JTI matches the current active single-use token in Redis.
-    """
-    if not jti:
-        raise UnauthorizedException("Invalid or expired token.")
-
-    normalized_email = normalize_email(email)
-    active_jti = await redis_client.get(
-        auth_redis_keys.one_time_token(purpose, normalized_email)
-    )
-
-    if active_jti != jti:
-        raise UnauthorizedException("Invalid or expired token.")
-
-
-async def invalidate_active_one_time_token(
-    purpose: OneTimeTokenPurpose,
-    email: str,
-    redis_client: Redis,
-) -> None:
-    """
-    Deletes the active single-use token entry for the provided purpose and email.
-    """
-    normalized_email = normalize_email(email)
-    await redis_client.delete(auth_redis_keys.one_time_token(purpose, normalized_email))
+    await redis_client.zrem(keys.sessions(subject_id), session_id)
 
 
 async def validate_token_structure(
-    payload: JWTPayload, redis_client: Redis
+    payload: JWTPayload, redis_client: Redis, *, keys: AuthRedisKeyBuilder
 ) -> tuple[str, str, str]:
     """
     Validates that a token payload has all required fields.
 
     Args:
         payload: The JWT payload to validate
+        keys: The realm's Redis key builder.
 
     Returns:
-        tuple: A tuple containing user_id, session_id, and jti
+        tuple: A tuple containing subject_id, session_id, and jti
 
     Raises:
         UnauthorizedException: If the token structure is invalid
     """
-    user_id = payload.get("sub")
+    subject_id = payload.get("sub")
     session_id = payload.get("session_id")
     jti = payload.get("jti")
 
-    if not user_id or not session_id or not jti:
-        if user_id:
-            await invalidate_all_user_sessions(user_id, redis_client)
+    if not subject_id or not session_id or not jti:
+        if subject_id:
+            await invalidate_all_sessions(subject_id, redis_client, keys=keys)
         raise UnauthorizedException("Invalid token structure")
 
-    return user_id, session_id, jti
+    return subject_id, session_id, jti
 
 
 async def is_within_reuse_grace(
@@ -174,18 +129,21 @@ async def is_within_reuse_grace(
 
 
 async def execute_token_rotation(
-    user_id: str,
+    subject_id: str,
     session_id: str,
     jti: str,
     redis_client: Redis,
+    *,
+    keys: AuthRedisKeyBuilder,
 ) -> str:
     """
     Executes the atomic token rotation operation using a Lua script.
 
     Args:
-        user_id: The user ID from the token
+        subject_id: The subject ID from the token
         session_id: The session ID from the token
         jti: The JTI (JWT ID) from the token
+        keys: The realm's Redis key builder.
 
     Returns:
         str: The result of the token rotation operation ('OK' - every other
@@ -203,8 +161,8 @@ async def execute_token_rotation(
     # is no separate knob because no other value is correct.
     used_ttl_seconds = refresh_ttl_seconds
 
-    old_refresh_key = auth_redis_keys.refresh(user_id, session_id)
-    used_refresh_key = auth_redis_keys.used(user_id, jti)
+    old_refresh_key = keys.refresh(subject_id, session_id)
+    used_refresh_key = keys.used(subject_id, jti)
 
     result: str = await cast(
         Awaitable[str],
@@ -221,14 +179,14 @@ async def execute_token_rotation(
 
     if result == "GRACE":
         # A double-submit inside the grace window: reject the request but do
-        # not treat it as theft - the family wipe would log out a user whose
+        # not treat it as theft - the family wipe would log out a subject whose
         # client merely retried a refresh over a flaky connection.
         raise UnauthorizedException("Token invalidated or expired")
     if result == "REUSED":
-        await invalidate_all_user_sessions(user_id, redis_client)
+        await invalidate_all_sessions(subject_id, redis_client, keys=keys)
         raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
     if result == "INVALID":
-        await invalidate_all_user_sessions(user_id, redis_client)
+        await invalidate_all_sessions(subject_id, redis_client, keys=keys)
         raise UnauthorizedException("Token invalidated or expired")
 
     return result

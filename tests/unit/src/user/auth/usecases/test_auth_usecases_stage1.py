@@ -8,19 +8,20 @@ import pytest
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
-from src.core.schemas import SuccessResponse, TokenModel
-from src.core.utils.security import build_email_throttle_key
+from src.core.schemas import SuccessResponse
+from src.core.utils.security import build_throttle_key
 from src.main.config import config
-from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
-from src.user.auth.redis_keys import auth_redis_keys
+from src.user.auth.realm import (
+    RESET_PASSWORD_PURPOSE,
+    USER_AUTH_REALM,
+    VERIFICATION_PURPOSE,
+)
 from src.user.auth.schemas import (
     CreateUserModel,
     ResendVerificationModel,
     ResetPasswordModel,
     SendResetPasswordRequestModel,
 )
-from src.user.auth.usecases.get_access_by_refresh import GetTokensByRefreshUserUseCase
-from src.user.auth.usecases.logout import LogoutUseCase
 from src.user.auth.usecases.register import RegisterUseCase
 from src.user.auth.usecases.resend_verification import SendVerificationUseCase
 from src.user.auth.usecases.reset_password_confirm import ResetPasswordConfirmUseCase
@@ -30,7 +31,6 @@ from src.user.cache_keys import user_cache_keys
 from src.user.models import User
 from src.user.schemas import UserProfileViewModel
 from tests.factories.token_factory import (
-    build_refresh_payload,
     build_reset_password_token,
     build_verification_token,
 )
@@ -85,70 +85,6 @@ def build_uow(
     users_repo: FakeUsersRepository,
 ) -> FakeUnitOfWork:
     return FakeUnitOfWork(session=session, repositories={"users": users_repo})
-
-
-@pytest.mark.asyncio
-async def test_get_tokens_by_refresh_user_usecase_success(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    user = build_user(is_verified=True, is_active=True)
-    payload = build_refresh_payload(str(user.id))
-    refresh_token = jwt.encode(
-        payload,
-        config.jwt.JWT_USER_SECRET_KEY,
-        config.jwt.ALGORITHM,
-    )
-    access_token = "access-token"
-
-    rotate_mock = AsyncMock(return_value=refresh_token)
-    create_access_mock = AsyncMock(return_value=access_token)
-    monkeypatch.setattr(
-        "src.user.auth.usecases.get_access_by_refresh.rotate_refresh_token",
-        rotate_mock,
-    )
-    monkeypatch.setattr(
-        "src.user.auth.usecases.get_access_by_refresh.create_access_token",
-        create_access_mock,
-    )
-
-    use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
-    result = await use_case.execute(user=user, old_token_payload=payload)
-
-    assert isinstance(result, TokenModel)
-    assert result.refresh_token == refresh_token
-    assert result.access_token == access_token
-    rotate_mock.assert_awaited_once()
-    create_access_mock.assert_awaited_once_with(
-        {"sub": str(user.id)},
-        redis_client=fake_redis,
-        session_id=payload["session_id"],
-    )
-
-
-@pytest.mark.asyncio
-async def test_get_tokens_by_refresh_user_usecase_blocked(
-    fake_redis: InMemoryRedis,
-) -> None:
-    user = build_user(is_verified=True, is_active=False)
-    payload = build_refresh_payload(str(user.id))
-
-    use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
-
-    with pytest.raises(UserBlockedError, match="User is blocked"):
-        await use_case.execute(user=user, old_token_payload=payload)
-
-
-@pytest.mark.asyncio
-async def test_get_tokens_by_refresh_user_usecase_unverified(
-    fake_redis: InMemoryRedis,
-) -> None:
-    user = build_user(is_verified=False, is_active=True)
-    payload = build_refresh_payload(str(user.id))
-
-    use_case = GetTokensByRefreshUserUseCase(redis_client=fake_redis)
-
-    with pytest.raises(UserNotVerifiedError, match="User is not verified"):
-        await use_case.execute(user=user, old_token_payload=payload)
 
 
 @pytest.mark.asyncio
@@ -250,7 +186,7 @@ async def test_resend_verification_success(
     result = await use_case.execute(data=ResendVerificationModel(email=user.email))
 
     assert result == SuccessResponse(success=True)
-    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    expected_throttle_key = build_throttle_key("resend_verification", user.email)
     notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
@@ -294,7 +230,7 @@ async def test_resend_verification_releases_throttle_when_commit_fails(
             data=ResendVerificationModel(email=user.email),
         )
 
-    expected_throttle_key = build_email_throttle_key("resend_verification", user.email)
+    expected_throttle_key = build_throttle_key("resend_verification", user.email)
     notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
@@ -334,7 +270,7 @@ async def test_reset_password_request_success(
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    expected_throttle_key = build_throttle_key("password-reset", user.email)
     notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
@@ -358,7 +294,7 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
             data=SendResetPasswordRequestModel(email=user.email),
         )
 
-    expected_throttle_key = build_email_throttle_key("password-reset", user.email)
+    expected_throttle_key = build_throttle_key("password-reset", user.email)
     notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
@@ -400,53 +336,6 @@ async def test_reset_password_request_user_not_found(
 
 
 @pytest.mark.asyncio
-async def test_logout_usecase_invalidates_current_session(
-    fake_redis: InMemoryRedis,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(
-        "src.user.auth.usecases.logout.invalidate_user_session",
-        invalidate_mock,
-    )
-
-    use_case = LogoutUseCase(redis_client=fake_redis)
-    result = await use_case.execute(
-        user_id="user-1",
-        session_id="session-1",
-    )
-
-    assert result == SuccessResponse(success=True)
-    invalidate_mock.assert_awaited_once_with(
-        "user-1",
-        "session-1",
-        fake_redis,
-    )
-
-
-@pytest.mark.asyncio
-async def test_logout_usecase_can_invalidate_all_sessions(
-    fake_redis: InMemoryRedis,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(
-        "src.user.auth.usecases.logout.invalidate_all_user_sessions",
-        invalidate_mock,
-    )
-
-    use_case = LogoutUseCase(redis_client=fake_redis)
-    result = await use_case.execute(
-        user_id="user-1",
-        session_id="session-1",
-        terminate_all_sessions=True,
-    )
-
-    assert result == SuccessResponse(success=True)
-    invalidate_mock.assert_awaited_once_with("user-1", fake_redis)
-
-
-@pytest.mark.asyncio
 async def test_reset_password_confirm_success(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
@@ -458,7 +347,7 @@ async def test_reset_password_confirm_success(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
 
@@ -472,7 +361,7 @@ async def test_reset_password_confirm_success(
     cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
     # An attacker-filled login throttle must fall with the reset: the reset
     # proves mailbox ownership.
-    login_failures_key = auth_redis_keys.login_failures(user.email)
+    login_failures_key = USER_AUTH_REALM.keys.login_failures(user.email)
     await fake_redis.setex(login_failures_key, 600, "25")
 
     use_case = ResetPasswordConfirmUseCase(
@@ -491,7 +380,7 @@ async def test_reset_password_confirm_success(
     assert cache_invalidate_spy.await_count == 2
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", user.email)
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
         )
         == 0
     )
@@ -512,7 +401,7 @@ async def test_reset_password_confirm_invalid_mode(
         "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
     }
     token = jwt.encode(
-        payload, config.jwt.JWT_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
+        payload, config.jwt.JWT_USER_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
     )
 
     use_case = ResetPasswordConfirmUseCase(
@@ -536,7 +425,7 @@ async def test_reset_password_confirm_rejects_inactive_jti(
     uow = build_uow(fake_session, users_repo)
     token = await build_reset_password_token({"email": user.email}, fake_redis)
     await fake_redis.delete(
-        auth_redis_keys.one_time_token("reset_password", user.email)
+        USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
     )
 
     use_case = ResetPasswordConfirmUseCase(
@@ -562,7 +451,7 @@ async def test_reset_password_confirm_redis_failure_skips_commit(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock(side_effect=RuntimeError("redis down"))
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
     token = await build_reset_password_token({"email": user.email}, fake_redis)
@@ -580,7 +469,7 @@ async def test_reset_password_confirm_redis_failure_skips_commit(
     uow.rollback.assert_awaited_once()
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", user.email)
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
         )
         == 0
     )
@@ -598,7 +487,7 @@ async def test_reset_password_confirm_cannot_reuse_successful_token(
     uow = build_uow(fake_session, users_repo)
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
     token = await build_reset_password_token({"email": user.email}, fake_redis)
@@ -631,7 +520,7 @@ async def test_reset_password_confirm_commit_failure_after_invalidation_consumes
     uow.commit = AsyncMock(side_effect=RuntimeError("db down"))
     invalidate_mock = AsyncMock()
     monkeypatch.setattr(
-        "src.user.auth.usecases.reset_password_confirm.invalidate_all_user_sessions",
+        "src.user.auth.usecases.reset_password_confirm.invalidate_all_sessions",
         invalidate_mock,
     )
     token = await build_reset_password_token({"email": user.email}, fake_redis)
@@ -646,7 +535,7 @@ async def test_reset_password_confirm_commit_failure_after_invalidation_consumes
 
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("reset_password", user.email)
+            USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, user.email)
         )
         == 0
     )
@@ -690,7 +579,7 @@ async def test_verify_email_usecase_already_verified(
     assert result == SuccessResponse(success=True)
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", user.email)
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
         == 0
     )
@@ -722,7 +611,7 @@ async def test_verify_email_usecase_success(
     assert cache_invalidate_spy.await_count == 2
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", user.email)
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
         == 0
     )
@@ -743,7 +632,9 @@ async def test_verify_email_usecase_invalid_token(
         "email": "user@example.com",
         "exp": int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()),
     }
-    token = jwt.encode(payload, config.jwt.JWT_VERIFY_SECRET_KEY, config.jwt.ALGORITHM)
+    token = jwt.encode(
+        payload, config.jwt.JWT_USER_VERIFY_SECRET_KEY, config.jwt.ALGORITHM
+    )
 
     result = await use_case.execute(token)
 
@@ -761,7 +652,9 @@ async def test_verify_email_usecase_rejects_inactive_jti(
     uow = build_uow(fake_session, users_repo)
     use_case = VerifyEmailUseCase(uow=uow, redis_client=fake_redis, cache=cache)
     token = await build_verification_token({"email": user.email}, fake_redis)
-    await fake_redis.delete(auth_redis_keys.one_time_token("verification", user.email))
+    await fake_redis.delete(
+        USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
+    )
 
     result = await use_case.execute(token)
 
@@ -808,7 +701,7 @@ async def test_verify_email_usecase_commit_failure_keeps_token_active(
 
     assert (
         await fake_redis.exists(
-            auth_redis_keys.one_time_token("verification", user.email)
+            USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
         == 1
     )

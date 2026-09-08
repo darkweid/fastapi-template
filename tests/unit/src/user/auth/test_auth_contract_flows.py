@@ -3,22 +3,20 @@ from dataclasses import dataclass
 from fastapi import Request
 import pytest
 
+from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import SuccessResponse, TokenModel
 from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_authenticated_user,
 )
-from src.user.auth.jwt_payload_schema import JWTPayload
 from src.user.auth.schemas import (
     LoginUserModel,
     ResetPasswordModel,
     SendResetPasswordRequestModel,
 )
-from src.user.auth.usecases.get_access_by_refresh import (
-    get_tokens_by_refresh_user_use_case,
-)
 from src.user.auth.usecases.login import get_login_user_use_case
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.auth.usecases.reset_password_confirm import (
     get_reset_password_confirm_use_case,
 )
@@ -168,7 +166,7 @@ async def test_login_refresh_access_flow(
 
     dependency_overrides.set(get_login_user_use_case, ProvideValue(login_use_case))
     dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(refresh_use_case)
+        get_refresh_access_use_case, ProvideValue(refresh_use_case)
     )
     dependency_overrides.set(get_access_by_refresh_token, refresh_dependency)
     # GET /users/me opts out of the admission gate (get_authenticated_user), so it is

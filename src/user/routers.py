@@ -8,21 +8,22 @@ from fastapi import (
     Response,
 )
 
+from src.core.auth.cookies import TokenCookieResponder
+from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.cache.decorators import cached_route
 from src.core.cache.interface import CacheScope
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse
-from src.user.auth.cookies import TokenCookieResponder, get_token_cookie_responder
 from src.user.auth.dependencies import (
     get_authenticated_user,
     get_current_user,
+    get_token_cookie_responder,
     get_user_id_from_token,
 )
 from src.user.auth.permissions.enum import Permission
 from src.user.auth.permissions.ownership import require_self_or_permission
 from src.user.auth.routers import router as auth_router
 from src.user.auth.schemas import UserNewPassword
-from src.user.auth.token_transport import TokenTransport, get_token_transport
 from src.user.cache_keys import user_summary_route_key
 from src.user.dependencies import get_user_service
 from src.user.models import User

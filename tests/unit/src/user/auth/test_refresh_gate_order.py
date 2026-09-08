@@ -16,22 +16,16 @@ from fastapi import FastAPI
 import pytest
 import pytest_asyncio
 
+from src.core.auth.cookies import CSRF_HEADER_NAME
+from src.core.auth.csrf import build_csrf_token
 from src.core.database.session import get_session
 from src.core.limiter import FastAPILimiter
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import TokenModel
 from src.main.config import get_settings
-from src.user.auth.cookies import (
-    CSRF_HEADER_NAME,
-    REFRESH_COOKIE_NAME,
-    REFRESH_COOKIE_PATH,
-)
-from src.user.auth.csrf import build_csrf_token
-from src.user.auth.usecases.get_access_by_refresh import (
-    get_tokens_by_refresh_user_use_case,
-)
-from src.user.dependencies import get_user_repository
-from src.user.models import User
+from src.user.auth.realm import USER_AUTH_REALM
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
+from src.user.repositories import UserRepository
 from tests.factories.token_factory import build_refresh_token
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
@@ -39,15 +33,13 @@ from tests.fakes.redis import InMemoryRedis
 from tests.helpers.overrides import DependencyOverrides
 from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 
+REFRESH_COOKIE_NAME = USER_AUTH_REALM.refresh_cookie
+REFRESH_COOKIE_PATH = USER_AUTH_REALM.refresh_cookie_path
+
 
 class FakeUseCase:
     def __init__(self, result: TokenModel) -> None:
         self.execute = AsyncMock(return_value=result)
-
-
-class FakeUserRepository:
-    def __init__(self, user: User | None) -> None:
-        self.get_single = AsyncMock(return_value=user)
 
 
 @pytest_asyncio.fixture
@@ -84,17 +76,16 @@ async def test_csrf_failure_does_not_consume_the_user_rate_limit(
     dependency_overrides: DependencyOverrides,
     live_limiter: InMemoryRedis,
     fake_session: FakeAsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = build_user()
     refresh_token = await build_refresh_token({"sub": str(user.id)}, live_limiter)
 
     dependency_overrides.set(get_redis_client, ProvideValue(live_limiter))
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+    monkeypatch.setattr(UserRepository, "get_single", AsyncMock(return_value=user))
     dependency_overrides.set(
-        get_user_repository, ProvideValue(FakeUserRepository(user))
-    )
-    dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case,
+        get_refresh_access_use_case,
         ProvideValue(FakeUseCase(TokenModel(access_token="a", refresh_token="r"))),
     )
 
@@ -124,6 +115,7 @@ async def test_valid_csrf_still_consumes_the_user_rate_limit(
     dependency_overrides: DependencyOverrides,
     live_limiter: InMemoryRedis,
     fake_session: FakeAsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The gate reorder must not disable the per-user limit for genuine traffic."""
     user = build_user()
@@ -132,11 +124,9 @@ async def test_valid_csrf_still_consumes_the_user_rate_limit(
 
     dependency_overrides.set(get_redis_client, ProvideValue(live_limiter))
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
+    monkeypatch.setattr(UserRepository, "get_single", AsyncMock(return_value=user))
     dependency_overrides.set(
-        get_user_repository, ProvideValue(FakeUserRepository(user))
-    )
-    dependency_overrides.set(
-        get_tokens_by_refresh_user_use_case, ProvideValue(FakeUseCase(tokens))
+        get_refresh_access_use_case, ProvideValue(FakeUseCase(tokens))
     )
 
     async_client.cookies.set(

@@ -95,12 +95,20 @@ def mask_email(email: str | EmailStr) -> str:
         return "***"
 
 
-def build_email_throttle_key(prefix: str, email: str | EmailStr) -> str:
+def build_throttle_key(prefix: str, identifier: str) -> str:
     """
-    Builds a Redis throttle key based on a normalized email hash.
+    Build a Redis key that carries a caller identifier without storing it raw.
+
+    The identifier may be an email, a phone number or a login: all of them are
+    personal data that would otherwise show up in SCAN, MONITOR and RDB dumps.
+
+    It is hashed exactly as supplied. Case folding here would be a realm's
+    decision made in the wrong place: for a realm whose logins are
+    case-sensitive it would collapse two distinct principals onto one throttle
+    counter and one challenge slot. Callers normalize first - the user realm
+    does it through EmailNormalizationMixin.
     """
-    email_norm = str(email).lower()
-    digest = hashlib.sha256(email_norm.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(identifier.encode("utf-8")).hexdigest()
     return f"{prefix}:{digest}"
 
 
