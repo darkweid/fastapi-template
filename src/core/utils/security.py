@@ -61,9 +61,8 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def generate_otp(length: int = 5) -> str:
-    """
-    Generate a random numeric OTP with a fixed length.
-    """
+    """Digits only, drawn from `secrets` - short enough to retype, so the
+    throttle in front of every OTP flow is what makes it safe, not its entropy."""
     if length <= 0:
         raise ValueError(f"OTP length must be greater than 0, given {length}.")
 
@@ -71,19 +70,11 @@ def generate_otp(length: int = 5) -> str:
 
 
 def mask_email(email: str | EmailStr) -> str:
-    """
-    Masks an email address by replacing part of the local and domain parts
-    with asterisks.
-    Mask pattern: ab***@cd***
+    """Mask an address down to `ab***@cd***` for logs and Sentry.
 
-    Args:
-        email: str
-            A string containing the email address to be masked.
-
-    Returns:
-        str
-            A masked version of the provided email address with part of
-            the local and domain obscured.
+    Never raises. It runs on logging and error paths, where a malformed address
+    must not replace the record it was meant to annotate; anything unparseable
+    masks to `***`.
     """
     try:
         email_str = str(email)
@@ -113,5 +104,6 @@ def build_throttle_key(prefix: str, identifier: str) -> str:
 
 
 def normalize_email(email: str) -> str:
-    """Normalize an email address."""
+    """Strip surrounding whitespace and case-fold - the one canonical form
+    stored, compared and hashed into throttle keys."""
     return email.strip().lower()

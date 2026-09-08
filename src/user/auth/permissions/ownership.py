@@ -12,14 +12,10 @@ from src.user.models import User
 
 
 def _matches_user_id(candidate: str, user_id: UUID) -> bool:
-    """Compare a candidate string (from URL) with a UUID, handling case differences.
+    """Compare a raw path parameter against a UUID by value, not by spelling.
 
-    Args:
-        candidate: Raw string from the URL path parameter.
-        user_id: The UUID to compare against.
-
-    Returns:
-        True if candidate parses as a UUID matching user_id, False otherwise.
+    A candidate that is no UUID at all answers False rather than raising: the
+    caller owes both cases the same 404.
     """
     try:
         return UUID(candidate) == user_id

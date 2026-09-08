@@ -25,35 +25,17 @@ logger = get_logger(__name__)
 
 class VerifyEmailUseCase:
     """
-    Verify a user's email address using a JWT token.
+    Verify an email address with a single-use token.
 
-    Inputs:
-    - token: JWT token containing the user's email.
+    An invalid, expired or superseded token, and an email naming no user,
+    answer success=False instead of raising - the endpoint must not confirm who
+    has an account. A second click on an already used link lands there too: the
+    challenge is invalidated after the commit, so the link no longer decodes.
+    The already-verified branch covers the other case - a token still live for
+    an account that got verified some other way - and answers success for it.
 
-    Validations:
-    - Token must be valid and not expired.
-    - Token JTI must match the active Redis entry for the email.
-    - Email must be present in the token.
-    - User must exist in the database.
-
-    Workflow:
-    1) Decode and validate the JWT token.
-    2) Extract email and validate the active JTI in Redis.
-    3) Retrieve user by normalized email.
-    4) If user is already verified, consume the token and return success.
-    5) Update user's is_verified status to True.
-    6) Invalidate the user cache namespace.
-    7) Commit the transaction.
-    8) Consume the token.
-
-    Side effects:
-    - Updates user record in the database.
-    - Deletes the active verification-token key from Redis after successful use.
-    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
-
-    Returns:
-    - SuccessResponse: success=True if verified or already verified, False if the
-      token is invalid/inactive or the email/user is not found.
+    Consuming the token after the commit rather than before leaves the link
+    usable when the transaction fails.
     """
 
     def __init__(

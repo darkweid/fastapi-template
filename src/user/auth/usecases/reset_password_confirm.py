@@ -26,41 +26,19 @@ logger = get_logger(__name__)
 
 class ResetPasswordConfirmUseCase:
     """
-    Confirm password reset using a valid JWT reset token.
+    Confirm a password reset with a single-use token and store the new password.
 
-    Inputs:
-    - data: ResetPasswordModel containing the token and the new password.
-
-    Validations:
-    - Token must be valid and not expired.
-    - Token mode must be 'reset_password_token'.
-    - Token JTI must match the active Redis entry for the email.
-    - Email must be present in the token.
-    - User must exist in the database.
-
-    Workflow:
-    1) Decode and validate the JWT reset token.
-    2) Extract email and validate the active JTI in Redis.
-    3) Hash and update the user's password in the database.
-    4) Flush pending DB changes.
-    5) Delete the active reset-token key and invalidate all user sessions.
-    6) Invalidate the user cache namespace.
-    7) Commit the transaction.
+    An invalid, expired or superseded token answers success=False instead of
+    raising, so a wrong token cannot be told apart from a wrong email.
 
     Side effects:
-    - Updates user record in the database.
-    - Deletes the active reset-token key from Redis before commit to avoid
-      partial-success password changes when Redis is unavailable.
-    - Deletes user session keys from Redis before commit for the same reason.
-    - Clears the per-email login-failure counter (the reset proves mailbox
-      ownership, so a throttled email must not stay locked out of login).
-    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
-
-    Errors:
-    - None (returns success=False for invalid tokens/users).
-
-    Returns:
-    - SuccessResponse: success=True if password was reset, False otherwise.
+    - Deletes the active reset-token key and every session key of the user
+      before the commit rather than after: with Redis unavailable the change
+      then fails as a whole, instead of leaving a new password alongside
+      sessions that still hold the old one.
+    - Clears the per-email login-failure counter. The reset proves mailbox
+      ownership, so a throttled address must not stay locked out of login.
+    - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
     """
 
     def __init__(

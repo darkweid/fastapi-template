@@ -1,9 +1,10 @@
 """
-Redis Lua scripts for token management.
+Lua sources for the steps that must not interleave. Rotation reads the old
+refresh key, stamps the used marker and settles on a verdict as one operation;
+spread over round-trips, two concurrent refreshes could both come back valid.
 
-This module contains Lua scripts for atomic operations on tokens in Redis.
-These scripts ensure that token operations are performed atomically,
-preventing race conditions in token validation and rotation.
+Importing this module only reads the files - Redis parses a script on its first
+EVAL, so a syntax error here surfaces on the first rotation, never at startup.
 """
 
 from pathlib import Path

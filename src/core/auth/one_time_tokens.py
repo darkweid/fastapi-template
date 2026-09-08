@@ -27,9 +27,6 @@ async def issue_one_time_token(
 
     The identifier arrives normalized: the core cannot know whether it is an
     email, a phone number or a login, so it neither lowercases nor validates it.
-
-    Returns:
-        str: the encoded token, ready to be embedded in a link.
     """
     token, jti = await issue_token(
         sub=identifier,
@@ -61,9 +58,6 @@ async def decode_one_time_token(
     Callers keep their own jwt.ExpiredSignatureError / jwt.InvalidTokenError
     ladders: this raises only for what can be decided after a successful
     decode - a missing identifier, a mode mismatch, or a superseded challenge.
-
-    Returns:
-        str: the identifier the token was issued for.
     """
     payload = jwt.decode(
         token,

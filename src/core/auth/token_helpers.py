@@ -1,8 +1,6 @@
 """
-Helper functions for token operations.
-
-This module contains utility functions for working with JWT tokens,
-including validation and token invalidation.
+Redis-side session bookkeeping shared by every realm: what invalidating a
+session removes, and what rotating a refresh token does atomically.
 """
 
 from collections.abc import Awaitable
@@ -28,10 +26,6 @@ async def invalidate_all_sessions(
 
     used:* markers are deliberately left to their TTL: the refresh keys are
     gone after the wipe, so a replayed rotated-out token cannot rotate anyway.
-
-    Args:
-        subject_id: The subject ID whose sessions should be invalidated
-        keys: The realm's Redis key builder.
     """
     index_key = keys.sessions(subject_id)
     # The shared client decodes responses, so members arrive as str; the cast
@@ -60,14 +54,8 @@ async def invalidate_session(
     keys: AuthRedisKeyBuilder,
 ) -> None:
     """
-    Invalidates a single session by deleting its active auth keys and
-    removing it from the sessions:{uid} index.
-
-    Args:
-        subject_id: The subject ID whose session should be invalidated.
-        session_id: The session identifier to invalidate.
-        redis_client: Redis client used to delete the active token keys.
-        keys: The realm's Redis key builder.
+    Drop one session: its active auth keys, and its entry in the
+    sessions:{uid} index that invalidate_all_sessions walks.
     """
     await redis_client.delete(
         keys.access(subject_id, session_id),
@@ -80,17 +68,11 @@ async def validate_token_structure(
     payload: JWTPayload, redis_client: Redis, *, keys: AuthRedisKeyBuilder
 ) -> tuple[str, str, str]:
     """
-    Validates that a token payload has all required fields.
+    Read the (subject, session, jti) triple a rotation needs.
 
-    Args:
-        payload: The JWT payload to validate
-        keys: The realm's Redis key builder.
-
-    Returns:
-        tuple: A tuple containing subject_id, session_id, and jti
-
-    Raises:
-        UnauthorizedException: If the token structure is invalid
+    A payload that names a subject but is missing a session or a jti is not a
+    token this system ever minted, so it costs that subject every session
+    before the generic 401 - the shape can only come from tampering.
     """
     subject_id = payload.get("sub")
     session_id = payload.get("session_id")
@@ -137,22 +119,13 @@ async def execute_token_rotation(
     keys: AuthRedisKeyBuilder,
 ) -> str:
     """
-    Executes the atomic token rotation operation using a Lua script.
+    Run the rotation script and translate its verdict.
 
-    Args:
-        subject_id: The subject ID from the token
-        session_id: The session ID from the token
-        jti: The JTI (JWT ID) from the token
-        keys: The realm's Redis key builder.
-
-    Returns:
-        str: The result of the token rotation operation ('OK' - every other
-        script answer raises)
-
-    Raises:
-        UnauthorizedException: If the token has been reused or is invalid.
-        A replay within the grace window answers the same generic 401 as an
-        invalid token but leaves the session family intact.
+    Answers 'OK' or raises; there is no other return. GRACE is a double-submit
+    inside the reuse window and leaves the session family intact, while REUSED
+    and INVALID wipe every session of the subject first. All three raise 401
+    under one error code, but the message a detected reuse carries differs from
+    the other two and reaches the client - only the code is uniform.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60

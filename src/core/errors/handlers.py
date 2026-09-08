@@ -43,18 +43,10 @@ def format_log_message(
     additional_info: dict[str, Any] | None = None,
     include_request_path: bool = False,
 ) -> str:
-    """
-    Format error message for logging
+    """Compose the one-line record an error handler logs.
 
-    Args:
-        request: FastAPI Request object
-        error_type: Type of error
-        message: Error message
-        additional_info: Additional context information for logs only (not shown to clients)
-        include_request_path: Include request path and method in the log message
-
-    Returns:
-        Formatted log message
+    `additional_info` is log-only context and never reaches the response body,
+    which is why internals may go in there and nowhere else.
     """
     raw_msg = message or "No additional details available"
     msg = " ".join(raw_msg.split())

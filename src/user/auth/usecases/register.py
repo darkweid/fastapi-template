@@ -18,31 +18,13 @@ logger = get_logger(__name__)
 
 class RegisterUseCase:
     """
-    Register a new user and send a verification email.
+    Register a user and send the verification email.
 
-    Inputs:
-    - data: CreateUserModel containing user registration details.
-
-    Validations:
-    - Email and username must be unique (handled by DB constraints/repository).
-
-    Workflow:
-    1) Create a new user record in the database.
-    2) Store the verification email delivery in the outbox within the same
-       transaction.
-    3) Commit the transaction (the outbox publish hook fires after commit).
-
-    Side effects:
-    - Creates a user record in the database.
-    - Inserts an outbox row for the verification email and publishes it
-      after commit.
-
-    Errors:
-    - Duplicate email/username surfaces as IntegrityError and is answered 409
-      with code "already_exists" by the database error middleware.
-
-    Returns:
-    - UserProfileViewModel: the newly created user profile.
+    The email is written to the outbox inside the same transaction as the user
+    row, so a committed registration always has a queued email and a rolled
+    back one never leaves a stray send. A duplicate email or username reaches
+    the database error middleware as an IntegrityError and is answered 409
+    `already_exists` there, not here.
     """
 
     def __init__(

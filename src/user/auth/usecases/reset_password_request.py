@@ -19,30 +19,12 @@ logger = get_logger(__name__)
 
 class ResetPasswordRequestUseCase:
     """
-    Request a password reset email for a user.
+    Send a password reset email.
 
-    Inputs:
-    - data: SendResetPasswordRequestModel containing user email.
-
-    Validations:
-    - User must exist (if not, return success to prevent email enumeration).
-
-    Workflow:
-    1) Retrieve user by email.
-    2) Store the password reset email delivery in the outbox using the
-       notifier with throttling. If a reset email was already sent recently
-       and the throttle window has not elapsed, return success=True without
-       committing, to prevent email enumeration.
-    3) Commit the transaction (the outbox publish hook fires after commit).
-
-    Side effects:
-    - Inserts an outbox row for the password reset email and publishes it
-      after commit.
-    - Sets/updates a throttle key in Redis; releases it if the transaction
-      fails to commit.
-
-    Returns:
-    - SuccessResponse: success=True regardless of whether email was sent.
+    Answers success whether or not anything was sent, the unelapsed throttle
+    window included: a caller must not be able to tell an unknown address from
+    one that was mailed a minute ago. The throttle key is released when the
+    transaction fails to commit.
     """
 
     def __init__(

@@ -40,26 +40,14 @@ class User(Base, UUID7IDMixin, TimestampMixin, SoftDeleteMixin):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    """relationships"""
-    # Add relationships here
-
     @validates("password_hash")
     def validate_password_hash(self, _: str, value: str) -> str:
         """
-        Validate that the password hash looks like a supported hash format.
+        Reject a plaintext password assigned straight to the column.
 
-        Args:
-            _: str
-                Unused parameter
-            value: str
-                The new or updated password hash provided for validation.
-
-        Returns:
-            str
-                The validated password hash.
-
-        Raises:
-            ValueError: If the value is not a valid password hash.
+        The guard is on the ORM attribute rather than in the service layer so
+        that no code path - a script, a fixture, a future use case - can store
+        an unhashed value by forgetting to hash it first.
         """
         if not is_password_hash(value):
             raise ValueError("Password hash must be a valid hash.")

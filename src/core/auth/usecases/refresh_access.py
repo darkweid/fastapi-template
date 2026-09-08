@@ -20,37 +20,13 @@ class RefreshAccessUseCase(Generic[PrincipalT]):
     """
     Rotate a refresh token and mint a new access token for the same session.
 
-    Inputs:
-    - principal: the principal named by the refresh token, already resolved.
-    - old_token_payload: JWTPayload decoded from the presented refresh token.
+    A principal that fails the realm's admission gate is told the real reason,
+    unlike login: the caller already proved possession of a valid refresh
+    token, so there is nothing left to enumerate. Realm-agnostic code has no
+    email to mask, so the rejection is logged against the subject id.
 
-    Validations:
-    - The principal must pass the realm's admission gate (`admission`);
-      unlike login, the real rejection reason is reported, since the caller
-      already proved possession of a valid refresh token.
-    - The refresh token must be valid and not reused (rotate_refresh_token
-      handles reuse detection and session invalidation).
-
-    Workflow:
-    1) Run the realm's admission gate against the principal, logging the
-       subject id and the rejection reason on failure before re-raising -
-       realm-agnostic code has no email to mask, so the subject id is logged.
-    2) Rotate the refresh token: this invalidates the old one, registers it
-       used, and detects reuse.
-    3) Decode the new refresh token to read the session id it carries.
-    4) Build access-token claims via `claims_builder` and issue a new access
-       token bound to that session.
-
-    Side effects:
-    - Rotates refresh-token state in Redis; a detected reuse wipes every
-      session of the subject (see rotate_refresh_token).
-
-    Errors:
-    - Whatever `admission` raises for a principal that fails admission.
-    - UnauthorizedException: the refresh token is invalid, expired or reused.
-
-    Returns:
-    - TokenModel with the new access and refresh tokens.
+    Rotation detects reuse, and a detected reuse wipes every session of the
+    subject rather than only failing this request.
     """
 
     def __init__(

@@ -20,30 +20,13 @@ logger = get_logger(__name__)
 
 class SendVerificationUseCase:
     """
-    Resend a verification email to a user.
+    Resend the verification email.
 
-    Inputs:
-    - data: ResendVerificationModel containing user email.
-
-    Validations:
-    - User must exist (if not, return success to prevent email enumeration).
-    - User must not be already verified (if so, return success).
-
-    Workflow:
-    1) Retrieve user by email.
-    2) Check if user is already verified.
-    3) Store the verification email delivery in the outbox using the notifier
-       with throttling.
-    4) Commit the transaction (the outbox publish hook fires after commit).
-
-    Side effects:
-    - Inserts an outbox row for the verification email and publishes it
-      after commit.
-    - Sets/updates a throttle key in Redis; releases it if the transaction
-      fails to commit.
-
-    Returns:
-    - SuccessResponse: success=True regardless of whether email was sent (for privacy).
+    Answers success whether or not anything was sent: an unknown address and an
+    already verified one must look identical from outside, or the endpoint
+    confirms who has an account. The notifier's throttle key is released when
+    the transaction fails to commit, so a failed attempt does not lock the
+    address out of a retry.
     """
 
     def __init__(
