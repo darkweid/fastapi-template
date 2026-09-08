@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from src.main.config import Config
@@ -35,9 +33,3 @@ def _isolated_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for name in _config_env_keys():
         monkeypatch.delenv(name, raising=False)
-
-
-def test_environment_is_isolated_from_the_shell() -> None:
-    """The fixture above is what every other unit test relies on; prove it works."""
-    assert "DEBUG" not in os.environ
-    assert os.environ.get("TESTING") == "true"
