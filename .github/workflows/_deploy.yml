@@ -103,6 +103,20 @@ jobs:
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
+      # CI builds no image for a commit made up entirely of documentation, so
+      # there is no sha- tag to pull. Deploying anyway would fail on the box,
+      # and even a successful deploy would restart every container for text
+      # .dockerignore keeps out of the image. `sha^` is the previous commit
+      # because main takes squash merges only, so its history is linear.
+      # A manual dispatch is explicit intent and is never gated.
+      - name: Classify the commit being deployed
+        id: docs
+        if: github.event_name != 'workflow_dispatch'
+        uses: ./.github/actions/docs-only-change
+        with:
+          base: ${{ steps.ref.outputs.sha }}^
+          head: ${{ steps.ref.outputs.sha }}
+
       - name: Compute image and tag
         id: meta
         run: |
@@ -115,6 +129,7 @@ jobs:
       # keyscanning inside the job would trust whatever answers, which is the
       # same hole as StrictHostKeyChecking=no.
       - name: Set up SSH
+        if: steps.docs.outputs.docs_only != 'true'
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
@@ -143,6 +158,7 @@ jobs:
 
       - name: Deploy over SSH
         id: deploy
+        if: steps.docs.outputs.docs_only != 'true'
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -172,9 +188,12 @@ jobs:
           BUILD=0 APP_IMAGE="${IMAGE}:${TAG}" bash infra/deploy/deploy.sh
           EOF
 
-      # Send deployment status notification to Telegram
       - name: Telegram notification
-        if: always()
+        # Skipped alongside the deploy it reports on: a skipped step has outcome
+        # `skipped`, which the body below would render as FAILED for a deploy
+        # that never ran. `always()` still has to stay, so a genuine failure in
+        # an earlier step is announced.
+        if: always() && steps.docs.outputs.docs_only != 'true'
         run: |
           # `if: always()` above is what keeps this step alive after a failed
           # deploy - the case the alert exists for. The step's own shell is still
