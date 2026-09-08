@@ -15,27 +15,8 @@ class CreateNoteUseCase:
     """
     Create a note owned by the current user.
 
-    Inputs:
-    - data: NoteCreateModel with the title and optional content.
-    - owner_id: UUID of the user the note will belong to.
-
-    Validations:
-    - None beyond schema validation; ownership is derived from the caller's
-      identity, never taken from the request body.
-
-    Workflow:
-    1) Create the note row scoped to owner_id.
-    2) Flush pending DB changes.
-    3) Commit the transaction.
-
-    Side effects:
-    - Creates a new note record.
-
-    Errors:
-    - None beyond persistence failures surfaced by the repository.
-
-    Returns:
-    - NoteViewModel: the created note.
+    Ownership is taken from the authenticated caller, never from the request
+    body, so a note cannot be created in someone else's name.
     """
 
     def __init__(self, uow: ApplicationUnitOfWork) -> None:

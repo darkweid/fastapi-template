@@ -34,16 +34,7 @@ EXCEPTION_HANDLERS: tuple[tuple[type[Exception], HandlerCallable], ...] = (
 
 
 def include_routers(app: FastAPI) -> None:
-    """
-    Includes API routers into the FastAPI application.
-
-    Parameters:
-        app (FastAPI): The FastAPI application instance to which routers will
-        be added.
-
-    Returns:
-        None
-    """
+    """Mount every domain router under /v1. A new router is added here."""
     v1_router = APIRouter()
     v1_router.include_router(user_routers.router, prefix="/users", tags=["Users"])
     v1_router.include_router(note_routers.router, prefix="/notes", tags=["Notes"])
@@ -53,16 +44,11 @@ def include_routers(app: FastAPI) -> None:
 
 
 def include_exceptions_handlers(app: FastAPI) -> None:
-    """
-    Registers exception handlers for various custom exceptions with the provided FastAPI
-    application instance.
+    """Register the exception handlers.
 
-    Parameters:
-        app (FastAPI): The FastAPI application instance to which the exception handlers
-        will be added.
-
-    Returns:
-        None
+    A new project exception needs no entry here: the generic handler serializes
+    whatever `status_code`, `error_code` and `log_level` the class declares.
+    Only errors raised outside that hierarchy need one of their own.
     """
     for exception_type, handler in EXCEPTION_HANDLERS:
         app.add_exception_handler(exception_type, handler)

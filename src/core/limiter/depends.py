@@ -27,8 +27,11 @@ class _InMemoryRateLimitWindow:
 
 class RateLimiter:
     """
-    HTTP rate limiter dependency for FastAPI endpoints.
-    Applies rate-limiting logic via Redis and Lua scripting.
+    Fixed-window rate limiter backed by a Redis Lua script.
+
+    When Redis is unreachable it falls back to a per-process in-memory window,
+    so an outage degrades the limit to per-instance instead of removing it, and
+    reports itself to Sentry once with a cooldown rather than per request.
     """
 
     _fallback_windows: ClassVar[dict[str, _InMemoryRateLimitWindow]] = {}
@@ -53,13 +56,10 @@ class RateLimiter:
         ] = FastAPILimiter.http_callback,
     ) -> None:
         """
-        Initialize the rate limiter with time windows and custom behaviors.
-
-        Args:
-            times: Number of allowed requests in the time window
-            milliseconds/seconds/minutes/hours: Time window duration
-            identifier: Async function to generate unique rate-limit key
-            callback: Async function to call when limit exceeded
+        The four duration arguments add up into one window, so
+        `seconds=30, minutes=1` is a 90-second window rather than a conflict.
+        `identifier` decides what the limit counts: the default buckets by
+        client IP, and `get_user_id_from_token` buckets per user instead.
         """
         if FastAPILimiter.identifier is None or FastAPILimiter.http_callback is None:
             raise RuntimeError("FastAPILimiter must be initialized before use.")
@@ -190,10 +190,7 @@ class RateLimiter:
 
     async def __call__(self, request: Request, response: Response) -> None:
         """
-        FastAPI-compatible call method that applies rate limiting.
-
-        Raises:
-            HTTPException 429 if the limit is exceeded
+        Count this request against its bucket, or raise 429 with Retry-After.
         """
         if not FastAPILimiter.is_initialized():
             raise RuntimeError("FastAPILimiter must be initialized before use.")

@@ -19,18 +19,5 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
 async def get_unit_of_work(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AsyncGenerator[ApplicationUnitOfWork]:
-    """
-    Dependency injection function that provides a Unit of Work instance.
-
-    This function creates a new ApplicationUnitOfWork for each request
-    and yields it to the caller. This is intended to be used as a FastAPI
-    dependency in route handlers.
-
-    Args:
-        session: SQLAlchemy AsyncSession, injected automatically from get_session
-
-    Yields:
-        ApplicationUnitOfWork: A Unit of Work instance for transaction management
-    """
     uow = await get_uow(session)
     yield uow

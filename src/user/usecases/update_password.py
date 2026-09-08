@@ -28,42 +28,17 @@ logger = get_logger(__name__)
 
 class UpdateUserPasswordUseCase:
     """
-    Update a user's password and invalidate all their active sessions.
+    Change the caller's own password and end every session it had.
 
-    This is the self-service change and it always proves knowledge of the
-    current password. An administrative reset of someone else's password, when
-    one is added, is a separate scenario and must not ask for it.
-
-    Inputs:
-    - data: UserNewPassword containing the current and the new password.
-    - user_id: UUID of the user updating their password.
-
-    Validations:
-    - User must exist in the database.
-    - current_password must match the stored hash.
-    - The new password must differ from the current one.
-
-    Workflow:
-    1) Load the user and verify the current password.
-    2) Hash and update user password in the database.
-    3) Flush pending DB changes.
-    4) Invalidate all active Redis sessions for the user.
-    5) Invalidate the user cache namespace.
-    6) Commit the transaction.
+    Self-service, so it always proves knowledge of the current password and
+    refuses a new password equal to it. An administrative reset of someone
+    else's password is a separate scenario and must not ask for the current one.
 
     Side effects:
-    - Updates user record in database.
-    - Deletes all user session keys from Redis before commit to avoid
-      partial-success password changes when Redis is unavailable.
-    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
-
-    Errors:
-    - InstanceNotFoundException: if the user does not exist.
-    - InvalidCredentialsError: if current_password does not match.
-    - InstanceProcessingException: if the new password repeats the current one.
-
-    Returns:
-    - SuccessResponse: success=True.
+    - Deletes every session key of the user before the commit rather than
+      after: with Redis unavailable the change then fails as a whole, instead
+      of leaving a new password alongside sessions holding the old one.
+    - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
     """
 
     def __init__(

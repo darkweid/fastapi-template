@@ -1,9 +1,8 @@
 """
-Redis Lua scripts for token management.
-
-This module contains Lua scripts for atomic operations on tokens in Redis.
-These scripts ensure that token operations are performed atomically,
-preventing race conditions in token validation and rotation.
+Lua sources loaded at import time, so a syntax error in a script surfaces at
+startup rather than on the first rotation. Rotation has to read the old key,
+stamp the used marker and answer a verdict without another client interleaving
+between those steps, which is why it is a script and not a pipeline.
 """
 
 from pathlib import Path

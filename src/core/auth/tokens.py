@@ -87,15 +87,11 @@ async def create_access_token(
     session_id: str | None = None,
 ) -> str:
     """
-    Create a new JWT access token
+    Issue an access token and register its jti under the session's Redis key.
 
-    Args:
-        data: Dictionary containing token data (must include 'sub' key with subject ID)
-        redis_client: Redis client used for active JTI tracking.
-        realm: The auth contour whose secret and key namespace issue the token.
-        session_id: Optional session ID for tracking multiple sessions per subject
-    Returns:
-        str: Encoded JWT access token
+    `data` must carry `sub`, which the annotation cannot say. Omitting
+    `session_id` does not mean the current session - it opens a new one, which
+    is what login wants and what a refresh must never do.
     """
     if session_id is None:
         session_id = str(uuid4())
@@ -121,15 +117,10 @@ async def create_refresh_token(
     session_id: str | None = None,
 ) -> str:
     """
-    Create a new JWT refresh token
+    Issue a refresh token and register its jti under the session's Redis key.
 
-    Args:
-        data: Dictionary containing token data (must include 'sub' key with subject ID)
-        redis_client: Redis client used for active JTI tracking.
-        realm: The auth contour whose secret and key namespace issue the token.
-        session_id: Optional session ID for tracking multiple sessions per subject
-    Returns:
-        str: Encoded JWT refresh token
+    Same contract as create_access_token: `sub` is required inside `data`, and
+    an omitted `session_id` opens a new session rather than continuing one.
     """
     if session_id is None:
         session_id = str(uuid4())
@@ -151,23 +142,12 @@ async def rotate_refresh_token(
     old_payload: JWTPayload, redis_client: Redis, *, realm: AuthRealm
 ) -> str:
     """
-    Rotate a refresh token by creating a new one while invalidating the old one.
+    Mint a replacement refresh token inside the same session and burn the old one.
 
-    This function implements the token rotation pattern for refresh tokens:
-    1. Validate token structure and extract the necessary fields
-    2. Atomically invalidate the old token and mark it as used
-    3. Create a new token in the same logical session
-
-    Args:
-        old_payload: The payload from the old refresh token
-        redis_client: Redis client used to validate and rotate token state.
-        realm: The auth contour whose secret and key namespace own the session.
-
-    Returns:
-        str: A new refresh token
-
-    Raises:
-        UnauthorizedException: If the token is invalid, has been reused, or has other security issues
+    Presenting a token that was already rotated out is theft until proven
+    otherwise: outside the short grace window it costs the subject every
+    session, not just this request. The new token keeps the old session id, so
+    a client that refreshes does not appear as a new login.
     """
 
     subject_id, old_session_id, old_jti = await validate_token_structure(

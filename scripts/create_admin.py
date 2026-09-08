@@ -62,37 +62,16 @@ async def ensure_admin(
     phone_number: str,
 ) -> None:
     """
-    Create the first admin user, or promote an existing account to admin.
+    Create the first admin account, or promote an existing one.
 
-    Inputs:
-    - uow: unit of work wrapping the session to operate on.
-    - email, password: credentials for the account.
-    - first_name, last_name, username, phone_number: profile fields used only
-      when a new user is created.
+    An account that already carries this email is forced to role=ADMIN, active
+    and verified with its stored password hash left alone, so re-running the
+    script never resets someone's password. The profile arguments therefore
+    apply to a newly created account only.
 
-    Validations:
-    - email and password are validated with the same rules as self-registration
-      (EmailStr plus normalization, and the strong-password pattern), checked
-      before any repository call.
-
-    Workflow:
-    1) Validate and normalize the email; validate the password strength.
-    2) Look up an existing, non-deleted user by email.
-    3) If found, force role=ADMIN and is_active/is_verified=True, leaving the
-       stored password hash untouched.
-    4) Otherwise create a new user with a freshly hashed password, already
-       admin, active and verified.
-    5) Commit the transaction.
-
-    Side effects:
-    - Creates or updates one row in the users table.
-
-    Errors:
-    - pydantic.ValidationError: the email is not a valid address, or the
-      password does not meet the strength rules.
-
-    Returns:
-    - None.
+    Email and password are validated with the same rules as self-registration,
+    before any repository call: an address that login would reject must not
+    become an account nobody can sign into.
     """
     credentials = _AdminCredentialsModel(email=email, password=password)
     normalized_email = credentials.email

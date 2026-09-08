@@ -44,47 +44,29 @@ LOGIN_FAILURES_WINDOW_SECONDS = 15 * 60
 
 class LoginUserUseCase:
     """
-    Log in a user and return access and refresh tokens.
+    Log in a user and issue an access and refresh token pair.
 
-    Inputs:
-    - data: LoginUserModel containing email and password.
+    The per-email failure counter is checked before any database or password
+    hash work, so a flood of guesses costs one Redis read each. An unknown
+    email is still verified against a dummy hash, so timing does not reveal
+    whether the account exists. Every credential failure feeds the counter; an
+    admission failure with a correct password does not, since that caller
+    already proved ownership of the account.
 
-    Validations:
-    - The email must be under the failed-login limit for the current window
-      (LoginThrottle).
-    - User must exist.
-    - Password must be correct.
-    - Account must pass admission (verified and active) - see policies.py.
-
-    Workflow:
-    1) Reject when the per-email failure counter has reached the limit,
-       before any database or password-hash work is spent.
-    2) Retrieve user by email.
-    3) Verify password (using dummy hash if user not found to prevent timing
-       attacks). Either failure - unknown email included - feeds the counter;
-       an admission violation with a correct password does not.
-    4) Check account admission; a violation is masked into the same error as
-       bad credentials (anti-enumeration).
-    5) Rehash and persist the password if needed.
-    6) Invalidate the user cache namespace.
-    7) Commit the transaction, clear the failure counter, and issue an access
-       and refresh token pair for a new session.
+    Wrong credentials, an unverified account and a blocked account all answer
+    InvalidCredentialsError under one code, by design - the client learns that
+    login failed and nothing else.
 
     Side effects:
-    - Persists password hash updates when rehashing is required.
-    - Bumps the user:{id} cache namespace version twice (pre- and post-commit) -
-      every write to the user row does this unconditionally, including this one
-      where the row is only sometimes touched (the rehash branch), so no one
-      has to remember an exception to the rule.
-    - Token creation handles its own caching.
+    - Persists a rehashed password when the stored hash uses outdated parameters.
+    - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
+      Every write to the user row does this unconditionally, this one included,
+      where the row is only sometimes touched - so no one has to remember an
+      exception to the rule.
 
     Errors:
-    - TooManyRequestsException: the email has exhausted the failure window.
-    - InvalidCredentialsError: wrong credentials, unverified or blocked account -
-      one code by design (anti-enumeration).
-
-    Returns:
-    - TokenModel with access and refresh tokens.
+    - TooManyRequestsException: the email has exhausted its failure window.
+    - InvalidCredentialsError: wrong credentials, unverified or blocked account.
     """
 
     def __init__(

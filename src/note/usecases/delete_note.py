@@ -17,31 +17,9 @@ class DeleteNoteUseCase:
     """
     Soft-delete a note.
 
-    Inputs:
-    - note_id: UUID of the note to delete.
-    - current_user: the caller, used for the ownership/permission check.
-
-    Validations:
-    - The note must exist.
-    - The caller must own the note or hold MANAGE_NOTES.
-
-    Workflow:
-    1) Load the note.
-    2) Enforce ownership/permission via ensure_note_access.
-    3) Soft-delete the note.
-    4) Flush pending DB changes.
-    5) Commit the transaction.
-
-    Side effects:
-    - Marks the note as deleted (is_deleted, deleted_at).
-
-    Errors:
-    - InstanceNotFoundException: if the note does not exist, or the caller
-      neither owns it nor holds MANAGE_NOTES (anti-enumeration: both cases
-      answer the same 404).
-
-    Returns:
-    - None.
+    A note the caller neither owns nor may manage answers the same 404 as a
+    note that does not exist: a foreign id has to stay indistinguishable from
+    a missing one, or the endpoint enumerates other people's notes.
     """
 
     def __init__(self, uow: ApplicationUnitOfWork) -> None:

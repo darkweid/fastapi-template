@@ -35,11 +35,8 @@ def parse_requirements_versions(requirements_text: str) -> dict[str, str]:
 
 
 def extract_dep_package(dep_spec: str) -> tuple[str, str]:
-    """
-    Returns:
-    - package token as written in pre-commit config (can include extras)
-    - normalized base package name for requirements lookup
-    """
+    """Split a dependency into the token as written in the pre-commit config,
+    extras included, and the normalized name the lockfile is keyed by."""
     dep_spec = dep_spec.strip()
     if not dep_spec:
         return "", ""

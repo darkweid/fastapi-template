@@ -18,36 +18,13 @@ logger = get_logger(__name__)
 
 class UpdateUserProfileUseCase:
     """
-    Update the current user's profile fields.
+    Update the caller's profile fields.
 
-    Inputs:
-    - data: UserProfileUpdateModel with the fields to change. A field left unset
-      is skipped (exclude_unset); an explicit `null` fails schema validation,
-      because every updatable column here is non-nullable. An entirely empty
-      body is a no-op write: it still updates zero columns, still flushes, and
-      still bumps the cache namespace - a spurious bump costs a cold cache, not
-      a stale read.
-    - user_id: UUID of the user being updated.
-
-    Validations:
-    - User must exist.
-
-    Workflow:
-    1) Apply the non-empty fields to the user row.
-    2) Flush pending DB changes.
-    3) Invalidate the user cache namespace.
-    4) Commit the transaction; an after-commit hook invalidates the
-       namespace a second time.
-
-    Side effects:
-    - Updates the user record.
-    - Bumps the user:{id} cache namespace version twice (pre- and post-commit).
-
-    Errors:
-    - InstanceNotFoundException: if the user does not exist.
-
-    Returns:
-    - UserProfileViewModel: the updated profile.
+    An unset field is skipped (exclude_unset) and an explicit null fails schema
+    validation, because every updatable column here is non-nullable. An empty
+    body is still a write: it updates zero columns, flushes, and bumps the
+    cache namespace anyway - a spurious bump costs a cold cache, a skipped one
+    could cost a stale read.
     """
 
     def __init__(

@@ -63,18 +63,14 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
     """
     Verify JWT claims and compare the token JTI against Redis state.
 
-    Args:
-        token: The JWT token, with or without the `Bearer ` prefix.
-        redis_client: Redis client used to validate active and used keys.
-        realm: The auth contour whose secret and key namespace own the token.
+    A valid signature is not enough: the jti must still be the one Redis holds
+    for that session, so a token that was rotated out or revoked fails here
+    while verifying cryptographically. Expiry raises TokenExpiredError, whose
+    own error code lets a client tell "refresh and retry" apart from "this
+    token is not ours"; everything else answers the generic 401.
 
-    Returns:
-        JWTPayload: The verified JWT payload.
-
-    Raises:
-        TokenExpiredError: If the token has expired.
-        UnauthorizedException: If the token is malformed, has an invalid
-            structure, was reused, or no longer matches the active Redis entry.
+    The `Bearer ` prefix is optional - callers hand over whatever the transport
+    gave them, header or cookie.
     """
     if isinstance(token, str) and token.lower().startswith("bearer "):
         token = token[7:].strip()
@@ -142,11 +138,8 @@ async def decode_logout_identity(
     session it can neither use nor clear. The signature is still verified -
     only the `exp` claim is relaxed - so a forged token identifies nothing.
 
-    Returns:
-        SessionIdentity: The subject and session named by a signature-valid
-            access token.
-        None: If no token was given, or it is forged, malformed or not an
-            access token.
+    Answers None for every unusable case alike: no token, a forged or malformed
+    one, or one that is not an access token.
     """
     if not token:
         return None

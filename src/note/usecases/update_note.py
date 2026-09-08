@@ -16,36 +16,12 @@ logger = get_logger(__name__)
 
 class UpdateNoteUseCase:
     """
-    Update a note's title and/or content.
+    Update a note's title and content.
 
-    Inputs:
-    - note_id: UUID of the note to update.
-    - data: NoteUpdateModel with the fields to change; an omitted field is
-      left untouched (exclude_unset), an explicit null fails schema validation.
-    - current_user: the caller, used for the ownership/permission check.
-
-    Validations:
-    - The note must exist.
-    - The caller must own the note or hold MANAGE_NOTES.
-
-    Workflow:
-    1) Load the note.
-    2) Enforce ownership/permission via ensure_note_access.
-    3) Apply the changed fields.
-    4) Flush pending DB changes.
-    5) Refresh the server-generated updated_at value.
-    6) Commit the transaction.
-
-    Side effects:
-    - Updates the note record.
-
-    Errors:
-    - InstanceNotFoundException: if the note does not exist, or the caller
-      neither owns it nor holds MANAGE_NOTES (anti-enumeration: both cases
-      answer the same 404).
-
-    Returns:
-    - NoteViewModel: the updated note.
+    PATCH semantics: an omitted field is left untouched (exclude_unset) and an
+    explicit null fails schema validation, because both columns are
+    non-nullable. A note the caller neither owns nor may manage answers the
+    same 404 as a missing one.
     """
 
     def __init__(self, uow: ApplicationUnitOfWork) -> None:

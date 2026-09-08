@@ -10,24 +10,10 @@ logger = get_logger(__name__)
 
 class LogoutUseCase:
     """
-    Invalidate one realm's current session or every session of one subject.
+    Invalidate one realm's current session, or every session of one subject.
 
-    Inputs:
-    - subject_id: id of the subject the session(s) belong to.
-    - session_id: id of the session to invalidate when not wiping all sessions.
-    - terminate_all_sessions: wipe every session of the subject instead of
-      just the current one.
-
-    Workflow:
-    1) Delete either every session in the subject's index, or just the named
-       session's active auth keys, through the realm's key builder.
-    2) Report success.
-
-    Side effects:
-    - Removes the corresponding realm-scoped Redis keys.
-
-    Returns:
-    - SuccessResponse with a successful operation flag.
+    `terminate_all_sessions` picks between the two. Both go through the realm's
+    key builder, so nothing here names a concrete realm.
     """
 
     def __init__(self, redis_client: Redis, realm: AuthRealm) -> None:

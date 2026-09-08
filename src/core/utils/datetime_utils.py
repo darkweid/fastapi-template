@@ -3,15 +3,8 @@ from zoneinfo import ZoneInfo
 
 
 def get_utc_now() -> datetime:
-    """
-    Get the current date and time in UTC.
-
-    This function returns the current time with timezone information set to UTC,
-    ensuring that the returned datetime object is offset-aware.
-
-    Returns:
-        datetime: The current date and time in UTC with tzinfo set to ZoneInfo("UTC").
-    """
+    """The project's only clock. Every datetime that reaches a column, a cache
+    key or a comparison originates here, so none of them is ever naive."""
     return datetime.now(ZoneInfo("UTC"))
 
 
