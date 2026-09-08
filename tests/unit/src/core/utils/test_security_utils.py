@@ -66,3 +66,9 @@ def test_build_throttle_key_and_normalize() -> None:
     assert normalized == "user@example.com"
     assert key.startswith("prefix:")
     assert len(key.split(":", 1)[1]) == 64
+
+
+def test_build_throttle_key_is_case_sensitive() -> None:
+    assert security.build_throttle_key(
+        "prefix", "CustomerA"
+    ) != security.build_throttle_key("prefix", "customera")
