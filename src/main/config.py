@@ -1,18 +1,18 @@
 from functools import lru_cache
 import json
 import os
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlparse
 
-from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Shortest secret the app accepts anywhere. Matches the HMAC-SHA256 block size,
 # which is the weakest signature the JWT algorithm allowlist permits.
 SECRET_MIN_LENGTH = 32
 
 
-class S3Config(BaseModel):
+class S3Config(BaseSettings):
     S3_ENABLED: bool = False
     S3_BUCKET_NAME: str | None = None
     S3_ACCESS_KEY_ID: str | None = None
@@ -31,7 +31,7 @@ class S3Config(BaseModel):
     S3_RETRY_MODE: str = "standard"
     S3_MAX_UPLOAD_SIZE_BYTES: int = Field(20 * 1024 * 1024, gt=0)
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @field_validator(
         "S3_ENDPOINT_URL",
@@ -83,7 +83,7 @@ class S3Config(BaseModel):
         return self
 
 
-class BroadcastingConfig(BaseModel):
+class BroadcastingConfig(BaseSettings):
     EMAIL_SERVER: str
     EMAIL_PORT: int
     EMAIL_PASSWORD: str
@@ -93,17 +93,17 @@ class BroadcastingConfig(BaseModel):
     EMAIL_STARTTLS: bool
     VALIDATE_CERTS: bool
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
 
-class RedisConfig(BaseModel):
+class RedisConfig(BaseSettings):
     REDIS_HOST: str
     REDIS_PORT: int
     REDIS_PASSWORD: str
     REDIS_DATABASE: str
     REDIS_TASKS_DATABASE: str = "1"
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @property
     def dsn(self) -> str:
@@ -128,13 +128,13 @@ class RedisConfig(BaseModel):
         )
 
 
-class CacheConfig(BaseModel):
+class CacheConfig(BaseSettings):
     CACHE_ENABLED: bool = True
     CACHE_DEFAULT_TTL: int = Field(60, gt=0)
     CACHE_VERSION_TTL: int = Field(604800, gt=0)
     CACHE_KEY_PREFIX: str = "cache"
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @model_validator(mode="after")
     def validate_ttl_bounds(self) -> "CacheConfig":
@@ -145,15 +145,15 @@ class CacheConfig(BaseModel):
         return self
 
 
-class SentryConfig(BaseModel):
+class SentryConfig(BaseSettings):
     SENTRY_DSN: str | None = None
     SENTRY_ENV: str = "development"
     SENTRY_ENABLED: bool = False
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
 
-class CookieConfig(BaseModel):
+class CookieConfig(BaseSettings):
     """Policy for auth cookies. Applied by TokenCookieResponder."""
 
     COOKIE_SECURE: bool = True
@@ -161,7 +161,7 @@ class CookieConfig(BaseModel):
     COOKIE_DOMAIN: str | None = None
     CSRF_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @field_validator("COOKIE_DOMAIN", mode="before")
     @classmethod
@@ -189,7 +189,7 @@ class CookieConfig(BaseModel):
         return self
 
 
-class JWTConfig(BaseModel):
+class JWTConfig(BaseSettings):
     # A signing key shorter than the HMAC block size weakens HS256 and is almost
     # always a placeholder left over from .env.example.
     JWT_USER_SECRET_KEY: str = Field(min_length=SECRET_MIN_LENGTH)
@@ -211,7 +211,7 @@ class JWTConfig(BaseModel):
     # keep it seconds-short, hence the hard upper bound.
     REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(10, ge=0, le=60)
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @model_validator(mode="after")
     def reject_shared_secrets(self) -> "JWTConfig":
@@ -230,7 +230,7 @@ class JWTConfig(BaseModel):
         return self
 
 
-class PostgresConfig(BaseModel):
+class PostgresConfig(BaseSettings):
     DB_ECHO: bool
 
     POSTGRES_USER: str
@@ -247,7 +247,7 @@ class PostgresConfig(BaseModel):
     DB_TASKS_POOL_SIZE: int = Field(5, gt=0)
     DB_TASKS_MAX_OVERFLOW: int = Field(15, ge=0)
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @field_validator("POSTGRES_DB")
     @classmethod
@@ -286,7 +286,7 @@ class PostgresConfig(BaseModel):
         )
 
 
-class AppConfig(BaseModel):
+class AppConfig(BaseSettings):
     VERSION: str
     DEBUG: bool = False
     TESTING: bool = False
@@ -295,14 +295,16 @@ class AppConfig(BaseModel):
     # stays here so startup and check_env keep requiring the key in .env.
     LOG_LEVEL: str
 
-    CORS_ALLOWED_ORIGINS: list[str] = Field([])
+    # NoDecode: pydantic-settings would otherwise require strict JSON in the
+    # env file; parse_cors_list below accepts a comma/semicolon list too.
+    CORS_ALLOWED_ORIGINS: Annotated[list[str], NoDecode] = Field([])
     CORS_ALLOWED_CREDENTIALS: bool = True
-    CORS_ALLOWED_METHODS: list[str] = Field(["*"])
-    CORS_ALLOWED_HEADERS: list[str] = Field(["*"])
-    CORS_EXPOSE_HEADERS: list[str] = Field(["*"])
+    CORS_ALLOWED_METHODS: Annotated[list[str], NoDecode] = Field(["*"])
+    CORS_ALLOWED_HEADERS: Annotated[list[str], NoDecode] = Field(["*"])
+    CORS_EXPOSE_HEADERS: Annotated[list[str], NoDecode] = Field(["*"])
 
     TRUST_PROXY_HEADERS: bool
-    TRUST_PROXY_HOSTS: list[str] = Field(
+    TRUST_PROXY_HOSTS: Annotated[list[str], NoDecode] = Field(
         [
             "127.0.0.1",
             "::1",
@@ -327,7 +329,7 @@ class AppConfig(BaseModel):
     DOCS_USERNAME: str = ""
     DOCS_PASSWORD: str = ""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     @field_validator(
         "CORS_ALLOWED_ORIGINS",
@@ -462,26 +464,25 @@ class Config(BaseModel):
 @lru_cache
 def get_settings() -> Config:
     """
-    Cached settings factory. Override in tests via monkeypatching or dependency overrides.
-    """
-    env_filename = ".env.test" if os.getenv("TESTING") == "true" else ".env"
-    env_file_values = dotenv_values(env_filename)
-    merged_env: dict[str, Any] = {
-        k: v
-        for k, v in {**env_file_values, **dict(os.environ)}.items()
-        if v is not None
-    }
+    Cached settings factory. Override in tests via monkeypatching or dependency
+    overrides; a test that changes the environment must call
+    `get_settings.cache_clear()`.
 
+    The env file is chosen per call rather than pinned on the models, so that
+    flipping TESTING (and clearing the cache) reloads from the other file.
+    Environment variables win over the file, as they must in a deploy.
+    """
+    env_file = ".env.test" if os.getenv("TESTING") == "true" else ".env"
     return Config(
-        app=AppConfig(**merged_env),
-        s3=S3Config(**merged_env),
-        jwt=JWTConfig(**merged_env),
-        redis=RedisConfig(**merged_env),
-        cache=CacheConfig(**merged_env),
-        sentry=SentryConfig(**merged_env),
-        cookie=CookieConfig(**merged_env),
-        postgres=PostgresConfig(**merged_env),
-        broadcasting=BroadcastingConfig(**merged_env),
+        app=AppConfig(_env_file=env_file),
+        s3=S3Config(_env_file=env_file),
+        jwt=JWTConfig(_env_file=env_file),
+        redis=RedisConfig(_env_file=env_file),
+        cache=CacheConfig(_env_file=env_file),
+        sentry=SentryConfig(_env_file=env_file),
+        cookie=CookieConfig(_env_file=env_file),
+        postgres=PostgresConfig(_env_file=env_file),
+        broadcasting=BroadcastingConfig(_env_file=env_file),
     )
 
 
