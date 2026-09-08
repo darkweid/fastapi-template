@@ -1,48 +1,55 @@
+# Reusable CD. Deploys the image CI already built and pushed to GHCR - the box
+# never builds on this path. The caller picks the environment, the branch its
+# workflow_run trigger accepts, and optionally an existing image tag to redeploy.
 name: CD
 
-# Runs after CI succeeds on main, then deploys the image CI already built and
-# pushed to GHCR - the box never builds on the CD path. workflow_dispatch adds
-# a manual escape hatch for redeploying an already-built image - by its
-# sha-<12> tag, the only shape CI ever produces - without waiting for a new
-# push to main.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types:
-      - completed
-  workflow_dispatch:
+  workflow_call:
     inputs:
+      environment:
+        description: "GitHub Environment holding this deployment's secrets: production or staging"
+        type: string
+        required: true
+      branch:
+        description: "Branch a workflow_run trigger is accepted from"
+        type: string
+        required: true
       image_tag:
-        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of main HEAD)"
+        description: "Existing sha-<12> image tag to redeploy (blank = sha-<12> of the dispatched commit)"
+        type: string
         required: false
         default: ""
 
-env:
-  # Deployment directory on the target server - adjust as needed for your environment
-  APP_DIR: /root/app
+# The job reaches the box over SSH and authenticates to GHCR with its own PAT,
+# both from secrets - the workflow token is used by nothing but actions/checkout.
+# Without this block the job would inherit whatever the repository grants by
+# default, which on a job holding deploy credentials is more than it needs.
+permissions:
+  contents: read
 
 jobs:
   deploy:
     name: Deploy
-    # DEPLOY_ENABLED is a repository variable, not a secret: the `secrets`
-    # context is unavailable in a job-level `if`. It is off by default so a
-    # fresh fork - and this template itself - does not fail a deploy against
-    # unset SSH secrets on every merge to main. Set it to `true` once the
-    # server secrets below are filled in. A manual dispatch always carries
-    # intent, so it skips the workflow_run conclusion/event/branch checks that
-    # exist only to filter the automatic trigger down to "CI passed on main".
+    # The DEPLOY_ENABLED gate lives in the caller: environment variables are not
+    # readable in a job-level `if`, because the environment is only resolved once
+    # the job starts. Here the environment is simply where the server secrets and
+    # APP_DIR come from.
+    environment: ${{ inputs.environment }}
+    # A manual dispatch always carries intent, so it skips the workflow_run
+    # conclusion/event/branch checks that exist only to filter the automatic
+    # trigger down to "CI passed on this environment's branch".
     if: >-
-      ${{ vars.DEPLOY_ENABLED == 'true' &&
-          (github.event_name == 'workflow_dispatch' ||
-           (github.event.workflow_run.conclusion == 'success' &&
-            github.event.workflow_run.event == 'push' &&
-            github.event.workflow_run.head_branch == 'main')) }}
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.head_branch == inputs.branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Never cancelled and never parallel: two merges must not run two migrations
-    # against the same database at once.
+    # Never cancelled and never parallel within one environment: two merges must
+    # not run two migrations against the same database at once. Environments are
+    # separate machines with separate databases, so they queue independently.
     concurrency:
-      group: deploy
+      group: deploy-${{ inputs.environment }}
       cancel-in-progress: false
 
     steps:
@@ -70,7 +77,7 @@ jobs:
       - name: Resolve the commit to deploy
         id: ref
         env:
-          INPUT_TAG: ${{ github.event.inputs.image_tag }}
+          INPUT_TAG: ${{ inputs.image_tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ -z "$INPUT_TAG" ]; then
@@ -108,7 +115,23 @@ jobs:
       # keyscanning inside the job would trust whatever answers, which is the
       # same hole as StrictHostKeyChecking=no.
       - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SERVER_IP: ${{ secrets.SERVER_IP }}
         run: |
+          # An unset value here would otherwise surface as an opaque ssh failure
+          # further down; check emptiness only, never print the value itself.
+          missing=""
+          [ -z "$SSH_PRIVATE_KEY" ] && missing="${missing}SSH_PRIVATE_KEY "
+          [ -z "$SSH_KNOWN_HOSTS" ] && missing="${missing}SSH_KNOWN_HOSTS "
+          [ -z "$SSH_USER" ] && missing="${missing}SSH_USER "
+          [ -z "$SERVER_IP" ] && missing="${missing}SERVER_IP "
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secret(s) for the ${{ inputs.environment }} environment: ${missing}(Settings -> Environments)."
+            exit 1
+          fi
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_deploy_key
           chmod 600 ~/.ssh/id_deploy_key
@@ -121,12 +144,16 @@ jobs:
           IMAGE: ${{ steps.meta.outputs.image }}
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
+          if [ -z "${{ vars.APP_DIR }}" ]; then
+            echo "::error::APP_DIR is not set for the ${{ inputs.environment }} environment (Settings -> Environments -> Variables)."
+            exit 1
+          fi
           # shellcheck disable=SC2087  # the heredoc expands here on purpose: the
           # image tag and the secrets come from this runner, not from the server.
           ssh -i ~/.ssh/id_deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" bash -s <<EOF
           set -euo pipefail
-          cd "${{ env.APP_DIR }}"
+          cd "${{ vars.APP_DIR }}"
           git fetch --quiet origin
           git checkout --quiet ${{ steps.ref.outputs.sha }}
           echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
@@ -151,10 +178,13 @@ jobs:
               | sed "s/'/\&#39;/g"
           }
 
+          # The chat is shared by every environment, so the environment has to be
+          # visible in the first line - not only in the body.
+          ENVIRONMENT_LABEL=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]')
           if [ "${{ steps.deploy.outcome }}" = "success" ]; then
-            STATUS="✅ <b>SUCCESS</b>"
+            STATUS="✅ <b>SUCCESS</b> · ${ENVIRONMENT_LABEL}"
           else
-            STATUS="❌ <b>FAILED</b>"
+            STATUS="❌ <b>FAILED</b> · ${ENVIRONMENT_LABEL}"
           fi
 
           END_TS=$(date +%s)
@@ -166,13 +196,19 @@ jobs:
             DURATION_HUMAN="${DURATION} sec"
           fi
 
-          COMMIT_MSG=$(git log -1 --pretty=format:'%s' 2>/dev/null || echo 'unknown')
-          AUTHOR=$(git log -1 --pretty=format:'%an' 2>/dev/null || echo 'unknown')
+          # Commit message and author are free-form user input and can legally contain
+          # <, > or &; unescaped, either breaks the HTML payload and Telegram rejects
+          # the whole message with 400 - losing exactly the FAILED alert this step
+          # exists for. PROJECT can never contain HTML but is sanitized too, for
+          # consistency with everything else that reaches the message.
+          COMMIT_MSG=$(sanitize_html "$(git log -1 --pretty=format:'%s' 2>/dev/null || echo 'unknown')")
+          AUTHOR=$(sanitize_html "$(git log -1 --pretty=format:'%an' 2>/dev/null || echo 'unknown')")
           PROJECT=$(sanitize_html "${{ github.repository }}")
           PIPELINE_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           MESSAGE="${STATUS}
           🚀 <b>Project</b>: ${PROJECT}
+          🌍 <b>Environment</b>: ${ENVIRONMENT_LABEL}
           🔖 <b>Version</b>: <code>${{ steps.ref.outputs.sha }}</code>
           👤 <b>Author</b>: ${AUTHOR}
           ⏱️ <b>Duration</b>: ${DURATION_HUMAN}
@@ -180,7 +216,9 @@ jobs:
           🔗 <b>Pipeline</b>: <a href=\"${PIPELINE_URL}\">Open</a>
           📝 <b>Commit</b>: ${COMMIT_MSG}"
 
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.ALERT_BOT_TOKEN }}/sendMessage" \
+          # --fail-with-body: a message Telegram rejects (e.g. still-malformed HTML)
+          # now fails this step loudly instead of curl -s swallowing the 400 body.
+          curl -s --fail-with-body -X POST "https://api.telegram.org/bot${{ secrets.ALERT_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.ALERT_CHAT_ID }}" \
             --data-urlencode "parse_mode=HTML" \
             --data-urlencode "text=${MESSAGE}"
