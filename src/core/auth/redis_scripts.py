@@ -1,8 +1,10 @@
 """
-Lua sources loaded at import time, so a syntax error in a script surfaces at
-startup rather than on the first rotation. Rotation has to read the old key,
-stamp the used marker and answer a verdict without another client interleaving
-between those steps, which is why it is a script and not a pipeline.
+Lua sources for the steps that must not interleave. Rotation reads the old
+refresh key, stamps the used marker and settles on a verdict as one operation;
+spread over round-trips, two concurrent refreshes could both come back valid.
+
+Importing this module only reads the files - Redis parses a script on its first
+EVAL, so a syntax error here surfaces on the first rotation, never at startup.
 """
 
 from pathlib import Path

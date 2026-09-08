@@ -123,8 +123,9 @@ async def execute_token_rotation(
 
     Answers 'OK' or raises; there is no other return. GRACE is a double-submit
     inside the reuse window and leaves the session family intact, while REUSED
-    and INVALID wipe every session of the subject first. All three answer the
-    same generic 401, so a caller cannot learn which one it hit.
+    and INVALID wipe every session of the subject first. All three raise 401
+    under one error code, but the message a detected reuse carries differs from
+    the other two and reaches the client - only the code is uniform.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60

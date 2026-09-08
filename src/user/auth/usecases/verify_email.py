@@ -27,12 +27,15 @@ class VerifyEmailUseCase:
     """
     Verify an email address with a single-use token.
 
-    An already verified account consumes the token and answers success as well,
-    so clicking the link twice looks the same as clicking it once. An invalid
-    or superseded token, and an email naming no user, answer success=False
-    instead of raising - the endpoint must not confirm who has an account. The
-    token is consumed after the commit, so a failed transaction leaves the link
-    usable.
+    An invalid, expired or superseded token, and an email naming no user,
+    answer success=False instead of raising - the endpoint must not confirm who
+    has an account. A second click on an already used link lands there too: the
+    challenge is invalidated after the commit, so the link no longer decodes.
+    The already-verified branch covers the other case - a token still live for
+    an account that got verified some other way - and answers success for it.
+
+    Consuming the token after the commit rather than before leaves the link
+    usable when the transaction fails.
     """
 
     def __init__(

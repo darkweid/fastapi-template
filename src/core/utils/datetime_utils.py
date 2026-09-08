@@ -3,8 +3,11 @@ from zoneinfo import ZoneInfo
 
 
 def get_utc_now() -> datetime:
-    """The project's only clock. Every datetime that reaches a column, a cache
-    key or a comparison originates here, so none of them is ever naive."""
+    """The application clock: every expiry, cache stamp and comparison this
+    code computes starts here, offset-aware in UTC, so no naive value ever
+    reaches one. It is not the only clock in the system - TimestampMixin leaves
+    created_at/updated_at to `func.now()`, so those columns carry the database's
+    time and patching this function does not move them."""
     return datetime.now(ZoneInfo("UTC"))
 
 
