@@ -50,12 +50,12 @@ jobs:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
+  # Not gated, like gitleaks: `make lint` runs pre-commit over every file, and
+  # end-of-file-fixer, trailing-whitespace and check-yaml all apply to markdown.
+  # Skipping it here would let a documentation PR merge a violation that then
+  # fails the next code PR, on a commit that did not cause it.
   lint:
     name: Lint
-    needs: changes
-    # Compared against 'true', never 'false': an empty or unexpected value has
-    # to run the job, not skip it.
-    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -109,7 +109,7 @@ jobs:
   migration-heads:
     name: Migration HEADs
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -163,7 +163,7 @@ jobs:
   unit-tests:
     name: Unit tests
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -218,7 +218,7 @@ jobs:
   integration-tests:
     name: Integration tests
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -293,7 +293,7 @@ jobs:
   bandit:
     name: Bandit
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -321,7 +321,7 @@ jobs:
   pip-audit:
     name: pip-audit
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

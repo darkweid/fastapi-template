@@ -38,7 +38,14 @@ runs:
           echo "docs_only=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        changed="$(git diff --name-only "${BASE}...${HEAD}")"
+        # --no-renames: rename detection prints only a rename's destination, so
+        # `git mv src/routers.py docs/routers.md` would look like a lone
+        # documentation path and skip the pipeline over deleted source. Disabling
+        # it lists both sides, and the source side answers the question honestly.
+        # core.quotePath=false: a non-ASCII path is otherwise escaped into
+        # "docs/\321\204.md", which no rule matches, and the skip silently stops
+        # applying to whole languages.
+        changed="$(git -c core.quotePath=false diff --no-renames --name-only "${BASE}...${HEAD}")"
         echo "Changed paths:"
         printf '%s\n' "$changed"
         verdict="$(printf '%s\n' "$changed" \

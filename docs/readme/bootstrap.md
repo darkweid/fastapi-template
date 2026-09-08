@@ -286,12 +286,15 @@ Details, including how to mint `PRECOMMIT_BOT_TOKEN`, are in
 
 ### Documentation-only changes skip the pipeline
 
-A change where every path is documentation runs the `changes` gate and
-`gitleaks` and nothing else, and does not deploy. The `changes` job in `_ci.yml`
+A change where every path is documentation runs the `changes` gate, `lint`
+and `gitleaks`, and nothing else, and does not deploy. `lint` stays because
+`make lint` runs pre-commit over every file and several of its hooks apply to
+markdown: gating it would let a documentation PR merge a violation that then
+fails the next code PR, on a commit that did not cause it. The `changes` job in `_ci.yml`
 calls `.github/actions/docs-only-change`, which asks
 `scripts/docs_only_change.py` whether every changed path is documentation;
 `_deploy.yml` asks the same question about the commit it is about to deploy. On
-a private fork this is the difference between roughly two billed Actions minutes
+a private fork this is the difference between roughly three billed Actions minutes
 and roughly twenty-five.
 
 Documentation means `*.md` at any depth, anything under `docs/`, and `LICENSE`.

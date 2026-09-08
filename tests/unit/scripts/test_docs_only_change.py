@@ -1,4 +1,12 @@
-from scripts.docs_only_change import changes_are_documentation_only, is_documentation
+import io
+
+import pytest
+
+from scripts.docs_only_change import (
+    changes_are_documentation_only,
+    is_documentation,
+    main,
+)
 
 
 def test_a_code_path_alongside_documentation_still_counts_as_code() -> None:
@@ -39,3 +47,43 @@ def test_a_non_markdown_file_under_docs_counts_as_documentation() -> None:
     """.dockerignore keeps docs/ out of the image and nothing imports it, so the
     whole directory sits outside the build - deliberately, not by accident."""
     assert is_documentation("docs/src/user/auth/example.py")
+
+
+def test_the_documentation_directory_boundary_is_the_slash() -> None:
+    """Dropping the slash from the `docs/` prefix still passes every other test
+    here while blessing a sibling directory: `docs-site/app.py` would become
+    documentation and its whole pipeline would stop running."""
+    assert not is_documentation("docs")
+    assert not is_documentation("docs-site/app.py")
+    assert not is_documentation("docsrc/conf.py")
+
+
+def test_the_markdown_suffix_is_case_sensitive() -> None:
+    """A rule loosened to catch `README.MD` would also have to decide about
+    `.markdown` and `.mdx`; the narrow suffix is what keeps the set enumerable,
+    and a path it does not match costs a pipeline run, never a skipped one."""
+    assert not is_documentation("README.MD")
+    assert not is_documentation("guide.markdown")
+
+
+def test_the_stdin_contract_is_the_bare_lowercase_literal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The composite action string-compares this output against `true` inside a
+    shell. A `print(True)` regression would answer `True`, never equal `true`,
+    and every documentation change would quietly go back to a full pipeline."""
+    monkeypatch.setattr("sys.stdin", io.StringIO("  README.md  \n\ndocs/a.md\n"))
+
+    assert main() == 0
+    assert capsys.readouterr().out == "true\n"
+
+
+def test_empty_stdin_answers_false(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The action feeds an empty diff through as a single blank line, and the
+    answer there has to be the one that runs the pipeline."""
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+
+    assert main() == 0
+    assert capsys.readouterr().out == "false\n"

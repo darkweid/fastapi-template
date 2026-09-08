@@ -104,10 +104,16 @@ jobs:
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       # CI builds no image for a commit made up entirely of documentation, so
-      # there is no sha- tag to pull. Deploying anyway would fail on the box,
-      # and even a successful deploy would restart every container for text
-      # .dockerignore keeps out of the image. `sha^` is the previous commit
-      # because main takes squash merges only, so its history is linear.
+      # there is no sha- tag to pull: deploying anyway would fail on the box.
+      #
+      # `sha^` is the previous commit, which is the range CI classified only
+      # because main takes squash merges - one commit per merge. A direct push
+      # carrying several commits breaks that: CI would see the whole push, build
+      # an image, and CD would judge the last commit alone. A push whose last
+      # commit is documentation and whose earlier ones are code would therefore
+      # skip a deploy that was due, silently, until the next code push. Keep the
+      # squash-only rule, or replace this step with an image-existence check.
+      #
       # A manual dispatch is explicit intent and is never gated.
       - name: Classify the commit being deployed
         id: docs
