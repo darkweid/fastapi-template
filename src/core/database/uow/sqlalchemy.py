@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
-from src.core.database.uow.abstract import UnitOfWork
 
 RepositoryInstance = TypeVar("RepositoryInstance", bound=BaseRepository[Any])
 
@@ -14,24 +13,16 @@ logger = get_logger(__name__)
 AfterCommitHook = Callable[[], Awaitable[None]]
 
 
-class SQLAlchemyUnitOfWork(UnitOfWork):
+class SQLAlchemyUnitOfWork:
     """
-    SQLAlchemy implementation of the Unit of Work pattern.
-
-    This implementation uses SQLAlchemy's AsyncSession for transaction management
-    and allows registration of repositories.
+    Transaction boundary over an AsyncSession, shared by every UseCase.
 
     Commit is strictly explicit: leaving the context without calling commit()
     rolls the transaction back, whether the block raised or returned normally.
+    Any later `uow.*` call raises RuntimeError.
     """
 
     def __init__(self, session: AsyncSession):
-        """
-        Initialize the UnitOfWork with an SQLAlchemy session.
-
-        Args:
-            session: The SQLAlchemy AsyncSession to use for database operations
-        """
         self._session = session
         self._transaction: AsyncSessionTransaction | None = None
         self._is_completed = False
@@ -39,16 +30,12 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def __aenter__(self) -> Self:
         """
-        Enter the context manager and start a transaction.
+        Start a transaction and keep a handle on it.
 
-        Keeps a handle on the transaction it opened (a SAVEPOINT when the
-        session is already in one - the normal case for authenticated requests,
-        where the auth dependency's SELECT has autobegun on the shared request
-        session), so rollback can target exactly this UoW's scope instead of
-        the whole session transaction.
-
-        Returns:
-            self: The UnitOfWork instance
+        A SAVEPOINT when the session is already in a transaction - the normal
+        case for authenticated requests, where the auth dependency's SELECT has
+        autobegun on the shared request session - so rollback can target exactly
+        this UoW's scope instead of the whole session transaction.
         """
         if self._session.in_transaction():
             self._transaction = await self._session.begin_nested()
@@ -59,18 +46,12 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """
-        Exit the context manager.
+        Roll back on any exit without a prior commit().
 
-        Any exit without a prior commit() rolls back. Without this, a clean
-        exit's outcome would depend on invisible context: a fresh session's
-        `begin()` block commits on clean exit, while a shared request session
-        (every authenticated route) releases the SAVEPOINT and discards the
-        work later at session close.
-
-        Args:
-            exc_type: Exception type if an exception was raised
-            exc_val: Exception value if an exception was raised
-            exc_tb: Exception traceback if an exception was raised
+        Without this, a clean exit's outcome would depend on invisible context:
+        a fresh session's `begin()` block commits on clean exit, while a shared
+        request session (every authenticated route) releases the SAVEPOINT and
+        discards the work later at session close.
         """
         try:
             if not self._is_completed:
@@ -99,12 +80,6 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
         self._after_commit_hooks.append(hook)
 
     async def commit(self) -> None:
-        """
-        Commit the transaction.
-
-        Raises:
-            RuntimeError: If the unit of work has already been completed
-        """
         self._ensure_not_completed()
         await self._session.commit()
         self._is_completed = True
@@ -112,16 +87,12 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def rollback(self) -> None:
         """
-        Rollback this UoW's transaction scope.
+        Roll back only the transaction this UoW opened.
 
-        Rolls back only the transaction this UoW opened: on the nested path
-        that is the SAVEPOINT, so uncommitted work the caller staged on the
-        shared session before entering the UoW survives. Without the handle
-        (rollback outside the context), the whole session transaction is
-        rolled back.
-
-        Raises:
-            RuntimeError: If the unit of work has already been completed
+        On the nested path that is the SAVEPOINT, so uncommitted work the caller
+        staged on the shared session before entering the UoW survives. Without
+        the handle (rollback outside the context), the whole session transaction
+        is rolled back.
         """
         self._ensure_not_completed()
         if self._transaction is not None:
@@ -132,7 +103,6 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
         self._after_commit_hooks = []
 
     async def flush(self) -> None:
-        """Flush pending changes to the database."""
         self._ensure_not_completed()
         await self._session.flush()
 
@@ -142,7 +112,6 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
         attribute_names: Sequence[str] | None = None,
         with_for_update: Any | None = None,
     ) -> None:
-        """Refresh an ORM instance from the database."""
         self._ensure_not_completed()
         await self._session.refresh(
             instance,
@@ -163,20 +132,9 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     @property
     def completed(self) -> bool:
-        """
-        Check if the unit of work has been completed (committed or rolled back).
-
-        Returns:
-            bool: True if the unit of work has been completed, False otherwise
-        """
+        """True once the unit of work has been committed or rolled back."""
         return self._is_completed
 
     @property
     def session(self) -> AsyncSession:
-        """
-        Get the underlying SQLAlchemy session.
-
-        Returns:
-            AsyncSession: The SQLAlchemy session
-        """
         return self._session

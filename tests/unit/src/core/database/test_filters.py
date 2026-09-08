@@ -14,9 +14,11 @@ class FilterModel(SQLAlchemyBase):
     name: Mapped[str] = mapped_column(String(64))
 
 
-def test_filter_condition_uses_module_level_operator_mapping() -> None:
-    assert "_OPERATORS" not in FilterCondition.__dataclass_fields__
-    assert _FILTER_OPERATORS["eq"] == "__eq__"
+def test_every_filter_field_has_an_operator_and_vice_versa() -> None:
+    # The dataclass fields and the operator table are written apart; a member
+    # added to one and forgotten in the other raises a KeyError only when a
+    # client happens to use that operator.
+    assert set(FilterCondition.__dataclass_fields__) == set(_FILTER_OPERATORS)
 
 
 def test_filter_condition_build_where_clauses_returns_sqlalchemy_clauses() -> None:

@@ -8,8 +8,8 @@ from redis.asyncio import Redis
 from loggers import get_logger
 from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.auth.one_time_tokens import decode_one_time_token
-from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
+from src.core.cache.runtime import get_cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import UnauthorizedException

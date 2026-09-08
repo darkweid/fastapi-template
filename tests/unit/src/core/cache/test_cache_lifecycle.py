@@ -4,11 +4,10 @@ from fastapi import FastAPI, Request, Response
 import pytest
 
 from src.core.cache.decorators import cached_route, validate_declared_ttls
-from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import CacheKey, CacheScope
 from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
 from src.core.cache.redis_cache import RedisCache
-from src.core.cache.runtime import get_cache_instance, reset_cache
+from src.core.cache.runtime import get_cache, get_cache_instance, reset_cache
 from src.main.config import config
 from tests.fakes.redis import InMemoryRedis
 

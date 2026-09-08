@@ -7,8 +7,8 @@ from redis.asyncio import Redis
 from loggers import get_logger
 from src.core.auth.errors import InvalidCredentialsError
 from src.core.auth.session_issuance import LoginThrottle, issue_session_pair
-from src.core.cache.dependencies import get_cache
 from src.core.cache.interface import Cache
+from src.core.cache.runtime import get_cache
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.redis.dependencies import get_redis_client

@@ -14,7 +14,6 @@ mako>=1.4.1
 pydantic
 pydantic-settings
 pyjwt
-python-dotenv
 python-multipart>=0.0.32
 redis
 sentry-sdk

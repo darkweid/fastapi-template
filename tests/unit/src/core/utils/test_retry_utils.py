@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.core.utils.retry import with_retries, with_retries_on_result
+from src.core.utils.retry import with_retries
 
 
 class SyncCounter:
@@ -31,17 +31,6 @@ class AsyncCounter:
         if self.calls <= self.fail_times:
             raise ValueError("fail")
         return self.result
-
-
-class AsyncResultCounter:
-    def __init__(self, results: list[dict[str, object]]) -> None:
-        self.calls = 0
-        self.results = results
-
-    async def run(self) -> dict[str, object]:
-        result = self.results[self.calls]
-        self.calls += 1
-        return result
 
 
 def test_with_retries_sync_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,27 +75,5 @@ async def test_with_retries_async_raises_after_max(
     with pytest.raises(ValueError, match="fail"):
         await wrapped()
 
-    assert counter.calls == 2
-    sleep_mock.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_with_retries_on_result_retries_until_ok(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sleep_mock = AsyncMock()
-    monkeypatch.setattr("src.core.utils.retry.asyncio.sleep", sleep_mock)
-
-    counter = AsyncResultCounter(
-        results=[
-            {"result": {"code": "FAIL"}},
-            {"result": {"code": "OK"}},
-        ]
-    )
-    wrapped = with_retries_on_result(max_retries=2, delay=1)(counter.run)
-
-    result = await wrapped()
-
-    assert result["result"]["code"] == "OK"
     assert counter.calls == 2
     sleep_mock.assert_awaited_once()
