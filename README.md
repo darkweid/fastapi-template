@@ -179,20 +179,13 @@ Redis increment however many entries carry it.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
 
 ## After the Fork
-A few places carry this template's own identity; change them once, right after
-forking:
-
-- Compose project and container names: `name: fastapi-template` and the
-  `template-*` container/image names in `infra/docker-compose.yml` and
-  `infra/docker-compose.override.yml`.
-- `PROJECT_NAME` in `.env` — the Swagger/OpenAPI title.
-- The badge URLs at the top of this README point at the template repository —
-  replace the owner/repo or drop the badges.
-- `LICENSE` — replace the copyright holder, or remove the file for a private
-  project.
-- GHCR needs no setup: the `build-and-push` job authenticates with the default
-  `GITHUB_TOKEN` and pushes `ghcr.io/<owner>/<repo>` automatically on a push to
-  `main`.
+Renaming the compose project, the containers, the image tags and both volume
+names is a one-time job with an exact checklist -
+[docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
+walks the whole path from a fresh clone to the first deploy: renaming, secrets,
+CI/CD wiring and server preparation. Do the rename **before** the first
+`make run` - the volume names are pinned, so renaming later points the stack at
+fresh empty volumes.
 
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
@@ -326,6 +319,7 @@ in-flight automatic deploy.
 - Override the target platform when needed, for example `make req-compile REQ_COMPILE_PLATFORM=linux/arm64`.
 
 ## Documentation
+- Bootstrap a fork (rename, secrets, first deploy): [docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
 - Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)

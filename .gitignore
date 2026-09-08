@@ -140,8 +140,10 @@ cython_debug/
 .idea/
 .DS_Store
 
-# Dev Markdown Documents (repo root only - docs under docs/, tests/, infra/ are tracked)
+# Scratch documents at the repo root - reports, reviews, exported pages. Only
+# README.md is tracked; markdown under docs/, tests/ and infra/ is unaffected.
 /*.md
+/*.html
 !/README.md
 
 # AI Agents Settings
@@ -151,10 +153,7 @@ cython_debug/
 # AI agent working artifacts - never committed, they are local scratch space.
 # Specs, plans and reviews produced during agent-driven work live here and stay
 # outside the repository history; only human-facing docs under docs/readme/ are tracked.
+# Each directory also carries its own `*` .gitignore; these entries are the copy
+# that survives in a fresh clone, where those local directories do not exist yet.
 docs/superpowers/
 .superpowers/
-CLAUDE.md
-AGENTS.md
-review.md
-refactor_todo.md
-/fable_review.html
