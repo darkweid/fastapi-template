@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import fnmatch
 import hashlib
@@ -34,6 +35,17 @@ def _normalize_value(value: Any) -> str:
 
 def _now() -> float:
     return time.monotonic()
+
+
+async def _round_trip() -> None:
+    """Yield the way a real command does, so concurrent callers interleave.
+
+    Without this every method here runs start to finish before the event loop
+    looks at anyone else, and a race test passes against an implementation that
+    reads and writes in two round trips - which is the bug those tests exist to
+    catch. Script bodies must not call this: Redis runs a script as one unit.
+    """
+    await asyncio.sleep(0)
 
 
 class InMemoryRedis:
@@ -78,6 +90,7 @@ class InMemoryRedis:
             self._expires.pop(key, None)
 
     async def get(self, key: str | bytes) -> str | None:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         return self._store.get(key_norm)
@@ -91,6 +104,7 @@ class InMemoryRedis:
         px: int | None = None,
         nx: bool = False,
     ) -> bool:
+        await _round_trip()
         key_norm = _normalize_key(key)
         if nx:
             self._purge_expired(key_norm)
@@ -106,9 +120,11 @@ class InMemoryRedis:
         return True
 
     async def setex(self, key: str | bytes, time_seconds: int, value: Any) -> bool:
+        await _round_trip()
         return await self.set(key, value, ex=time_seconds)
 
     async def delete(self, *keys: str | bytes) -> int:
+        await _round_trip()
         deleted = 0
         for key in keys:
             key_norm = _normalize_key(key)
@@ -121,11 +137,13 @@ class InMemoryRedis:
         return deleted
 
     async def exists(self, key: str | bytes) -> int:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         return int(key_norm in self._store or key_norm in self._zsets)
 
     async def expire(self, key: str | bytes, seconds: int, *, nx: bool = False) -> bool:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         if key_norm not in self._store and key_norm not in self._zsets:
@@ -136,6 +154,7 @@ class InMemoryRedis:
         return True
 
     async def incr(self, key: str | bytes) -> int:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         # Writes the store directly: set() would drop the TTL, but Redis INCR
@@ -212,6 +231,7 @@ class InMemoryRedis:
         return self._zsets.get(key_norm, {}).get(_normalize_value(member))
 
     async def ttl(self, key: str | bytes) -> int:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         if key_norm not in self._store and key_norm not in self._zsets:
