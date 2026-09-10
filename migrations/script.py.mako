@@ -10,11 +10,11 @@ from collections.abc import Sequence
 
 from alembic import op
 import sqlalchemy as sa
-${imports if imports else ""}
+${imports + "\n" if imports else ""}\
 
 # revision identifiers, used by Alembic.
-revision: str = ${repr(up_revision)}
-down_revision: str | None = ${repr(down_revision)}
+revision: str = "${up_revision}"
+down_revision: str | None = ${'"%s"' % down_revision if down_revision else "None"}
 branch_labels: str | Sequence[str] | None = ${repr(branch_labels)}
 depends_on: str | Sequence[str] | None = ${repr(depends_on)}
 
