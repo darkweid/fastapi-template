@@ -69,11 +69,11 @@ async def _deliver_tokenized_email(
             template_body=template_body.model_copy(update={"link": link}),
         )
     except Exception:
-        # Retire the challenge before releasing the throttle, never after: the
-        # throttle is what keeps a resend or a retry from issuing a new
-        # challenge in between, and invalidate() deletes whatever is live by
-        # then - which would be that new one, leaving the user holding a link
-        # that no longer decodes.
+        # Retire the challenge before releasing the throttle, never after:
+        # while the throttle is held no resend can have stored a newer
+        # challenge, and invalidate() deletes whatever is live by then - after
+        # the release that could be the new one, leaving the user holding a
+        # link that no longer decodes.
         with suppress(Exception):
             await ActiveChallengeRegistry(USER_AUTH_REALM).invalidate(
                 purpose, email, redis_client
