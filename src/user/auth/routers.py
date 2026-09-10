@@ -187,6 +187,17 @@ async def get_access_by_refresh(
 @router.post(
     "/logout",
     response_model=SuccessResponse,
+    # No CSRF gate here, deliberately. verify_csrf resolves a refresh token first
+    # and answers 401 when the request carries none - and none ever reaches this
+    # route: the refresh cookie is path-scoped to the refresh endpoint, so a
+    # browser client arrives with its access token in the Authorization header,
+    # the one transport the double submit skips by design. The gate would verify
+    # nothing here and would reject the case logout exists for: a client that no
+    # longer holds an access token asking for the httponly cookies it cannot
+    # clear itself. What remains is a cross-site forced logout, which expires two
+    # cookies and nothing else - ending a session server-side needs a signed
+    # access token an attacker cannot forge.
+    #
     # Logout works with expired credentials, so it is an unauthenticated write
     # to Redis; the limiter bounds a flood without hindering a real client.
     dependencies=[Depends(RateLimiter(times=20, minutes=1))],
