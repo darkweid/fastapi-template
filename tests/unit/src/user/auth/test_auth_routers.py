@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 from fastapi.routing import APIRoute
@@ -11,7 +12,11 @@ from src.core.database.session import get_unit_of_work
 from src.core.limiter.depends import RateLimiter
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
-from src.user.auth.dependencies import get_access_by_refresh_token, get_logout_identity
+from src.user.auth.dependencies import (
+    get_access_by_refresh_token,
+    get_logout_identity,
+    verify_csrf,
+)
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.routers import router
 from src.user.auth.usecases.login import get_login_user_use_case
@@ -69,6 +74,21 @@ def _get_route_rate_limiters(route: APIRoute) -> list[RateLimiter]:
         for dependency in route.dependant.dependencies
         if isinstance(dependency.call, RateLimiter)
     ]
+
+
+def _get_route_dependency_calls(route: APIRoute) -> list[Any]:
+    """Every callable the route resolves, route-level and nested alike.
+
+    A gate declared on a sub-dependency counts as declared on the route, so the
+    whole tree is walked rather than only its first level.
+    """
+    calls: list[Any] = []
+    pending = list(route.dependant.dependencies)
+    while pending:
+        dependency = pending.pop()
+        calls.append(dependency.call)
+        pending.extend(dependency.dependencies)
+    return calls
 
 
 @pytest.fixture(autouse=True)
@@ -379,6 +399,28 @@ def test_verify_email_route_has_rate_limit() -> None:
     assert len(rate_limiters) == 1
     assert rate_limiters[0].times == 30
     assert rate_limiters[0].milliseconds == 15 * 60_000
+
+
+def test_logout_route_has_no_csrf_gate() -> None:
+    """verify_csrf resolves a refresh token first, and none reaches this route.
+
+    The refresh cookie is path-scoped to the refresh endpoint, so a browser
+    arrives at logout with its access token in the Authorization header - the
+    one transport the double submit skips. The gate would check nothing here
+    and would 401 the credential-less logout, which exists so a client can shed
+    the httponly cookies it cannot clear itself.
+    """
+    logout_dependencies = _get_route_dependency_calls(
+        _get_auth_route(path="/logout", method="POST")
+    )
+    # The refresh route is the control: a walker that found nothing would pass
+    # the logout assertion for the wrong reason.
+    refresh_dependencies = _get_route_dependency_calls(
+        _get_auth_route(path="/login/refresh", method="POST")
+    )
+
+    assert verify_csrf not in logout_dependencies
+    assert verify_csrf in refresh_dependencies
 
 
 def test_logout_route_has_rate_limit() -> None:

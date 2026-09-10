@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,6 +17,7 @@ SECOND_REALM = AuthRealm(
     session_secret=lambda: "second-realm-secret-not-real-32-char",
     refresh_cookie_path="/v1/second/auth/login/refresh",
 )
+CHALLENGE_KEY = FIRST_REALM.keys.one_time("verification", "person@example.com")
 
 
 async def test_the_stored_value_is_consumed(fake_redis: object) -> None:
@@ -24,6 +26,31 @@ async def test_the_stored_value_is_consumed(fake_redis: object) -> None:
     await registry.store("verification", "person@example.com", "jti-1", 60, fake_redis)
 
     await registry.consume("verification", "person@example.com", "jti-1", fake_redis)
+
+    assert await fake_redis.exists(CHALLENGE_KEY) == 0
+
+
+async def test_consume_touches_redis_exactly_once(fake_redis: object) -> None:
+    """Two round trips are two chances to interleave, whatever the second one is.
+
+    The fake cannot suspend inside a call, so a rewrite of consume() into an
+    awaited GET plus an awaited DEL would still produce one winner there and the
+    race test above would stay green. This one trips on the shape instead.
+    """
+    registry = ActiveChallengeRegistry(FIRST_REALM)
+    await registry.store("verification", "person@example.com", "jti-1", 60, fake_redis)
+    eval_spy = AsyncMock(wraps=fake_redis.eval)
+    get_spy = AsyncMock(wraps=fake_redis.get)
+    delete_spy = AsyncMock(wraps=fake_redis.delete)
+    fake_redis.eval = eval_spy
+    fake_redis.get = get_spy
+    fake_redis.delete = delete_spy
+
+    await registry.consume("verification", "person@example.com", "jti-1", fake_redis)
+
+    assert eval_spy.await_count == 1
+    get_spy.assert_not_awaited()
+    delete_spy.assert_not_awaited()
 
 
 async def test_a_consumed_challenge_cannot_be_consumed_again(

@@ -274,7 +274,7 @@ class InMemoryRedis:
 
         normalized = script.strip()
         if normalized == ROTATE_REFRESH_TOKEN_SCRIPT.strip():
-            return await self._eval_rotate_refresh_token(numkeys, *keys_and_args)
+            return self._eval_rotate_refresh_token(numkeys, *keys_and_args)
         if normalized == CONSUME_CHALLENGE_SCRIPT.strip():
             return self._eval_consume_challenge(numkeys, *keys_and_args)
 
@@ -339,13 +339,15 @@ class InMemoryRedis:
             versions.append(version)
         return versions
 
+    # Both script bodies below are synchronous on purpose, and new ones must be
+    # too: an await between the read that decides and the write that acts would
+    # let two callers interleave where real Redis - which runs a script as one
+    # unit - cannot, and a race test would then pass against an implementation
+    # that does not hold. They reach the store directly for the same reason.
     def _eval_consume_challenge(self, numkeys: int, *keys_and_args: Any) -> str:
         if numkeys != 1:
             raise ValueError("CONSUME_CHALLENGE_SCRIPT expects 1 key.")
 
-        # Synchronous on purpose: an await between the read and the delete would
-        # let two callers interleave where real Redis cannot, and a race test
-        # would then pass against an implementation that does not hold.
         challenge_key = _normalize_key(keys_and_args[0])
         presented_value = _normalize_value(keys_and_args[1])
 
@@ -357,7 +359,7 @@ class InMemoryRedis:
         self._expires.pop(challenge_key, None)
         return "OK"
 
-    async def _eval_rotate_refresh_token(
+    def _eval_rotate_refresh_token(
         self,
         numkeys: int,
         *keys_and_args: Any,
@@ -373,7 +375,8 @@ class InMemoryRedis:
 
         now = int(self.wall_clock())
 
-        used_at = await self.get(used_key)
+        self._purge_expired(used_key)
+        used_at = self._store.get(used_key)
         if used_at is not None:
             try:
                 used_at_number: int | None = int(used_at)
@@ -387,12 +390,14 @@ class InMemoryRedis:
                 return "GRACE"
             return "REUSED"
 
-        stored_jti = await self.get(refresh_key)
-        if stored_jti != expected_jti:
+        self._purge_expired(refresh_key)
+        if self._store.get(refresh_key) != expected_jti:
             return "INVALID"
 
-        await self.setex(used_key, used_ttl_seconds, str(now))
-        await self.delete(refresh_key)
+        self._store[used_key] = str(now)
+        self._expires[used_key] = _now() + used_ttl_seconds
+        self._store.pop(refresh_key, None)
+        self._expires.pop(refresh_key, None)
         return "OK"
 
     async def time(self) -> tuple[int, int]:
