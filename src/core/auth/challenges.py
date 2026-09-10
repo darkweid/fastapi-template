@@ -17,8 +17,11 @@ class ActiveChallengeRegistry:
     link, the hash of a code for an OTP - so issuing a new challenge always
     retires the previous one. `consume` takes the challenge away in the same
     operation that checks it, so of any number of callers presenting one value
-    exactly one gets through. The identifier is hashed into the key, so an
-    email or a phone number never reaches SCAN, MONITOR or an RDB dump.
+    exactly one gets through. A realm whose value is guessable must pair this
+    with a failure counter of its own: a wrong value deliberately consumes
+    nothing, so a short numeric code survives unlimited guesses at this layer.
+    The identifier is hashed into the key, so an email or a phone number never
+    reaches SCAN, MONITOR or an RDB dump.
     """
 
     def __init__(self, realm: AuthRealm) -> None:
