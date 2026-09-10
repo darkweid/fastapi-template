@@ -6,7 +6,6 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.auth.one_time_tokens import decode_one_time_token
 from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.cache.interface import Cache
@@ -32,10 +31,11 @@ class ResetPasswordConfirmUseCase:
     raising, so a wrong token cannot be told apart from a wrong email.
 
     Side effects:
-    - Deletes the active reset-token key and every session key of the user
-      before the commit rather than after: with Redis unavailable the change
-      then fails as a whole, instead of leaving a new password alongside
-      sessions that still hold the old one.
+    - Deletes every session key of the user before the commit rather than
+      after: with Redis unavailable the change then fails as a whole, instead
+      of leaving a new password alongside sessions that still hold the old one.
+      The reset token itself is already spent by then - decoding consumes it,
+      so two concurrent submissions of one link cannot both set a password.
     - Clears the per-email login-failure counter. The reset proves mailbox
       ownership, so a throttled address must not stay locked out of login.
     - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
@@ -50,7 +50,6 @@ class ResetPasswordConfirmUseCase:
         self.uow = uow
         self.redis_client = redis_client
         self.cache = cache
-        self.challenges = ActiveChallengeRegistry(USER_AUTH_REALM)
 
     async def execute(
         self,
@@ -80,9 +79,6 @@ class ResetPasswordConfirmUseCase:
                     return SuccessResponse(success=False)
 
                 await uow.flush()
-                await self.challenges.invalidate(
-                    RESET_PASSWORD_PURPOSE, normalized_email, self.redis_client
-                )
                 await invalidate_all_sessions(
                     str(user.id), self.redis_client, keys=USER_AUTH_REALM.keys
                 )

@@ -684,11 +684,16 @@ async def test_verify_email_usecase_cannot_reuse_successful_token(
 
 
 @pytest.mark.asyncio
-async def test_verify_email_usecase_commit_failure_keeps_token_active(
+async def test_verify_email_usecase_commit_failure_still_consumes_the_token(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     cache: InMemoryCache,
 ) -> None:
+    """The link is spent before the transaction runs, and a failure keeps it spent.
+
+    Handing it back on failure is what would let two concurrent clicks through:
+    the price of the single-use guarantee is a new link after a failed commit.
+    """
     user = build_user(is_verified=False)
     users_repo = FakeUsersRepository(user=user, updated_user=user)
     uow = build_uow(fake_session, users_repo)
@@ -703,7 +708,7 @@ async def test_verify_email_usecase_commit_failure_keeps_token_active(
         await fake_redis.exists(
             USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, user.email)
         )
-        == 1
+        == 0
     )
     uow.flush.assert_not_awaited()
     uow.rollback.assert_awaited_once()

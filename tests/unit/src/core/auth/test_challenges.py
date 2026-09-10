@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.core.auth.challenges import ActiveChallengeRegistry
@@ -16,12 +18,46 @@ SECOND_REALM = AuthRealm(
 )
 
 
-async def test_the_stored_value_validates(fake_redis: object) -> None:
+async def test_the_stored_value_is_consumed(fake_redis: object) -> None:
     registry = ActiveChallengeRegistry(FIRST_REALM)
 
     await registry.store("verification", "person@example.com", "jti-1", 60, fake_redis)
 
-    await registry.validate("verification", "person@example.com", "jti-1", fake_redis)
+    await registry.consume("verification", "person@example.com", "jti-1", fake_redis)
+
+
+async def test_a_consumed_challenge_cannot_be_consumed_again(
+    fake_redis: object,
+) -> None:
+    """Single use is the whole point: a spent link must stop working."""
+    registry = ActiveChallengeRegistry(FIRST_REALM)
+    await registry.store("verification", "person@example.com", "jti-1", 60, fake_redis)
+    await registry.consume("verification", "person@example.com", "jti-1", fake_redis)
+
+    with pytest.raises(UnauthorizedException):
+        await registry.consume(
+            "verification", "person@example.com", "jti-1", fake_redis
+        )
+
+
+async def test_only_one_of_two_concurrent_consumers_wins(fake_redis: object) -> None:
+    """Two requests holding one code must not both be admitted.
+
+    A check-then-delete registry passes the check in both before either deletes,
+    which is how one OTP or one reset link logs in twice.
+    """
+    registry = ActiveChallengeRegistry(FIRST_REALM)
+    await registry.store("verification", "person@example.com", "jti-1", 60, fake_redis)
+
+    outcomes = await asyncio.gather(
+        registry.consume("verification", "person@example.com", "jti-1", fake_redis),
+        registry.consume("verification", "person@example.com", "jti-1", fake_redis),
+        return_exceptions=True,
+    )
+
+    failures = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+    assert len(failures) == 1
+    assert isinstance(failures[0], UnauthorizedException)
 
 
 async def test_a_superseded_value_is_rejected(fake_redis: object) -> None:
@@ -31,9 +67,28 @@ async def test_a_superseded_value_is_rejected(fake_redis: object) -> None:
     await registry.store("verification", "person@example.com", "jti-2", 60, fake_redis)
 
     with pytest.raises(UnauthorizedException):
-        await registry.validate(
+        await registry.consume(
             "verification", "person@example.com", "jti-1", fake_redis
         )
+
+
+async def test_a_rejected_value_leaves_the_live_challenge_alone(
+    fake_redis: object,
+) -> None:
+    """Consumption is a compare-and-delete, never a plain GETDEL.
+
+    Deleting on a mismatch would let an old link retire the one its owner is
+    waiting on - a hand-me-down denial of service on every issued challenge.
+    """
+    registry = ActiveChallengeRegistry(FIRST_REALM)
+    await registry.store("verification", "person@example.com", "jti-2", 60, fake_redis)
+
+    with pytest.raises(UnauthorizedException):
+        await registry.consume(
+            "verification", "person@example.com", "jti-1", fake_redis
+        )
+
+    await registry.consume("verification", "person@example.com", "jti-2", fake_redis)
 
 
 async def test_a_missing_value_is_rejected(fake_redis: object) -> None:
@@ -41,7 +96,7 @@ async def test_a_missing_value_is_rejected(fake_redis: object) -> None:
     await registry.store("verification", "person@example.com", "jti-1", 60, fake_redis)
 
     with pytest.raises(UnauthorizedException):
-        await registry.validate("verification", "person@example.com", None, fake_redis)
+        await registry.consume("verification", "person@example.com", None, fake_redis)
 
 
 async def test_invalidation_clears_the_challenge(fake_redis: object) -> None:
@@ -51,7 +106,7 @@ async def test_invalidation_clears_the_challenge(fake_redis: object) -> None:
     await registry.invalidate("verification", "person@example.com", fake_redis)
 
     with pytest.raises(UnauthorizedException):
-        await registry.validate(
+        await registry.consume(
             "verification", "person@example.com", "jti-1", fake_redis
         )
 
@@ -66,7 +121,7 @@ async def test_one_realm_cannot_clear_another_realm_challenge(
 
     await second.invalidate("verification", "person@example.com", fake_redis)
 
-    await first.validate("verification", "person@example.com", "jti-1", fake_redis)
+    await first.consume("verification", "person@example.com", "jti-1", fake_redis)
 
 
 async def test_the_identifier_never_appears_in_the_key(fake_redis: object) -> None:

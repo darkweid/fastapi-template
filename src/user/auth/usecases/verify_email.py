@@ -6,7 +6,6 @@ import jwt
 from redis.asyncio import Redis
 
 from loggers import get_logger
-from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.auth.one_time_tokens import decode_one_time_token
 from src.core.cache.interface import Cache
 from src.core.cache.runtime import get_cache
@@ -29,13 +28,14 @@ class VerifyEmailUseCase:
 
     An invalid, expired or superseded token, and an email naming no user,
     answer success=False instead of raising - the endpoint must not confirm who
-    has an account. A second click on an already used link lands there too: the
-    challenge is invalidated after the commit, so the link no longer decodes.
-    The already-verified branch covers the other case - a token still live for
-    an account that got verified some other way - and answers success for it.
+    has an account. A second click on an already used link lands there too:
+    decoding consumes the challenge, so the link no longer decodes. The
+    already-verified branch covers the other case - a token still live for an
+    account that got verified some other way - and answers success for it.
 
-    Consuming the token after the commit rather than before leaves the link
-    usable when the transaction fails.
+    The token is spent before the transaction runs, which is what stops two
+    concurrent clicks from both proceeding; a failed commit therefore burns the
+    link and the user asks for a new one.
     """
 
     def __init__(
@@ -47,7 +47,6 @@ class VerifyEmailUseCase:
         self.uow = uow
         self.redis_client = redis_client
         self.cache = cache
-        self.challenges = ActiveChallengeRegistry(USER_AUTH_REALM)
 
     async def execute(self, token: str) -> SuccessResponse:
         async with self.uow as uow:
@@ -68,9 +67,6 @@ class VerifyEmailUseCase:
                     )
                     return SuccessResponse(success=False)
                 if not verification_pending(user):
-                    await self.challenges.invalidate(
-                        VERIFICATION_PURPOSE, normalized_email, self.redis_client
-                    )
                     logger.debug(
                         "[VerifyEmail] User with email '%s' already verified.",
                         mask_email(normalized_email),
@@ -87,9 +83,6 @@ class VerifyEmailUseCase:
                     partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
                 )
                 await uow.commit()
-                await self.challenges.invalidate(
-                    VERIFICATION_PURPOSE, normalized_email, self.redis_client
-                )
 
                 logger.info(
                     "[VerifyEmail] User with email '%s' verified successfully.",

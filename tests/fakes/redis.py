@@ -8,7 +8,10 @@ from typing import Any
 
 import redis.exceptions as redis_exc
 
-from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
+from src.core.auth.redis_scripts import (
+    CONSUME_CHALLENGE_SCRIPT,
+    ROTATE_REFRESH_TOKEN_SCRIPT,
+)
 from src.core.cache.redis_scripts import (
     CACHE_DELETE_SCRIPT,
     CACHE_GET_SCRIPT,
@@ -267,6 +270,8 @@ class InMemoryRedis:
         normalized = script.strip()
         if normalized == ROTATE_REFRESH_TOKEN_SCRIPT.strip():
             return await self._eval_rotate_refresh_token(numkeys, *keys_and_args)
+        if normalized == CONSUME_CHALLENGE_SCRIPT.strip():
+            return self._eval_consume_challenge(numkeys, *keys_and_args)
 
         # The cache scripts take a variable number of key arguments - one version
         # counter for the namespace plus one per tag - so the split follows numkeys
@@ -328,6 +333,24 @@ class InMemoryRedis:
             await self.expire(counter, int(args[0]))
             versions.append(version)
         return versions
+
+    def _eval_consume_challenge(self, numkeys: int, *keys_and_args: Any) -> str:
+        # Synchronous on purpose: an await between the read and the delete would
+        # let two callers interleave where real Redis cannot, and a race test
+        # would then pass against an implementation that does not hold.
+        if numkeys != 1:
+            raise ValueError("CONSUME_CHALLENGE_SCRIPT expects 1 key.")
+
+        challenge_key = _normalize_key(keys_and_args[0])
+        presented_value = _normalize_value(keys_and_args[1])
+
+        self._purge_expired(challenge_key)
+        if self._store.get(challenge_key) != presented_value:
+            return "INVALID"
+
+        self._store.pop(challenge_key, None)
+        self._expires.pop(challenge_key, None)
+        return "OK"
 
     async def _eval_rotate_refresh_token(
         self,
