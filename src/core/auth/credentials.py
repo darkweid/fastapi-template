@@ -95,7 +95,12 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
         raise UnauthorizedException("Invalid token structure")
 
     if mode == "refresh_token":
-        used_marker = await redis_client.get(realm.keys.used(subject_id, jti))
+        # redis-py types every reply as bytes-or-str because its stubs cannot
+        # see decode_responses; create_redis_client fixes it on, so what
+        # arrives here is a string.
+        used_marker = cast(
+            str | None, await redis_client.get(realm.keys.used(subject_id, jti))
+        )
 
         if used_marker is not None:
             # Inside the grace window this is a benign double-submit, not
@@ -110,13 +115,7 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
     active_key = realm.keys.session_key(mode, subject_id, session_id)
     stored_jti = await redis_client.get(active_key)
 
-    stored_jti_str = (
-        stored_jti.decode()
-        if isinstance(stored_jti, (bytes, bytearray))
-        else stored_jti
-    )
-
-    if not stored_jti or stored_jti_str != jti:
+    if not stored_jti or stored_jti != jti:
         raise UnauthorizedException(
             "Token invalidated or expired",
         )
