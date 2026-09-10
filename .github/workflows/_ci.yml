@@ -167,6 +167,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # The only job that writes anything back to the pull request. The Coveralls
+    # action does not post the comment itself - it hands this token to
+    # coveralls.io as COVERALLS_REPO_TOKEN and the service posts as itself, so a
+    # read-only token uploads the report and silently leaves no comment. Granted
+    # here rather than at the workflow level so the jobs running third-party
+    # scanners keep a read-only token.
+    permissions:
+      contents: read
+      pull-requests: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -207,6 +217,8 @@ jobs:
           export PATH="$PWD/.venv/bin:$PATH"
           make test-cov
 
+      # A pull request from a fork gets a read-only token whatever this asks
+      # for, so the report lands on coveralls.io and the comment does not.
       - name: Upload coverage to Coveralls
         continue-on-error: true
         uses: coverallsapp/github-action@v2.3.8

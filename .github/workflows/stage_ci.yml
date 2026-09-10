@@ -28,7 +28,11 @@ jobs:
     # request, so it gets only the one secret _ci.yml actually declares.
     secrets:
       GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+    # The ceiling for _ci.yml: a called workflow can never hold more than the
+    # job that calls it, and this block - not the workflow-level one above -
+    # is what that job holds. Coveralls comments on the pull request with the
+    # token CI hands it, and only _ci.yml's unit-tests job takes the write.
     permissions:
       contents: read
       packages: write
-      pull-requests: read
+      pull-requests: write
