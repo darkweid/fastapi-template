@@ -101,20 +101,30 @@ A realm that authenticates by one-time code (SMS, email) instead of a
 password reuses the same core, plus `ActiveChallengeRegistry`
 (`src/core/auth/challenges.py`):
 
-- **Never store the code itself.** `ActiveChallengeRegistry.validate`
+- **Never store the code itself.** `ActiveChallengeRegistry.consume`
   (`src/core/auth/challenges.py`) checks the presented value against the
   stored one with a plain equality comparison, so the stored value must be
   deterministic - Argon2 (`src/core/utils/security.py`'s password hasher) is
   salted and produces a different hash every call, which would make every
-  validation fail. Use a keyed digest instead: `hmac.new(realm.one_time_secret(purpose).encode(), code.encode(), hashlib.sha256).hexdigest()`,
+  check fail. Use a keyed digest instead: `hmac.new(realm.one_time_secret(purpose).encode(), code.encode(), hashlib.sha256).hexdigest()`,
   computed the same way to store and to compare. Keying the digest with the
   realm's own one-time secret means a Redis dump still doesn't hand a reader
   a table to brute-force the code against.
-- **Count attempts separately from the challenge.** The challenge key holds
-  the live code's digest; a second, realm-keyed counter tracks failed
-  attempts against it, independent of the challenge's own TTL. Exhausting the
-  counter should retire the challenge (`ActiveChallengeRegistry.invalidate`)
-  rather than leaving it guessable until it expires on its own.
+- **A correct code is spent by the check itself.** `consume` compares and
+  deletes in one Redis operation, so exactly one of any number of concurrent
+  presentations of one code gets through, and a successful check needs no
+  follow-up `invalidate` - calling one retires whatever challenge is live by
+  then, which may already be a newer one. The other side of that contract: a
+  caller whose own work fails after a successful `consume` must issue a new
+  code rather than expect the old one to work again.
+- **Count attempts separately from the challenge.** A wrong value deliberately
+  consumes nothing - the code stays live for its owner - so this class alone
+  gives a short numeric code no brute-force resistance, and the counter is
+  mandatory rather than optional for one. The challenge key holds the live
+  code's digest; a second, realm-keyed counter tracks failed attempts against
+  it, independent of the challenge's own TTL. Exhausting the counter should
+  retire the challenge (`ActiveChallengeRegistry.invalidate`) rather than
+  leaving it guessable until it expires on its own.
 - **TTLs are minutes, not seconds** - an OTP a user has to fetch from a text
   message or an inbox needs more slack than an in-process token exchange.
 - **Sending is a side effect, so it lives in a UseCase**, calling the SMS or

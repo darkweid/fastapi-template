@@ -69,13 +69,18 @@ async def _deliver_tokenized_email(
             template_body=template_body.model_copy(update={"link": link}),
         )
     except Exception:
-        if throttle_key:
-            with suppress(Exception):
-                await redis_client.delete(throttle_key)
+        # Retire the challenge before releasing the throttle, never after: the
+        # throttle is what keeps a resend or a retry from issuing a new
+        # challenge in between, and invalidate() deletes whatever is live by
+        # then - which would be that new one, leaving the user holding a link
+        # that no longer decodes.
         with suppress(Exception):
             await ActiveChallengeRegistry(USER_AUTH_REALM).invalidate(
                 purpose, email, redis_client
             )
+        if throttle_key:
+            with suppress(Exception):
+                await redis_client.delete(throttle_key)
         logger.exception(
             "Failed to process %s email task for %s", purpose, mask_email(email)
         )

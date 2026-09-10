@@ -53,11 +53,18 @@ async def decode_one_time_token(
     expected_mode: str | None = None,
 ) -> str:
     """
-    Decode a single-use token and confirm it is still the live challenge.
+    Decode a single-use token and consume the challenge behind it.
+
+    A successful return spends the token: the challenge is gone before the
+    caller does any work, so a caller whose own work then fails must let the
+    holder ask for a new token rather than expect this one to decode again.
+    That is what the single-use guarantee costs - checking the challenge
+    without taking it lets two concurrent requests through on one token.
 
     Callers keep their own jwt.ExpiredSignatureError / jwt.InvalidTokenError
     ladders: this raises only for what can be decided after a successful
-    decode - a missing identifier, a mode mismatch, or a superseded challenge.
+    decode - a missing identifier, a mode mismatch, or a challenge that is
+    superseded, spent, or claimed by a concurrent caller first.
     """
     payload = jwt.decode(
         token,
@@ -72,7 +79,7 @@ async def decode_one_time_token(
     if not identifier:
         raise UnauthorizedException(INVALID_CHALLENGE_MESSAGE)
 
-    await ActiveChallengeRegistry(realm).validate(
+    await ActiveChallengeRegistry(realm).consume(
         purpose, identifier, payload.get("jti"), redis_client
     )
     return str(identifier)

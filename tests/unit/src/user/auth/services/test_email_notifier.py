@@ -99,6 +99,32 @@ async def test_email_notifier_rejects_throttled_requests(
 
 
 @pytest.mark.asyncio
+async def test_email_notifier_claims_the_throttle_slot_without_reading_it(
+    fake_redis: InMemoryRedis,
+    fake_uow: FakeUnitOfWork,
+) -> None:
+    """Reading the key and then writing it lets two resends both find it absent.
+
+    The claim has to be one SET NX, so a separate read of the throttle key is
+    the shape of the bug rather than a detail of it.
+    """
+    notifier = build_notifier(
+        AsyncMock(), fake_redis, send_verification_email_task, "throttled", "log"
+    )
+    user = build_user(email="user@example.com")
+    throttle_key = build_throttle_key("resend_verification", user.email)
+    get_spy = AsyncMock(wraps=fake_redis.get)
+    fake_redis.get = get_spy  # type: ignore[method-assign]
+
+    await notifier.send(uow=fake_uow, user=user, throttle_key=throttle_key)
+
+    get_spy.assert_not_awaited()
+    assert await fake_redis.exists(throttle_key) == 1
+    with pytest.raises(InstanceProcessingException):
+        await notifier.send(uow=fake_uow, user=user, throttle_key=throttle_key)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("task", "throttle_message", "log_label", "throttle_namespace"), NOTIFIER_CONFIGS
 )
