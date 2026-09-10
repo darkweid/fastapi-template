@@ -386,6 +386,25 @@ async def test_execute_token_rotation_invalid(
 
 
 @pytest.mark.asyncio
+async def test_execute_token_rotation_treats_an_unknown_verdict_as_reuse(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only 'OK' may return. A verdict this code does not recognise means the
+    script, the client or something between them is not what the caller thinks
+    it is, and rotation is where reading it as success hands out a session."""
+    monkeypatch.setattr(fake_redis, "eval", AsyncMock(return_value="SOMETHING-ELSE"))
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+
+    with pytest.raises(UnauthorizedException):
+        await token_helpers.execute_token_rotation(
+            "u1", "s1", "j1", fake_redis, keys=AUTH_KEYS
+        )
+
+    invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
+
+
+@pytest.mark.asyncio
 async def test_execute_token_rotation_ok(fake_redis: InMemoryRedis) -> None:
     """
     Given: active refresh key exists and no used-token marker is present.

@@ -8,11 +8,14 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+from loggers import get_logger
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.redis_keys import AuthRedisKeyBuilder
 from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
+
+logger = get_logger(__name__)
 
 
 async def invalidate_all_sessions(
@@ -86,9 +89,7 @@ async def validate_token_structure(
     return subject_id, session_id, jti
 
 
-async def is_within_reuse_grace(
-    used_marker: str | bytes | None, redis_client: Redis
-) -> bool:
+async def is_within_reuse_grace(used_marker: str | None, redis_client: Redis) -> bool:
     """A used marker younger than the grace window marks a benign double-submit.
 
     Takes the already-fetched marker value so the caller's existence check and
@@ -122,10 +123,10 @@ async def execute_token_rotation(
     Run the rotation script and translate its verdict.
 
     Answers 'OK' or raises; there is no other return. GRACE is a double-submit
-    inside the reuse window and leaves the session family intact, while REUSED
-    and INVALID wipe every session of the subject first. All three raise 401
+    inside the reuse window and leaves the session family intact; every other
+    verdict wipes each of the subject's sessions first. All of them raise 401
     under one error code, but the message a detected reuse carries differs from
-    the other two and reaches the client - only the code is uniform.
+    the rest and reaches the client - only the code is uniform.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
@@ -150,16 +151,28 @@ async def execute_token_rotation(
         ),
     )
 
+    if result == "OK":
+        return result
+
     if result == "GRACE":
         # A double-submit inside the grace window: reject the request but do
         # not treat it as theft - the family wipe would log out a subject whose
         # client merely retried a refresh over a flaky connection.
         raise UnauthorizedException("Token invalidated or expired")
-    if result == "REUSED":
-        await invalidate_all_sessions(subject_id, redis_client, keys=keys)
-        raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
-    if result == "INVALID":
-        await invalidate_all_sessions(subject_id, redis_client, keys=keys)
-        raise UnauthorizedException("Token invalidated or expired")
 
-    return result
+    # Everything that is not one of the script's four verdicts lands here, and
+    # lands on the side of wiping. A verdict this code does not recognise means
+    # the script, the client or whatever sits between them is not what this
+    # function thinks it is, and rotation is the one place where guessing
+    # "probably fine" hands out a session against a token nothing verified.
+    if result != "REUSED" and result != "INVALID":
+        logger.error(
+            "[RotateRefreshToken] Unrecognised rotation verdict %r; "
+            "treating it as a reuse and wiping every session of the subject",
+            result,
+        )
+
+    await invalidate_all_sessions(subject_id, redis_client, keys=keys)
+    if result == "REUSED":
+        raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
+    raise UnauthorizedException("Token invalidated or expired")
