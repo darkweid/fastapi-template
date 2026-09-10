@@ -7,7 +7,8 @@ from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import build_throttle_key, mask_email
+from src.core.utils.security import mask_email
+from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import ResendVerificationModel
 from src.user.auth.services.email_notifier import (
     EmailNotifier,
@@ -53,7 +54,9 @@ class SendVerificationUseCase:
                 )
                 return SuccessResponse(success=True)
 
-            throttle_key = build_throttle_key("resend_verification", user.email)
+            throttle_key = USER_AUTH_REALM.keys.throttle(
+                "resend_verification", user.email
+            )
             try:
                 await self.notifier.send(
                     uow=uow,
