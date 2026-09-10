@@ -49,13 +49,19 @@ class EmailNotifier:
         self.log_label = log_label
         self.throttle_ttl_sec = throttle_ttl_sec
 
-    async def _throttle_or_touch(self, key: str | None) -> None:
+    async def _claim_throttle_slot(self, key: str | None) -> None:
+        """Take the throttle slot, or refuse the send.
+
+        SET NX in one round trip: reading the key and then writing it lets two
+        concurrent resends both find it absent and both send.
+        """
         if not key or not self.redis_client:
             return
-        existing = await self.redis_client.get(key)
-        if existing:
+        claimed = await self.redis_client.set(
+            key, "1", ex=self.throttle_ttl_sec, nx=True
+        )
+        if not claimed:
             raise InstanceProcessingException(self.throttle_message)
-        await self.redis_client.setex(key, self.throttle_ttl_sec, "1")
 
     async def release_throttle(self, throttle_key: str) -> None:
         """Best-effort throttle release for flows that failed after setting it.
@@ -75,7 +81,7 @@ class EmailNotifier:
         user: User,
         throttle_key: str | None = None,
     ) -> None:
-        await self._throttle_or_touch(throttle_key)
+        await self._claim_throttle_slot(throttle_key)
         try:
             await self.dispatcher.enqueue_transactional(
                 uow,

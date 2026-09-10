@@ -89,8 +89,13 @@ class InMemoryRedis:
         *,
         ex: int | None = None,
         px: int | None = None,
+        nx: bool = False,
     ) -> bool:
         key_norm = _normalize_key(key)
+        if nx:
+            self._purge_expired(key_norm)
+            if key_norm in self._store:
+                return False
         self._store[key_norm] = _normalize_value(value)
         if ex is not None:
             self._expires[key_norm] = _now() + int(ex)
@@ -335,12 +340,12 @@ class InMemoryRedis:
         return versions
 
     def _eval_consume_challenge(self, numkeys: int, *keys_and_args: Any) -> str:
-        # Synchronous on purpose: an await between the read and the delete would
-        # let two callers interleave where real Redis cannot, and a race test
-        # would then pass against an implementation that does not hold.
         if numkeys != 1:
             raise ValueError("CONSUME_CHALLENGE_SCRIPT expects 1 key.")
 
+        # Synchronous on purpose: an await between the read and the delete would
+        # let two callers interleave where real Redis cannot, and a race test
+        # would then pass against an implementation that does not hold.
         challenge_key = _normalize_key(keys_and_args[0])
         presented_value = _normalize_value(keys_and_args[1])
 
