@@ -26,9 +26,18 @@ class AuthRedisKeyBuilder:
         sessions: stale members are pruned on the next token issuance."""
         return f"{self._prefix}:sessions:{subject_id}"
 
+    def throttle(self, scope: str, identifier: str) -> str:
+        """A realm-scoped, window-based counter key for one identifier.
+
+        `scope` names what is being limited ("login-fail", "otp-cooldown");
+        the identifier is hashed, so an email or a phone number never reaches
+        SCAN, MONITOR or an RDB dump.
+        """
+        return f"{self._prefix}:{build_throttle_key(scope, identifier)}"
+
     def login_failures(self, identifier: str) -> str:
         """Window-scoped counter of failed logins for one login identifier."""
-        return f"{self._prefix}:{build_throttle_key('login-fail', identifier)}"
+        return self.throttle("login-fail", identifier)
 
     def one_time(self, purpose: str, identifier: str) -> str:
         """The single active challenge for one purpose and one identifier."""
