@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import fnmatch
 import hashlib
@@ -34,6 +35,17 @@ def _normalize_value(value: Any) -> str:
 
 def _now() -> float:
     return time.monotonic()
+
+
+async def _round_trip() -> None:
+    """Yield the way a real command does, so concurrent callers interleave.
+
+    Without this every method here runs start to finish before the event loop
+    looks at anyone else, and a race test passes against an implementation that
+    reads and writes in two round trips - which is the bug those tests exist to
+    catch. Script bodies must not call this: Redis runs a script as one unit.
+    """
+    await asyncio.sleep(0)
 
 
 class InMemoryRedis:
@@ -77,7 +89,31 @@ class InMemoryRedis:
             self._zsets.pop(key, None)
             self._expires.pop(key, None)
 
+    def _read(self, key: str) -> str | None:
+        """The store as a script sees it: no yield, no round trip."""
+        self._purge_expired(key)
+        return self._store.get(key)
+
+    def _write(self, key: str, value: str, *, ttl_seconds: int | None = None) -> None:
+        self._store[key] = value
+        if ttl_seconds is not None:
+            self._expires[key] = _now() + int(ttl_seconds)
+
+    def _drop(self, key: str) -> int:
+        self._purge_expired(key)
+        if key not in self._store and key not in self._zsets:
+            return 0
+        self._store.pop(key, None)
+        self._zsets.pop(key, None)
+        self._expires.pop(key, None)
+        return 1
+
+    def _expire(self, key: str, seconds: int) -> None:
+        if key in self._store or key in self._zsets:
+            self._expires[key] = _now() + int(seconds)
+
     async def get(self, key: str | bytes) -> str | None:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         return self._store.get(key_norm)
@@ -91,6 +127,7 @@ class InMemoryRedis:
         px: int | None = None,
         nx: bool = False,
     ) -> bool:
+        await _round_trip()
         key_norm = _normalize_key(key)
         if nx:
             self._purge_expired(key_norm)
@@ -106,9 +143,11 @@ class InMemoryRedis:
         return True
 
     async def setex(self, key: str | bytes, time_seconds: int, value: Any) -> bool:
+        await _round_trip()
         return await self.set(key, value, ex=time_seconds)
 
     async def delete(self, *keys: str | bytes) -> int:
+        await _round_trip()
         deleted = 0
         for key in keys:
             key_norm = _normalize_key(key)
@@ -121,11 +160,13 @@ class InMemoryRedis:
         return deleted
 
     async def exists(self, key: str | bytes) -> int:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         return int(key_norm in self._store or key_norm in self._zsets)
 
     async def expire(self, key: str | bytes, seconds: int, *, nx: bool = False) -> bool:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         if key_norm not in self._store and key_norm not in self._zsets:
@@ -136,6 +177,7 @@ class InMemoryRedis:
         return True
 
     async def incr(self, key: str | bytes) -> int:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         # Writes the store directly: set() would drop the TTL, but Redis INCR
@@ -212,6 +254,7 @@ class InMemoryRedis:
         return self._zsets.get(key_norm, {}).get(_normalize_value(member))
 
     async def ttl(self, key: str | bytes) -> int:
+        await _round_trip()
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         if key_norm not in self._store and key_norm not in self._zsets:
@@ -284,66 +327,64 @@ class InMemoryRedis:
         counters = [_normalize_key(key) for key in keys_and_args[:numkeys]]
         args = keys_and_args[numkeys:]
         if normalized == CACHE_GET_SCRIPT.strip():
-            return await self._eval_cache_get(counters, *args)
+            return self._eval_cache_get(counters, *args)
         if normalized == CACHE_SET_SCRIPT.strip():
-            return await self._eval_cache_set(counters, *args)
+            return self._eval_cache_set(counters, *args)
         if normalized == CACHE_DELETE_SCRIPT.strip():
-            return await self._eval_cache_delete(counters, *args)
+            return self._eval_cache_delete(counters, *args)
         if normalized == CACHE_INVALIDATE_SCRIPT.strip():
-            return await self._eval_cache_invalidate(counters, *args)
+            return self._eval_cache_invalidate(counters, *args)
         raise NotImplementedError("Script not supported in fake Redis.")
 
-    async def _cache_value_key(
-        self, counters: list[str], prefix_ns: str, suffix: str
-    ) -> str:
-        versions = [await self.get(counter) or "0" for counter in counters]
+    # Every script body below is synchronous, and a new one must be too: an
+    # await between the read that decides and the write that acts would let two
+    # callers interleave where real Redis - which runs a script as one unit -
+    # cannot. A race test would then pass against an implementation that does
+    # not hold, and a cache test would see a version counter Redis can never
+    # produce. They reach the store through _read/_write/_drop/_expire for the
+    # same reason: the public commands yield.
+    def _cache_value_key(self, counters: list[str], prefix_ns: str, suffix: str) -> str:
+        versions = [self._read(counter) or "0" for counter in counters]
         return f"{prefix_ns}:v{'.'.join(versions)}:{suffix}"
 
-    async def _eval_cache_get(self, counters: list[str], *args: Any) -> str | None:
+    def _eval_cache_get(self, counters: list[str], *args: Any) -> str | None:
         self.cache_eval_calls += 1
-        key = await self._cache_value_key(
+        key = self._cache_value_key(
             counters,
             _normalize_value(args[0]),
             _normalize_value(args[1]),
         )
-        return await self.get(key)
+        return self._read(key)
 
-    async def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
+    def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
         self.cache_eval_calls += 1
-        key = await self._cache_value_key(
+        key = self._cache_value_key(
             counters,
             _normalize_value(args[0]),
             _normalize_value(args[1]),
         )
-        await self.setex(key, int(args[3]), _normalize_value(args[2]))
+        self._write(key, _normalize_value(args[2]), ttl_seconds=int(args[3]))
         for counter in counters:
-            await self.expire(counter, int(args[4]))
+            self._expire(counter, int(args[4]))
         return 1
 
-    async def _eval_cache_delete(self, counters: list[str], *args: Any) -> int:
-        key = await self._cache_value_key(
+    def _eval_cache_delete(self, counters: list[str], *args: Any) -> int:
+        key = self._cache_value_key(
             counters,
             _normalize_value(args[0]),
             _normalize_value(args[1]),
         )
-        return await self.delete(key)
+        return self._drop(key)
 
-    async def _eval_cache_invalidate(
-        self, counters: list[str], *args: Any
-    ) -> list[int]:
+    def _eval_cache_invalidate(self, counters: list[str], *args: Any) -> list[int]:
         versions = []
         for counter in counters:
-            version = int(await self.get(counter) or "0") + 1
-            await self.set(counter, str(version))
-            await self.expire(counter, int(args[0]))
+            version = int(self._read(counter) or "0") + 1
+            self._write(counter, str(version))
+            self._expire(counter, int(args[0]))
             versions.append(version)
         return versions
 
-    # Both script bodies below are synchronous on purpose, and new ones must be
-    # too: an await between the read that decides and the write that acts would
-    # let two callers interleave where real Redis - which runs a script as one
-    # unit - cannot, and a race test would then pass against an implementation
-    # that does not hold. They reach the store directly for the same reason.
     def _eval_consume_challenge(self, numkeys: int, *keys_and_args: Any) -> str:
         if numkeys != 1:
             raise ValueError("CONSUME_CHALLENGE_SCRIPT expects 1 key.")

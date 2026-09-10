@@ -17,7 +17,7 @@ async def test_on_redis_startup_and_shutdown(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         lifecycle,
         "create_redis_client",
-        lambda connection_url, decode_responses=True: client,
+        lambda connection_url: client,
     )
 
     app = SimpleNamespace(state=SimpleNamespace())
