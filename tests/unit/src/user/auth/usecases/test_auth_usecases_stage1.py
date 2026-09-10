@@ -9,7 +9,6 @@ import pytest
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import build_throttle_key
 from src.main.config import config
 from src.user.auth.realm import (
     RESET_PASSWORD_PURPOSE,
@@ -186,7 +185,9 @@ async def test_resend_verification_success(
     result = await use_case.execute(data=ResendVerificationModel(email=user.email))
 
     assert result == SuccessResponse(success=True)
-    expected_throttle_key = build_throttle_key("resend_verification", user.email)
+    expected_throttle_key = USER_AUTH_REALM.keys.throttle(
+        "resend_verification", user.email
+    )
     notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
@@ -230,7 +231,9 @@ async def test_resend_verification_releases_throttle_when_commit_fails(
             data=ResendVerificationModel(email=user.email),
         )
 
-    expected_throttle_key = build_throttle_key("resend_verification", user.email)
+    expected_throttle_key = USER_AUTH_REALM.keys.throttle(
+        "resend_verification", user.email
+    )
     notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
@@ -270,7 +273,7 @@ async def test_reset_password_request_success(
     result = await use_case.execute(data=data)
 
     assert result == SuccessResponse(success=True)
-    expected_throttle_key = build_throttle_key("password-reset", user.email)
+    expected_throttle_key = USER_AUTH_REALM.keys.throttle("password-reset", user.email)
     notifier.send.assert_awaited_once_with(
         uow=uow, user=user, throttle_key=expected_throttle_key
     )
@@ -294,7 +297,7 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
             data=SendResetPasswordRequestModel(email=user.email),
         )
 
-    expected_throttle_key = build_throttle_key("password-reset", user.email)
+    expected_throttle_key = USER_AUTH_REALM.keys.throttle("password-reset", user.email)
     notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
 
 
