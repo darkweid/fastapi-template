@@ -10,9 +10,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# The ceiling for _ci.yml: a called workflow can never hold more than its
+# caller. Coveralls comments on the pull request with the token CI hands it,
+# and only the unit-tests job actually takes the write.
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
