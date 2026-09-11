@@ -42,15 +42,3 @@ services:
     # already sits.
     ports: !override
       - "8000:80"
-
-  # Backing services are not published in the base (prod) compose file. Re-expose
-  # them here on 127.0.0.1 only, for local debugging and host-side integration
-  # tests (.env.test uses localhost). Loopback binds are not reachable from the
-  # network, so the Docker/UFW iptables bypass does not apply.
-  postgres:
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT}:5432"
-
-  redis:
-    ports:
-      - "127.0.0.1:${REDIS_PORT}:6379"

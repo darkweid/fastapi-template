@@ -2,22 +2,23 @@
 
 ## Services and Ports
 
-Only **Nginx** is published to the host. All other services are internal-only —
-they talk to each other over the `app-network` bridge by service name and are
-never bound to a host interface in production.
+Only **Nginx** is published on a public address. The services talk to each other
+over the `app-network` bridge by service name; Postgres and Redis are also
+published on the host's loopback, so a server's data stores are one SSH tunnel
+away.
 
 | Service | Port | Host exposure |
 |---|---|---|
 | Nginx | 80 / 443 | **Public** (`0.0.0.0`) — proxies to `app:8001`; dev publishes `8000` instead |
 | App | 8001 | Internal only (dev: `127.0.0.1:8001` for direct access) |
-| Postgres | 5432 | Internal only (dev: `127.0.0.1:5432`) |
-| Redis | 6379 | Internal only (dev: `127.0.0.1:6379`) |
+| Postgres | 5432 | `127.0.0.1:${POSTGRES_HOST_PORT:-5432}`, every environment |
+| Redis | 6379 | `127.0.0.1:${REDIS_HOST_PORT:-6379}`, every environment |
 
-Backing-service host ports live **only** in `docker-compose.override.yml` (dev)
-and are bound to `127.0.0.1`. `make run` / `make up` (base file) publish nothing
-but Nginx. This avoids exposing data stores to the internet via the Docker
-iptables/UFW bypass — see `docs/readme/security.md` → *Host Port Exposure
-(Docker & UFW)*.
+`POSTGRES_HOST_PORT` / `REDIS_HOST_PORT` move only the host side of those binds,
+for a box where the default port is taken; `POSTGRES_PORT` / `REDIS_PORT` stay
+what the app dials inside the network. Loopback binds cannot be reached from the
+network, so the Docker iptables/UFW bypass does not apply — see
+`docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
 
 Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requirements).
 
@@ -122,7 +123,7 @@ make clean            # remove stack + volumes/images/orphans
 - `APP_IMAGE` is the only knob: unset, every service falls back to the locally built `template-app-image:latest`, so `make run` and `make run-dev` behave exactly as before.
 - The box needs `docker login ghcr.io` credentials for a private package (`GHCR_USER` / `GHCR_PULL_TOKEN`, secrets of that box's GitHub Environment). Postgres stays a box-local build — CD ships application code, never the database image.
 - `infra/docker-compose.yml` is production-oriented and does not mount host source code into `app`, `worker`, or `scheduler`.
-- It also publishes **only** the Nginx port to the host; Postgres/Redis/app stay internal to `app-network`. If you genuinely need a backing port on the host in production, bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
+- It publishes Nginx publicly and Postgres/Redis on `127.0.0.1` only; the app stays internal to `app-network`. Any further host port follows the same rule: bind it to `127.0.0.1` (or restrict it via a `DOCKER-USER` firewall rule) — never the short `host:container` syntax, which binds `0.0.0.0` and bypasses UFW. See `docs/readme/security.md`.
 - Source bind mounts remain only in `infra/docker-compose.override.yml` for local development.
 - `infra/nginx/app.conf` sets baseline security headers at the reverse-proxy layer, while the FastAPI app keeps the same headers as a fallback for direct app access and tests. The proxy body itself lives in `infra/nginx/proxy.inc`, shared with the TLS server so the two cannot drift apart. Dev serves the same `app.conf`, only on a different published port.
 - TLS terminates at Nginx: copy `infra/nginx/tls.conf.example` over the `app.conf` mount, put the certificate under `infra/nginx/certs/` (git-ignored) and set the real hostname. It redirects plain http to https and leaves the ACME challenge path reachable.
