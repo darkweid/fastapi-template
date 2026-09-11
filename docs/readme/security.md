@@ -220,7 +220,7 @@ when UFW reports the port as blocked.
   `app-network` bridge by service name (`postgres:5432`, `redis:6379`,
   `app:8001`).
 - Postgres and Redis are also published on the host's `127.0.0.1`
-  (`POSTGRES_PORT`, `REDIS_PORT`), so an operator reaches them through an SSH
+  (`POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`), so an operator reaches them through an SSH
   tunnel and host-side integration tests reach them locally. Loopback binds are
   not reachable from the network, so the iptables bypass does not apply. The dev
   overlay (`docker-compose.override.yml`, local-only) adds the app port on

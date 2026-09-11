@@ -40,7 +40,7 @@ ssh -L 5432:127.0.0.1:5432 <host>    # Postgres
 ssh -L 6379:127.0.0.1:6379 <host>    # Redis
 ```
 
-The compose file publishes both on the host's loopback (`POSTGRES_PORT`,
-`REDIS_PORT`), so a database client tunnelling to `127.0.0.1` on the host - an
-IDE's SSH tunnel included - reaches a deployed stack the same way it reaches a
-local one.
+The compose file publishes both on the host's loopback (`POSTGRES_HOST_PORT`,
+`REDIS_HOST_PORT`, defaults 5432 and 6379), so a database client tunnelling to
+`127.0.0.1` on the host - an IDE's SSH tunnel included - reaches a deployed
+stack the same way it reaches a local one.

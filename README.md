@@ -219,8 +219,8 @@ port only in dev — see `docs/readme/security.md` → *Host Port Exposure (Dock
 
 - Nginx: 80 / 443 → app:8001 — **public** (`0.0.0.0`); dev publishes 8000 instead
 - App direct: 8001 — internal (dev: `127.0.0.1`)
-- Postgres: `POSTGRES_PORT` (5432) — `127.0.0.1`
-- Redis: `REDIS_PORT` (6379) — `127.0.0.1`
+- Postgres: 5432 — `127.0.0.1:${POSTGRES_HOST_PORT:-5432}`
+- Redis: 6379 — `127.0.0.1:${REDIS_HOST_PORT:-6379}`
 
 On a server, close everything else with `infra/firewall/` (UFW plus a
 `DOCKER-USER` chain, since Docker-published ports bypass UFW):
