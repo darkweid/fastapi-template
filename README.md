@@ -213,14 +213,14 @@ fresh empty volumes.
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 
 ## Ports
-Only Nginx is published to the host; the rest stay internal to `app-network`.
-Backing ports are re-exposed on `127.0.0.1` in dev (`make run-dev`) only — see
-`docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
+Only Nginx is published on a public address. Postgres and Redis are published on
+`127.0.0.1` everywhere, so a server's database is one SSH tunnel away; the app
+port only in dev — see `docs/readme/security.md` → *Host Port Exposure (Docker & UFW)*.
 
 - Nginx: 80 / 443 → app:8001 — **public** (`0.0.0.0`); dev publishes 8000 instead
 - App direct: 8001 — internal (dev: `127.0.0.1`)
-- Postgres: 5432 — internal (dev: `127.0.0.1`)
-- Redis: 6379 — internal (dev: `127.0.0.1`)
+- Postgres: `POSTGRES_PORT` (5432) — `127.0.0.1`
+- Redis: `REDIS_PORT` (6379) — `127.0.0.1`
 
 On a server, close everything else with `infra/firewall/` (UFW plus a
 `DOCKER-USER` chain, since Docker-published ports bypass UFW):

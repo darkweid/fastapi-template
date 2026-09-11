@@ -215,15 +215,16 @@ effect** on a container-published port: it is reachable from the internet even
 when UFW reports the port as blocked.
 
 **What the template does:**
-- The base (production) compose file publishes **only Nginx (`80` and `443`)** to
-  the host. Postgres, Redis, and the app stay off the host — they communicate
-  over the internal `app-network` bridge by service name (`postgres:5432`,
-  `redis:6379`, `app:8001`), so they are unreachable from outside the host
-  regardless of firewall state.
-- The dev overlay (`docker-compose.override.yml`, local-only) re-exposes those
-  backing services bound to `127.0.0.1` for debugging and host-side integration
-  tests. Loopback binds are not reachable from the network, so the iptables
-  bypass does not apply.
+- The base (production) compose file publishes **only Nginx (`80` and `443`)** on
+  a public address. The services talk to each other over the internal
+  `app-network` bridge by service name (`postgres:5432`, `redis:6379`,
+  `app:8001`).
+- Postgres and Redis are also published on the host's `127.0.0.1`
+  (`POSTGRES_PORT`, `REDIS_PORT`), so an operator reaches them through an SSH
+  tunnel and host-side integration tests reach them locally. Loopback binds are
+  not reachable from the network, so the iptables bypass does not apply. The dev
+  overlay (`docker-compose.override.yml`, local-only) adds the app port on
+  `127.0.0.1` the same way.
 
 **The remaining public ports (Nginx, `80`/`443`):** these are the intended front
 door and are published on `0.0.0.0` by design. Because of the bypass above, UFW
@@ -247,7 +248,7 @@ policy from UFW alone.
 
 **Why it matters:** publishing Postgres/Redis on `0.0.0.0` exposes
 unauthenticated-by-default data stores to the internet, silently bypassing the
-host firewall. Keeping backing services off the host and constraining the one
+host firewall. Keeping backing services on loopback and constraining the one
 public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 
 ## Nginx Hardening
