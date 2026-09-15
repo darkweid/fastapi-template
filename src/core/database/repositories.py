@@ -26,6 +26,7 @@ from src.core.utils.datetime_utils import get_utc_now
 logger = get_logger(__name__)
 
 T = TypeVar("T", bound=SQLAlchemyBase)
+ANY_STATE = object()
 
 
 class BaseRepository(Generic[T]):
@@ -278,6 +279,9 @@ class BaseRepository(Generic[T]):
         # would make a filter-less call look filtered.
         self._ensure_filters_present(filters)
         filters = self._scope_filters(filters)
+        # A scope may consume an explicit sentinel; it must not leave a write
+        # without a real predicate.
+        self._ensure_filters_present(filters)
         # setattr with a mistyped key would silently attach a plain Python
         # attribute the flush ignores - the caller believes the row changed.
         # Boundary: mapped attributes (columns and relationships) pass; hybrid
@@ -390,7 +394,10 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     def _scope_filters(self, filters: dict[str, Any]) -> dict[str, Any]:
         # setdefault, not assignment: an explicit `is_deleted=True` still reaches
         # the query, which is how a caller reads the soft-deleted rows.
-        filters.setdefault("is_deleted", False)
+        if filters.get("is_deleted") is ANY_STATE:
+            filters.pop("is_deleted")
+        else:
+            filters.setdefault("is_deleted", False)
         return filters
 
     async def delete(
@@ -401,6 +408,9 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         if commit:
             self._ensure_commit_allowed(session)
         filters = self._scope_filters(filters)
+        # `ANY_STATE` is a read opt-out, never permission for an unfiltered
+        # write when it was the caller's only condition.
+        self._ensure_filters_present(filters)
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
@@ -447,6 +457,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
             gt=filters.gt,
             lte=filters.lte,
             gte=filters.gte,
+            in_=filters.in_,
         )
         try:
             stmt = update(self.model).values(is_deleted=True, deleted_at=get_utc_now())

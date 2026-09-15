@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, load_only, mapped_column, relationship
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
 from src.core.database.query import ListQuery
+import src.core.database.repositories as repository_module
 from src.core.database.repositories import (
     BaseRepository,
     SoftDeleteRepository,
@@ -231,6 +232,20 @@ async def test_base_repository_get_list_applies_default_created_at_ordering() ->
     query = session.execute.await_args.args[0]
     order_by_clause = list(query._order_by_clauses)[0]
     assert str(order_by_clause) == "repository_models.created_at DESC"
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_can_read_rows_in_any_state() -> None:
+    """History readers must resolve actors even after an account is deleted."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(session=session, is_deleted=repository_module.ANY_STATE)
+
+    query = session.execute.await_args.args[0]
+    compiled = str(query.compile(dialect=postgresql.dialect()))
+    assert "WHERE" not in compiled
 
 
 @pytest.mark.asyncio
@@ -642,12 +657,42 @@ async def test_soft_delete_repository_update_requires_filters() -> None:
 
 
 @pytest.mark.asyncio
+async def test_soft_delete_repository_update_rejects_only_any_state() -> None:
+    """Removing the sole scope must not turn an update into an arbitrary-row write."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    with pytest.raises(ValueError):
+        await repo.update(
+            session=session,
+            data={"name": "new"},
+            is_deleted=repository_module.ANY_STATE,
+        )
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_repository_delete_requires_filters() -> None:
     repo = RepositorySoftDeleteRepository()
     session = RepositorySession()
 
     with pytest.raises(ValueError):
         await repo.delete(session=session)
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_delete_rejects_only_any_state() -> None:
+    """Removing the sole scope must not turn a delete into an arbitrary-row write."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    with pytest.raises(ValueError):
+        await repo.delete(session=session, is_deleted=repository_module.ANY_STATE)
 
     session.execute.assert_not_awaited()
 
@@ -691,6 +736,42 @@ async def test_soft_delete_repository_batch_soft_delete_returns_rowcount(
     )
 
     assert result == 2
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_batch_soft_delete_keeps_in_filter() -> None:
+    """Dropping the ID collection turns a bounded update into a table-wide one."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeExecuteResult(rowcount=2)
+
+    await repo.batch_soft_delete(
+        session=session,
+        filters=FilterCondition(in_={"id": [1, 3]}),
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "repository_models.id IN" in compiled
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_batch_soft_delete_empty_in_matches_nothing() -> (
+    None
+):
+    """An empty requested set must never soft-delete every active row."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeExecuteResult(rowcount=0)
+
+    await repo.batch_soft_delete(
+        session=session,
+        filters=FilterCondition(in_={"id": []}),
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "WHERE false" in compiled
 
 
 @pytest.mark.asyncio

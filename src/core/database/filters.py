@@ -1,9 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, fields
 import operator
 from typing import Any
 
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, false
 from sqlalchemy.orm import DeclarativeBase
 
 from src.core.errors.exceptions import FilteringError
@@ -32,6 +32,7 @@ class FilterCondition:
       gt:  field > value
       lte: field <= value
       gte: field >= value
+      in_: field belongs to a collection of values
     """
 
     eq: dict[str, Any] = field(default_factory=dict)
@@ -40,6 +41,7 @@ class FilterCondition:
     gt: dict[str, Any] = field(default_factory=dict)
     lte: dict[str, Any] = field(default_factory=dict)
     gte: dict[str, Any] = field(default_factory=dict)
+    in_: dict[str, Sequence[Any]] = field(default_factory=dict)
 
     def _conditions(self) -> list[tuple[str, dict[str, Any]]]:
         return [(f.name, getattr(self, f.name)) for f in fields(self)]
@@ -58,7 +60,6 @@ class FilterCondition:
         clauses: list[ColumnElement[bool]] = []
 
         for operator_name, values in self._conditions():
-            compare = _FILTER_OPERATORS[operator_name]
             for column_name, value in values.items():
                 column = getattr(model, column_name, None)
                 if column is None:
@@ -66,6 +67,10 @@ class FilterCondition:
                         f"Unknown filter column '{column_name}' for model "
                         f"'{model.__name__}'"
                     )
+                if operator_name == "in_":
+                    clauses.append(column.in_(value) if value else false())
+                    continue
+                compare = _FILTER_OPERATORS[operator_name]
                 clauses.append(compare(column, value))
 
         return clauses
