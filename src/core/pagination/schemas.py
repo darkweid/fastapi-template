@@ -24,23 +24,24 @@ class PaginationParams(Base):
     size: int = Field(default=50, ge=1, le=100)
 
 
-class ListQueryParams(PaginationParams):
-    """Query parameters for list endpoints.
+class SortableListQueryParams(PaginationParams):
+    """Query parameters for a list endpoint with no searchable columns.
 
-    - search: case-insensitive substring, matched against the fields the
-      resource allows searching by
     - order_by: field to sort by; the resource decides which fields are allowed
     - order: sort direction, "asc" or "desc" (default: "desc")
     - date_from / date_to: inclusive bounds of the period to select
+
+    A resource whose repository declares no `searchable_fields` extends this
+    instead of `ListQueryParams`: inheriting `search` would publish a query
+    parameter that `_build_search_clause` can only answer with a 400.
     """
 
-    search: str | None = Field(default=None, max_length=100)
     order_by: str | None = None
     order: SortOrder = "desc"
     date_from: datetime | None = None
     date_to: datetime | None = None
 
-    @field_validator("search", "order_by", mode="after")
+    @field_validator("order_by", "search", mode="after", check_fields=False)
     @classmethod
     def _blank_to_none(cls, value: str | None) -> str | None:
         """Normalise a blank/whitespace-only value to `None`.
@@ -50,11 +51,18 @@ class ListQueryParams(PaginationParams):
         `search=` and `order_by=` when nothing is selected, and those must
         not reach `ListQuery` as literal empty strings (`order_by=""` fails
         the sortable-fields allowlist and 400s).
+
+        `check_fields=False` because `search` only exists on the subclass.
         """
         if value is None:
             return None
         stripped = value.strip()
         return stripped or None
+
+    @property
+    def search_term(self) -> str | None:
+        """What reaches `ListQuery.search`. `ListQueryParams` overrides it."""
+        return None
 
     def to_list_query(
         self,
@@ -63,7 +71,7 @@ class ListQueryParams(PaginationParams):
     ) -> ListQuery:
         """Translate HTTP parameters into the repository-level specification."""
         return ListQuery(
-            search=self.search,
+            search=self.search_term,
             date_from=self.date_from,
             date_to=self.date_to,
             date_field=date_field,
@@ -71,6 +79,20 @@ class ListQueryParams(PaginationParams):
             order=self.order,
             conditions=conditions,
         )
+
+
+class ListQueryParams(SortableListQueryParams):
+    """`SortableListQueryParams` plus substring search.
+
+    - search: case-insensitive substring, matched against the fields the
+      resource allows searching by
+    """
+
+    search: str | None = Field(default=None, max_length=100)
+
+    @property
+    def search_term(self) -> str | None:
+        return self.search
 
 
 class PaginatedResponse(Base, Generic[T]):
