@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from src.core.errors.exceptions import InstanceNotFoundException
+from src.event_log.actor import Actor
 from src.note.schemas import NoteCreateModel, NoteUpdateModel
 from src.note.usecases.create_note import CreateNoteUseCase
 from src.note.usecases.delete_note import DeleteNoteUseCase
@@ -46,13 +47,16 @@ async def test_create_note_sets_owner(fake_session: FakeAsyncSession) -> None:
     use_case = CreateNoteUseCase(uow=uow)
 
     result = await use_case.execute(
-        data=NoteCreateModel(title="My note"), owner_id=owner_id
+        data=NoteCreateModel(title="My note"),
+        owner_id=owner_id,
+        actor=Actor.user(owner_id),
     )
 
     assert result.owner_id == owner_id
     create_call = notes_repo.create.await_args
     assert create_call.args[1]["owner_id"] == owner_id
     uow.commit.assert_awaited_once()
+    assert uow.event_logs.codes == ["note.created"]
 
 
 @pytest.mark.asyncio
@@ -69,6 +73,7 @@ async def test_update_note_raises_not_found_when_missing(
             note_id=uuid4(),
             data=NoteUpdateModel(title="new title"),
             current_user=current_user,
+            actor=Actor.user(current_user.id),
         )
 
     uow.commit.assert_not_awaited()
@@ -89,6 +94,7 @@ async def test_update_note_on_foreign_note_without_permission_raises_not_found(
             note_id=note.id,
             data=NoteUpdateModel(title="new title"),
             current_user=current_user,
+            actor=Actor.user(current_user.id),
         )
 
     uow.commit.assert_not_awaited()
@@ -110,10 +116,15 @@ async def test_update_note_owner_succeeds(fake_session: FakeAsyncSession) -> Non
         note_id=note.id,
         data=NoteUpdateModel(title="New title"),
         current_user=current_user,
+        actor=Actor.user(current_user.id),
     )
 
     assert result.title == "New title"
     uow.commit.assert_awaited_once()
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    assert logged_actor.actor_id == current_user.id
+    assert logged_event.code == "note.updated"
+    assert logged_event.fields == ["title"]
     # updated_at has onupdate=func.now(), a server-side expression: SQLAlchemy
     # leaves it expired after an UPDATE flush, so it must be explicitly
     # refreshed before it is read again (serialization, below) or after commit
@@ -136,6 +147,7 @@ async def test_update_note_on_foreign_note_with_manage_permission_succeeds(
         note_id=note.id,
         data=NoteUpdateModel(title="Updated"),
         current_user=admin_user,
+        actor=Actor.user(admin_user.id),
     )
 
     assert result.title == "Updated"
@@ -152,7 +164,11 @@ async def test_delete_note_raises_not_found_when_missing(
     current_user = build_user(role=UserRole.ADMIN)
 
     with pytest.raises(InstanceNotFoundException):
-        await use_case.execute(note_id=uuid4(), current_user=current_user)
+        await use_case.execute(
+            note_id=uuid4(),
+            current_user=current_user,
+            actor=Actor.user(current_user.id),
+        )
 
     uow.commit.assert_not_awaited()
 
@@ -168,7 +184,11 @@ async def test_delete_note_on_foreign_note_without_permission_raises_not_found(
     current_user = build_user(role=UserRole.VIEWER)
 
     with pytest.raises(InstanceNotFoundException):
-        await use_case.execute(note_id=note.id, current_user=current_user)
+        await use_case.execute(
+            note_id=note.id,
+            current_user=current_user,
+            actor=Actor.user(current_user.id),
+        )
 
     uow.commit.assert_not_awaited()
     notes_repo.delete.assert_not_awaited()
@@ -182,6 +202,34 @@ async def test_delete_note_owner_succeeds(fake_session: FakeAsyncSession) -> Non
     uow = build_uow(fake_session, notes_repo)
     use_case = DeleteNoteUseCase(uow=uow)
 
-    await use_case.execute(note_id=note.id, current_user=current_user)
+    await use_case.execute(
+        note_id=note.id,
+        current_user=current_user,
+        actor=Actor.user(current_user.id),
+    )
 
     uow.commit.assert_awaited_once()
+    assert uow.event_logs.codes == ["note.deleted"]
+
+
+@pytest.mark.asyncio
+async def test_update_note_with_unchanged_values_logs_nothing(
+    fake_session: FakeAsyncSession,
+) -> None:
+    """A row claiming an update that changed nothing is one a reader of the log
+    would have to disprove against the note itself."""
+    current_user = build_user(role=UserRole.VIEWER)
+    note = build_note(owner_id=current_user.id, title="Same title")
+    notes_repo = FakeNotesRepository(note=note, updated_note=note)
+    uow = build_uow(fake_session, notes_repo)
+    use_case = UpdateNoteUseCase(uow=uow)
+
+    await use_case.execute(
+        note_id=note.id,
+        data=NoteUpdateModel(title="Same title"),
+        current_user=current_user,
+        actor=Actor.user(current_user.id),
+    )
+
+    uow.commit.assert_awaited_once()
+    assert uow.event_logs.recorded == []

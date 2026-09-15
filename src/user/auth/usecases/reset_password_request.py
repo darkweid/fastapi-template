@@ -8,12 +8,14 @@ from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
+from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import SendResetPasswordRequestModel
 from src.user.auth.services.email_notifier import (
     EmailNotifier,
     get_reset_password_notifier,
 )
+from src.user.events import UserPasswordResetRequested
 
 logger = get_logger(__name__)
 
@@ -26,6 +28,10 @@ class ResetPasswordRequestUseCase:
     window included: a caller must not be able to tell an unknown address from
     one that was mailed a minute ago. The throttle key is released when the
     transaction fails to commit.
+
+    Side effects:
+    - Appends `user.password_reset_requested` to the event log when an email
+      is actually queued.
     """
 
     def __init__(
@@ -36,7 +42,9 @@ class ResetPasswordRequestUseCase:
         self.uow = uow
         self.notifier = notifier
 
-    async def execute(self, data: SendResetPasswordRequestModel) -> SuccessResponse:
+    async def execute(
+        self, data: SendResetPasswordRequestModel, ip: str | None = None
+    ) -> SuccessResponse:
         async with self.uow as uow:
             user = await uow.users.get_single(uow.session, email=data.email)
             if not user:
@@ -60,6 +68,15 @@ class ResetPasswordRequestUseCase:
                 )
                 return SuccessResponse(success=True)
 
+            # Anonymous: anyone may type an address into that form, and this
+            # row is what later tells a takeover attempt from a forgotten
+            # password. The throttled and unknown-address branches above
+            # return before it - neither queued an email.
+            await uow.event_logs.record(
+                uow.session,
+                Actor.anonymous(ip=ip),
+                UserPasswordResetRequested(object_id=user.id),
+            )
             try:
                 await uow.commit()
             except Exception:

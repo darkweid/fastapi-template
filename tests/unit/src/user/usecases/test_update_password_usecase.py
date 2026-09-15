@@ -11,6 +11,7 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
 )
 from src.core.schemas import SuccessResponse
+from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
@@ -51,7 +52,11 @@ async def test_update_password_user_not_found(
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(InstanceNotFoundException):
-        await use_case.execute(data=change_password_data(), user_id=build_user().id)
+        await use_case.execute(
+            data=change_password_data(),
+            user_id=build_user().id,
+            actor=Actor.user(build_user().id),
+        )
 
     users_repo.update.assert_not_awaited()
     uow.commit.assert_not_awaited()
@@ -84,6 +89,7 @@ async def test_update_password_rejects_wrong_current_password(
         await use_case.execute(
             data=change_password_data(current="WrongPass1!"),
             user_id=user.id,
+            actor=Actor.user(user.id),
         )
 
     assert user.password_hash == original_hash
@@ -120,6 +126,7 @@ async def test_update_password_rejects_reusing_the_current_password(
                 current_password=CURRENT_PASSWORD, password=CURRENT_PASSWORD
             ),
             user_id=user.id,
+            actor=Actor.user(user.id),
         )
 
     users_repo.update.assert_not_awaited()
@@ -147,7 +154,9 @@ async def test_update_password_missing_row_on_update_is_reported(
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(InstanceNotFoundException):
-        await use_case.execute(data=change_password_data(), user_id=user.id)
+        await use_case.execute(
+            data=change_password_data(), user_id=user.id, actor=Actor.user(user.id)
+        )
 
     invalidate_mock.assert_not_awaited()
     uow.commit.assert_not_awaited()
@@ -174,7 +183,9 @@ async def test_update_password_success(
     cache.invalidate = cache_invalidate_spy  # type: ignore[method-assign]
 
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
-    result = await use_case.execute(data=change_password_data(), user_id=user.id)
+    result = await use_case.execute(
+        data=change_password_data(), user_id=user.id, actor=Actor.user(user.id)
+    )
 
     assert result == SuccessResponse(success=True)
     uow.commit.assert_awaited_once()
@@ -185,6 +196,7 @@ async def test_update_password_success(
     assert await cache.get(cache_key) is None
     # Pre-commit bump plus the after-commit hook's second bump.
     assert cache_invalidate_spy.await_count == 2
+    assert uow.event_logs.codes == ["user.password_changed"]
 
 
 @pytest.mark.asyncio
@@ -206,7 +218,9 @@ async def test_update_password_redis_failure_skips_commit(
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(RuntimeError, match="redis down"):
-        await use_case.execute(data=change_password_data(), user_id=user.id)
+        await use_case.execute(
+            data=change_password_data(), user_id=user.id, actor=Actor.user(user.id)
+        )
 
     uow.flush.assert_awaited_once()
     uow.commit.assert_not_awaited()
@@ -233,7 +247,9 @@ async def test_update_password_commit_failure_after_invalidation(
     use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
 
     with pytest.raises(RuntimeError, match="db down"):
-        await use_case.execute(data=change_password_data(), user_id=user.id)
+        await use_case.execute(
+            data=change_password_data(), user_id=user.id, actor=Actor.user(user.id)
+        )
 
     invalidate_mock.assert_awaited_once_with(
         str(user.id), fake_redis, keys=USER_AUTH_REALM.keys

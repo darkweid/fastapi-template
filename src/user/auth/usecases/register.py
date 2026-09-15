@@ -6,11 +6,13 @@ from loggers import get_logger
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.utils.security import hash_password
+from src.event_log.actor import Actor
 from src.user.auth.schemas import CreateUserModel
 from src.user.auth.services.email_notifier import (
     EmailNotifier,
     get_verification_notifier,
 )
+from src.user.events import UserRegistered
 from src.user.schemas import UserProfileViewModel
 
 logger = get_logger(__name__)
@@ -25,6 +27,9 @@ class RegisterUseCase:
     back one never leaves a stray send. A duplicate email or username reaches
     the database error middleware as an IntegrityError and is answered 409
     `already_exists` there, not here.
+
+    Side effects:
+    - Appends `user.registered` to the event log, in this transaction.
     """
 
     def __init__(
@@ -35,7 +40,9 @@ class RegisterUseCase:
         self.uow = uow
         self.notifier = notifier
 
-    async def execute(self, data: CreateUserModel) -> UserProfileViewModel:
+    async def execute(
+        self, data: CreateUserModel, ip: str | None = None
+    ) -> UserProfileViewModel:
         async with self.uow as uow:
             user_data = data.model_dump()
             raw_password = user_data.pop("password")
@@ -47,6 +54,11 @@ class RegisterUseCase:
             # Outbox row rides the same transaction: a rollback cancels the
             # email, a broker outage no longer fails registration.
             await self.notifier.send(uow=uow, user=user)
+            # Anonymous: nothing has proved yet that the person filling the
+            # form owns the address they registered with.
+            await uow.event_logs.record(
+                uow.session, Actor.anonymous(ip=ip), UserRegistered(object_id=user.id)
+            )
             await uow.commit()
 
         logger.info("[Register User] User '%s' registered successfully.", data.username)

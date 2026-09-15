@@ -264,9 +264,9 @@ async def test_logout_endpoint(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        subject_id=str(user.id),
-        session_id="session-1",
+        identity=SessionIdentity(subject_id=str(user.id), session_id="session-1"),
         terminate_all_sessions=False,
+        ip="127.0.0.1",
     )
 
 
@@ -341,9 +341,9 @@ async def test_logout_endpoint_can_terminate_all_sessions(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        subject_id=str(user.id),
-        session_id="session-1",
+        identity=SessionIdentity(subject_id=str(user.id), session_id="session-1"),
         terminate_all_sessions=True,
+        ip="127.0.0.1",
     )
 
 
@@ -524,9 +524,9 @@ async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
     assert response.status_code == 200
     assert response.json() == {"success": True}
     logout_use_case.execute.assert_awaited_once_with(
-        subject_id="user-1",
-        session_id="session-1",
+        identity=SessionIdentity(subject_id="user-1", session_id="session-1"),
         terminate_all_sessions=False,
+        ip="127.0.0.1",
     )
     set_cookie = response.headers.get_list("set-cookie")
     refresh_header = next(

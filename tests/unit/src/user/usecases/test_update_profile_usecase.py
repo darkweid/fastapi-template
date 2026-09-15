@@ -8,6 +8,7 @@ import pytest
 from src.core.cache.interface import CacheKey
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceNotFoundException
+from src.event_log.actor import Actor
 from src.user.schemas import UserProfileUpdateModel
 from src.user.usecases.update_profile import UpdateUserProfileUseCase
 from tests.factories.user_factory import build_user
@@ -15,7 +16,12 @@ from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 
 
 class FakeUsersRepository:
-    def __init__(self, updated_user):
+    def __init__(self, updated_user, stored_user=None):
+        # The use case reads the row before writing it, to pair each old value
+        # with the new one for the audit payload.
+        self.get_single = AsyncMock(
+            return_value=updated_user if stored_user is None else stored_user
+        )
         self.update = AsyncMock(return_value=updated_user)
 
 
@@ -37,7 +43,9 @@ async def test_profile_update_bumps_cache_namespace(
     use_case = UpdateUserProfileUseCase(uow=uow, cache=cache)
 
     await use_case.execute(
-        data=UserProfileUpdateModel(first_name="Grace"), user_id=user.id
+        data=UserProfileUpdateModel(first_name="Grace"),
+        user_id=user.id,
+        actor=Actor.user(user.id),
     )
 
     assert await cache.get(key) is None
@@ -77,7 +85,9 @@ async def test_profile_update_bumps_cache_before_and_after_commit(
     use_case = UpdateUserProfileUseCase(uow=uow, cache=cache)
 
     await use_case.execute(
-        data=UserProfileUpdateModel(first_name="Grace"), user_id=user.id
+        data=UserProfileUpdateModel(first_name="Grace"),
+        user_id=user.id,
+        actor=Actor.user(user.id),
     )
 
     assert events == ["invalidate", "commit", "invalidate"]
@@ -93,7 +103,9 @@ async def test_missing_user_raises_not_found(
 
     with pytest.raises(InstanceNotFoundException):
         await use_case.execute(
-            data=UserProfileUpdateModel(first_name="Grace"), user_id=uuid4()
+            data=UserProfileUpdateModel(first_name="Grace"),
+            user_id=uuid4(),
+            actor=Actor.user(uuid4()),
         )
 
     uow.commit.assert_not_awaited()
@@ -113,8 +125,53 @@ async def test_cache_is_cold_when_commit_fails(
 
     with pytest.raises(RuntimeError):
         await use_case.execute(
-            data=UserProfileUpdateModel(first_name="Grace"), user_id=user.id
+            data=UserProfileUpdateModel(first_name="Grace"),
+            user_id=user.id,
+            actor=Actor.user(user.id),
         )
 
     assert await cache.get(key) is None
     uow.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_profile_update_logs_the_names_of_changed_fields(
+    fake_session: FakeAsyncSession, cache: InMemoryCache
+) -> None:
+    """The old and new values are both in reach here; the row keeps the field
+    names, because the current value is already on the user row."""
+    user = build_user(first_name="Ada")
+    users_repo = FakeUsersRepository(updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    use_case = UpdateUserProfileUseCase(uow=uow, cache=cache)
+
+    await use_case.execute(
+        data=UserProfileUpdateModel(first_name="Grace"),
+        user_id=user.id,
+        actor=Actor.user(user.id),
+    )
+
+    _, event = uow.event_logs.recorded[0]
+    assert event.code == "user.profile_updated"
+    assert event.fields == ["first_name"]
+
+
+@pytest.mark.asyncio
+async def test_profile_update_that_changes_nothing_logs_nothing(
+    fake_session: FakeAsyncSession, cache: InMemoryCache
+) -> None:
+    """The empty body still bumps the cache namespace, which is not a reason to
+    claim in the log that a profile was edited."""
+    user = build_user(first_name="Ada")
+    users_repo = FakeUsersRepository(updated_user=user)
+    uow = build_uow(fake_session, users_repo)
+    use_case = UpdateUserProfileUseCase(uow=uow, cache=cache)
+
+    await use_case.execute(
+        data=UserProfileUpdateModel(first_name="Ada"),
+        user_id=user.id,
+        actor=Actor.user(user.id),
+    )
+
+    assert uow.event_logs.recorded == []
+    uow.commit.assert_awaited_once()

@@ -20,9 +20,11 @@ from src.core.utils.security import (
     needs_password_rehash,
     verify_password,
 )
+from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import LoginUserModel
 from src.user.cache_keys import user_cache_keys
+from src.user.events import UserSignedIn, UserSignInFailed
 from src.user.models import User
 from src.user.policies import (
     INVALID_CREDENTIALS_MESSAGE,
@@ -58,6 +60,11 @@ class LoginUserUseCase:
     login failed and nothing else.
 
     Side effects:
+    - Appends `user.signed_in` or `user.sign_in_failed` to the event log. The
+      success row is written only once the session exists, so it cannot claim
+      a sign-in whose credentials never reached the caller; a failure commits
+      its row on its own before raising, so the trail of a credential-stuffing
+      run survives the rejection it describes.
     - Persists a rehashed password when the stored hash uses outdated parameters.
     - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
       Every write to the user row does this unconditionally, this one included,
@@ -85,6 +92,7 @@ class LoginUserUseCase:
     async def execute(
         self,
         data: LoginUserModel,
+        ip: str | None = None,
     ) -> TokenModel:
         # data.email is already normalized by EmailNormalizationMixin, so the
         # counter key cannot be split across spellings of one address.
@@ -99,6 +107,14 @@ class LoginUserUseCase:
                 )
                 await verify_password(data.password, DUMMY_PASSWORD_HASH)
                 await self.throttle.record_failure(data.email, self.redis_client)
+                # Nothing else is pending, so this commit carries only the
+                # failed attempt; the error still reaches the caller.
+                await uow.event_logs.record(
+                    uow.session,
+                    Actor.anonymous(ip=ip),
+                    UserSignInFailed(email=data.email, reason="unknown_email"),
+                )
+                await uow.commit()
                 raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             correct_password = await verify_password(data.password, user.password_hash)
@@ -108,6 +124,14 @@ class LoginUserUseCase:
                     mask_email(data.email),
                 )
                 await self.throttle.record_failure(data.email, self.redis_client)
+                # Anonymous, not the account owner: the password did not
+                # match, so nothing here proves who made the attempt.
+                await uow.event_logs.record(
+                    uow.session,
+                    Actor.anonymous(ip=ip),
+                    UserSignInFailed(email=data.email, reason="wrong_password"),
+                )
+                await uow.commit()
                 raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             violation = account_access_violation(user)
@@ -117,21 +141,44 @@ class LoginUserUseCase:
                     mask_email(data.email),
                     violation,
                 )
-            ensure_can_authenticate(user)
+                # The password already matched, so this attempt is the
+                # account owner's and the row is attributed to them.
+                await uow.event_logs.record(
+                    uow.session,
+                    Actor.user(user.id, ip=ip),
+                    UserSignInFailed(email=data.email, reason=violation),
+                )
+                await uow.commit()
+                # Raised here rather than after the block: the commit above
+                # completed the UoW, so nothing may touch it again.
+                ensure_can_authenticate(user)
 
             await self._rehash_password_if_needed(uow, user, data.password)
             await self.cache.invalidate(user_cache_keys.namespace(user.id))
             uow.add_after_commit_hook(
                 partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
             )
-            await uow.commit()
-            await self.throttle.clear(data.email, self.redis_client)
-            return await issue_session_pair(
+            # The session is issued before the row that records it, and the
+            # commit is the last thing that happens: a Redis failure in either
+            # call below must leave no `user.signed_in` claiming a sign-in the
+            # caller never got credentials for. The reverse order costs less -
+            # a commit failure here strands a session in Redis that nothing can
+            # reach, since its tokens only exist in a response that never
+            # arrives, and it expires on its own.
+            tokens = await issue_session_pair(
                 realm=USER_AUTH_REALM,
                 subject_id=str(user.id),
                 claims={},
                 redis_client=self.redis_client,
             )
+            await self.throttle.clear(data.email, self.redis_client)
+            await uow.event_logs.record(
+                uow.session,
+                Actor.user(user.id, ip=ip),
+                UserSignedIn(object_id=user.id),
+            )
+            await uow.commit()
+            return tokens
 
     async def _rehash_password_if_needed(
         self,

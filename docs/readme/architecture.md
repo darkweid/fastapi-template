@@ -178,6 +178,13 @@ escape hatch for roles that may reach another user's object.
 │   │   ├── services.py                  # Core services shared across modules
 │   │   └── validations.py               # Data validation utilities
 │   │
+│   ├── event_log/                       # Append-only audit log: model, writer, read endpoint
+│   │   ├── actor.py                     # Who acted, one named constructor per auth realm
+│   │   ├── changes.py                   # Old/new pairs for an update payload, secrets dropped
+│   │   ├── events.py                    # DomainEvent base; each module declares its own catalog
+│   │   ├── models.py                    # EventLog (ORM), no FK and no unique constraint
+│   │   └── repositories.py              # record(): SAVEPOINT-isolated append that cannot fail the action
+│   │
 │   ├── main/                            # Application entry points
 │   │   ├── config.py                    # Application configuration settings
 │   │   ├── lifespan.py                  # Application lifecycle management
@@ -223,6 +230,7 @@ escape hatch for roles that may reach another user's object.
 │       ├── taskiq_worker/               # taskiq worker tests
 │       └── src/                         # Mirrors src/ layout
 │           ├── core/                    # Core component tests
+│           ├── event_log/               # Event log catalog, writer and endpoint tests
 │           ├── main/                    # Main module tests
 │           ├── note/                    # Note reference module tests
 │           ├── system/                  # System routes tests
@@ -259,4 +267,6 @@ every step below lives outside the module itself and is easy to forget:
    endpoints with `RateLimiter`.
 5. **Migration** - `make migration m="add <module>"` and review the diff before
    committing. An empty diff means step 1 was missed.
-6. **Tests** - `tests/unit/src/<module>/` mirroring the source layout.
+6. **Events** - declare the module's `events.py` and record them from the use
+   cases that change state; see [event-log.md](event-log.md).
+7. **Tests** - `tests/unit/src/<module>/` mirroring the source layout.

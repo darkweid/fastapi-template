@@ -28,6 +28,9 @@ class FakeUserService:
 
 class FakeUsersRepository:
     def __init__(self, updated_user: User | None) -> None:
+        # The profile use case reads the row before writing it, to pair each
+        # old value with the new one for the audit payload.
+        self.get_single = AsyncMock(return_value=updated_user)
         self.update = AsyncMock(return_value=updated_user)
 
 
