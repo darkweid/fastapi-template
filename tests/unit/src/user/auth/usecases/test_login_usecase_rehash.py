@@ -239,3 +239,35 @@ async def test_login_returns_unified_error_for_account_state_failures(
         "us***@ex***",
         expected_violation,
     )
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_cannot_be_issued_logs_no_sign_in(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
+) -> None:
+    """The caller gets an error and no credentials, so a durable row claiming
+    the sign-in succeeded would be an audit trail lying about a Redis outage."""
+    user = build_user()
+    uow = build_uow(user, fake_session)
+    monkeypatch.setattr(login_usecase, "verify_password", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        login_usecase, "needs_password_rehash", Mock(return_value=False)
+    )
+    monkeypatch.setattr(
+        login_usecase,
+        "issue_session_pair",
+        AsyncMock(side_effect=ConnectionError("redis is down")),
+    )
+
+    use_case = LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+
+    with pytest.raises(ConnectionError):
+        await use_case.execute(
+            LoginUserModel(email="user@example.com", password="plain-pass")
+        )
+
+    assert uow.event_logs.recorded == []
+    uow.commit.assert_not_awaited()

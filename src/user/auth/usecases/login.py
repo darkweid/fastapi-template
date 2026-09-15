@@ -60,9 +60,11 @@ class LoginUserUseCase:
     login failed and nothing else.
 
     Side effects:
-    - Appends `user.signed_in` or `user.sign_in_failed` to the event log. A
-      failure commits that row on its own before raising, so the trail of a
-      credential-stuffing run survives the rejection it describes.
+    - Appends `user.signed_in` or `user.sign_in_failed` to the event log. The
+      success row is written only once the session exists, so it cannot claim
+      a sign-in whose credentials never reached the caller; a failure commits
+      its row on its own before raising, so the trail of a credential-stuffing
+      run survives the rejection it describes.
     - Persists a rehashed password when the stored hash uses outdated parameters.
     - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
       Every write to the user row does this unconditionally, this one included,
@@ -156,19 +158,27 @@ class LoginUserUseCase:
             uow.add_after_commit_hook(
                 partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
             )
+            # The session is issued before the row that records it, and the
+            # commit is the last thing that happens: a Redis failure in either
+            # call below must leave no `user.signed_in` claiming a sign-in the
+            # caller never got credentials for. The reverse order costs less -
+            # a commit failure here strands a session in Redis that nothing can
+            # reach, since its tokens only exist in a response that never
+            # arrives, and it expires on its own.
+            tokens = await issue_session_pair(
+                realm=USER_AUTH_REALM,
+                subject_id=str(user.id),
+                claims={},
+                redis_client=self.redis_client,
+            )
+            await self.throttle.clear(data.email, self.redis_client)
             await uow.event_logs.record(
                 uow.session,
                 Actor.user(user.id, ip=ip),
                 UserSignedIn(object_id=user.id),
             )
             await uow.commit()
-            await self.throttle.clear(data.email, self.redis_client)
-            return await issue_session_pair(
-                realm=USER_AUTH_REALM,
-                subject_id=str(user.id),
-                claims={},
-                redis_client=self.redis_client,
-            )
+            return tokens
 
     async def _rehash_password_if_needed(
         self,
