@@ -193,11 +193,17 @@ class BaseRepository(Generic[T]):
         session: AsyncSession,
         eager: EagerLoadSequence | None = None,
         for_update: bool = False,
+        conditions: FilterCondition | None = None,
         **filters: Any,
     ) -> list[T]:
         """Retrieve a list of records using the provided session without pagination."""
         filters = self._scope_filters(filters)
-        query = select(self.model).filter_by(**filters)
+        where_clauses = (
+            conditions.build_where_clauses(self.model)
+            if conditions is not None and conditions.has_conditions()
+            else []
+        )
+        query = select(self.model).filter_by(**filters).where(*where_clauses)
         if eager:
             query = query.options(*eager)
         if for_update:

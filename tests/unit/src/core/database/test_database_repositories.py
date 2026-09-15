@@ -222,6 +222,38 @@ async def test_base_repository_get_list_returns_all() -> None:
 
 
 @pytest.mark.asyncio
+async def test_base_repository_get_list_applies_filter_conditions() -> None:
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(
+        session=session,
+        conditions=FilterCondition(in_={"id": [1, 3]}),
+    )
+
+    query = session.execute.await_args.args[0]
+    compiled = str(query.compile(dialect=postgresql.dialect()))
+    assert "WHERE repository_models.id IN" in compiled
+
+
+@pytest.mark.asyncio
+async def test_base_repository_get_list_empty_in_matches_nothing() -> None:
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(
+        session=session,
+        conditions=FilterCondition(in_={"id": []}),
+    )
+
+    query = session.execute.await_args.args[0]
+    compiled = str(query.compile(dialect=postgresql.dialect()))
+    assert "WHERE false" in compiled
+
+
+@pytest.mark.asyncio
 async def test_base_repository_get_list_applies_default_created_at_ordering() -> None:
     repo = RepositoryModelRepository()
     session = RepositorySession()
@@ -246,6 +278,24 @@ async def test_soft_delete_repository_can_read_rows_in_any_state() -> None:
     query = session.execute.await_args.args[0]
     compiled = str(query.compile(dialect=postgresql.dialect()))
     assert "WHERE" not in compiled
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_combines_any_state_with_conditions() -> None:
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(
+        session=session,
+        conditions=FilterCondition(in_={"id": [1, 3]}),
+        is_deleted=repository_module.ANY_STATE,
+    )
+
+    query = session.execute.await_args.args[0]
+    compiled = str(query.compile(dialect=postgresql.dialect()))
+    assert "WHERE repository_models.id IN" in compiled
+    assert "is_deleted =" not in compiled
 
 
 @pytest.mark.asyncio
