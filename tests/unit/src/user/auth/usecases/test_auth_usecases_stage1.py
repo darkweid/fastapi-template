@@ -9,6 +9,7 @@ import pytest
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import SuccessResponse
+from src.event_log.enums import ActorType
 from src.main.config import config
 from src.user.auth.realm import (
     RESET_PASSWORD_PURPOSE,
@@ -122,6 +123,11 @@ async def test_register_usecase_creates_user_and_sends_email(
         "uow": uow,
         "user": user,
     }
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    # Anonymous: filling in the form proves nothing about owning the address.
+    assert logged_actor.actor_type is ActorType.ANONYMOUS
+    assert logged_event.code == "user.registered"
+    assert logged_event.object_id == user.id
 
 
 @pytest.mark.asyncio
@@ -166,6 +172,9 @@ async def test_resend_verification_returns_success_on_missing_user(
     assert result == SuccessResponse(success=True)
     notifier.send.assert_not_awaited()
     uow.commit.assert_not_awaited()
+    # The response is a lie by design (anti-enumeration), and the log is where
+    # it must not be repeated: nothing was requested for any account here.
+    assert uow.event_logs.recorded == []
 
 
 @pytest.mark.asyncio
@@ -279,6 +288,7 @@ async def test_reset_password_request_success(
     )
     uow.commit.assert_awaited_once()
     assert call_order == ["notify", "commit"]
+    assert uow.event_logs.codes == ["user.password_reset_requested"]
 
 
 @pytest.mark.asyncio
@@ -388,6 +398,7 @@ async def test_reset_password_confirm_success(
         == 0
     )
     assert await fake_redis.exists(login_failures_key) == 0
+    assert uow.event_logs.codes == ["user.password_reset"]
 
 
 @pytest.mark.asyncio
@@ -619,6 +630,11 @@ async def test_verify_email_usecase_success(
         == 0
     )
     assert await cache.get(cache_key) is None
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    # Attributed to the account: the spent token proved the caller reads that
+    # mailbox, which is the whole claim verification makes.
+    assert logged_actor.actor_id == user.id
+    assert logged_event.code == "user.email_verified"
 
 
 @pytest.mark.asyncio

@@ -57,10 +57,21 @@ that shapes everything below: a payload cannot be pruned once written.
    constraint violation of the *action* surfaces to the caller instead of being
    swallowed as a logging failure.
 
+Where the scenario lives in `src/core/` - the realm-agnostic `LogoutUseCase` -
+the realm wraps it instead of pushing its catalog down into core:
+`UserLogoutUseCase` calls the core one, then records `user.signed_out`. Core
+stays free of any module's events, which is the same rule `src/core/auth/`
+follows for realms.
+
 A rejected action logs nothing, because the use case raises before it records.
 Where a *rejection itself* is the interesting event - a failed sign-in - record
 it and commit before raising, as `LoginUserUseCase` does; nothing else is
 pending in that transaction, so the commit carries only the audit row.
+
+The success row of a flow that hands out credentials goes last: `LoginUserUseCase`
+issues the session pair and clears the throttle before it records and commits,
+so a Redis outage cannot leave a durable `user.signed_in` behind an error the
+caller received with no tokens.
 
 ## What Does Not Go in a Payload
 

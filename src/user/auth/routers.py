@@ -6,7 +6,6 @@ from src.core.auth.cookies import TokenCookieResponder
 from src.core.auth.credentials import SessionIdentity
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.token_transport import TokenTransport, get_token_transport
-from src.core.auth.usecases.logout import LogoutUseCase
 from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
 from src.core.limiter.depends import RateLimiter
 from src.core.request_ip import get_client_ip
@@ -29,7 +28,7 @@ from src.user.auth.schemas import (
     VerifyEmailRequestModel,
 )
 from src.user.auth.usecases.login import LoginUserUseCase, get_login_user_use_case
-from src.user.auth.usecases.logout import get_logout_use_case
+from src.user.auth.usecases.logout import UserLogoutUseCase, get_logout_use_case
 from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.auth.usecases.register import RegisterUseCase, get_register_use_case
 from src.user.auth.usecases.resend_verification import (
@@ -64,12 +63,13 @@ router = APIRouter()
 )
 async def signup_user(
     user_form_data: CreateUserModel,
+    request: Request,
     use_case: Annotated[RegisterUseCase, Depends(get_register_use_case)],
 ) -> UserProfileViewModel:
     """
     Create a new user account.
     """
-    return await use_case.execute(data=user_form_data)
+    return await use_case.execute(data=user_form_data, ip=get_client_ip(request))
 
 
 @router.post(
@@ -105,12 +105,13 @@ async def send_verification_email(
 )
 async def verify_email(
     data: VerifyEmailRequestModel,
+    request: Request,
     use_case: Annotated[VerifyEmailUseCase, Depends(get_verify_email_use_case)],
 ) -> SuccessResponse:
     """
     Verifies the user's email using the token from the verification link.
     """
-    return await use_case.execute(token=data.token)
+    return await use_case.execute(token=data.token, ip=get_client_ip(request))
 
 
 @router.post(
@@ -199,11 +200,12 @@ async def get_access_by_refresh(
     dependencies=[Depends(RateLimiter(times=20, minutes=1))],
 )
 async def logout_user(
+    request: Request,
     response: Response,
     identity: Annotated[SessionIdentity | None, Depends(get_logout_identity)],
     transport: Annotated[TokenTransport, Depends(get_token_transport)],
     responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
-    use_case: Annotated[LogoutUseCase, Depends(get_logout_use_case)],
+    use_case: Annotated[UserLogoutUseCase, Depends(get_logout_use_case)],
     data: Annotated[LogoutRequestModel | None, Body()] = None,
 ) -> SuccessResponse:
     """
@@ -213,11 +215,11 @@ async def logout_user(
     """
     if identity is not None:
         await use_case.execute(
-            subject_id=identity.subject_id,
-            session_id=identity.session_id,
+            identity=identity,
             terminate_all_sessions=(
                 data.terminate_all_sessions if data is not None else False
             ),
+            ip=get_client_ip(request),
         )
     responder.clear(response, transport)
     return SuccessResponse(success=True)
@@ -237,6 +239,7 @@ async def logout_user(
 )
 async def send_reset_password_request(
     data: SendResetPasswordRequestModel,
+    request: Request,
     use_case: Annotated[
         ResetPasswordRequestUseCase, Depends(get_reset_password_request_use_case)
     ],
@@ -244,7 +247,7 @@ async def send_reset_password_request(
     """
     Sends a password reset link to the user's email.
     """
-    return await use_case.execute(data=data)
+    return await use_case.execute(data=data, ip=get_client_ip(request))
 
 
 @router.put(
@@ -261,6 +264,7 @@ async def send_reset_password_request(
 )
 async def confirm_reset_password_request(
     data: ResetPasswordModel,
+    request: Request,
     use_case: Annotated[
         ResetPasswordConfirmUseCase, Depends(get_reset_password_confirm_use_case)
     ],
@@ -268,4 +272,4 @@ async def confirm_reset_password_request(
     """
     Sets a new password using a valid password reset token.
     """
-    return await use_case.execute(data=data)
+    return await use_case.execute(data=data, ip=get_client_ip(request))

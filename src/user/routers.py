@@ -91,6 +91,7 @@ async def get_user_info_by_id(
 async def update_user_profile(
     user_form_data: UserProfileUpdateModel,
     current_user: Annotated[User, Depends(get_current_user)],
+    actor: Annotated[Actor, Depends(get_user_actor)],
     use_case: Annotated[
         UpdateUserProfileUseCase, Depends(get_update_user_profile_use_case)
     ],
@@ -98,7 +99,9 @@ async def update_user_profile(
     """
     Updates the current user's profile.
     """
-    return await use_case.execute(data=user_form_data, user_id=current_user.id)
+    return await use_case.execute(
+        data=user_form_data, user_id=current_user.id, actor=actor
+    )
 
 
 @router.patch(

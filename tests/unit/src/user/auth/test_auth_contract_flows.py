@@ -114,7 +114,9 @@ class ResetPasswordRequestUseCaseFake:
         self._state = state
         self._token = token
 
-    async def execute(self, data: SendResetPasswordRequestModel) -> SuccessResponse:
+    async def execute(
+        self, data: SendResetPasswordRequestModel, ip: str | None = None
+    ) -> SuccessResponse:
         self._state.token = self._token
         return SuccessResponse(success=True)
 
@@ -123,7 +125,9 @@ class ResetPasswordConfirmUseCaseFake:
     def __init__(self, state: ResetPasswordState):
         self._state = state
 
-    async def execute(self, data: ResetPasswordModel) -> SuccessResponse:
+    async def execute(
+        self, data: ResetPasswordModel, ip: str | None = None
+    ) -> SuccessResponse:
         if data.token != self._state.token:
             raise ValueError("Reset token mismatch")
         return SuccessResponse(success=True)

@@ -15,8 +15,10 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import mask_email
+from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM, VERIFICATION_PURPOSE
 from src.user.cache_keys import user_cache_keys
+from src.user.events import UserEmailVerified
 from src.user.policies import verification_pending
 
 logger = get_logger(__name__)
@@ -36,6 +38,11 @@ class VerifyEmailUseCase:
     The token is spent before the transaction runs, which is what stops two
     concurrent clicks from both proceeding; a failed commit therefore burns the
     link and the user asks for a new one.
+
+    Side effects:
+    - Appends `user.email_verified` to the event log when the flag is set.
+      The already-verified and unknown-email branches write nothing: neither
+      changed any state.
     """
 
     def __init__(
@@ -48,7 +55,7 @@ class VerifyEmailUseCase:
         self.redis_client = redis_client
         self.cache = cache
 
-    async def execute(self, token: str) -> SuccessResponse:
+    async def execute(self, token: str, ip: str | None = None) -> SuccessResponse:
         async with self.uow as uow:
             try:
                 normalized_email = await decode_one_time_token(
@@ -81,6 +88,13 @@ class VerifyEmailUseCase:
                 await self.cache.invalidate(user_cache_keys.namespace(user.id))
                 uow.add_after_commit_hook(
                     partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+                )
+                # Attributed to the account: consuming the token proved the
+                # caller reads that mailbox, which is all verification claims.
+                await uow.event_logs.record(
+                    uow.session,
+                    Actor.user(user.id, ip=ip),
+                    UserEmailVerified(object_id=user.id),
                 )
                 await uow.commit()
 
