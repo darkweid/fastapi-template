@@ -14,10 +14,12 @@ from src.core.cache.decorators import cached_route
 from src.core.cache.interface import CacheScope
 from src.core.limiter.depends import RateLimiter
 from src.core.schemas import SuccessResponse
+from src.event_log.actor import Actor
 from src.user.auth.dependencies import (
     get_authenticated_user,
     get_current_user,
     get_token_cookie_responder,
+    get_user_actor,
     get_user_id_from_token,
 )
 from src.user.auth.permissions.enum import Permission
@@ -110,6 +112,7 @@ async def update_user_password(
     response: Response,
     user_form_data: UserNewPassword,
     current_user: Annotated[User, Depends(get_current_user)],
+    actor: Annotated[Actor, Depends(get_user_actor)],
     transport: Annotated[TokenTransport, Depends(get_token_transport)],
     responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
     use_case: Annotated[
@@ -124,6 +127,8 @@ async def update_user_password(
     browser holding a refresh cookie that no longer resolves would show up as a
     silent, unexplainable logout on its next refresh.
     """
-    result = await use_case.execute(data=user_form_data, user_id=current_user.id)
+    result = await use_case.execute(
+        data=user_form_data, user_id=current_user.id, actor=actor
+    )
     responder.clear(response, transport)
     return result

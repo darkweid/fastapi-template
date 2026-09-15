@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database.repositories import BaseRepository
 from src.core.database.uow.sqlalchemy import RepositoryInstance, SQLAlchemyUnitOfWork
 from src.core.outbox.repositories import OutboxRepository
+from src.event_log.repositories import EventLogRepository
 from src.note.repositories import NoteRepository
 from src.user.repositories import UserRepository
 
@@ -36,6 +37,10 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork):
     @property
     def notes(self) -> NoteRepository:
         return self._get_repository(NoteRepository)
+
+    @property
+    def event_logs(self) -> EventLogRepository:
+        return self._get_repository(EventLogRepository)
 
 
 async def get_uow(session: AsyncSession) -> ApplicationUnitOfWork:

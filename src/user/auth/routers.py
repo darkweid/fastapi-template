@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Response
+from fastapi import APIRouter, Body, Depends, Request, Response
 
 from src.core.auth.cookies import TokenCookieResponder
 from src.core.auth.credentials import SessionIdentity
@@ -9,6 +9,7 @@ from src.core.auth.token_transport import TokenTransport, get_token_transport
 from src.core.auth.usecases.logout import LogoutUseCase
 from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
 from src.core.limiter.depends import RateLimiter
+from src.core.request_ip import get_client_ip
 from src.core.schemas import SuccessResponse, TokenModel
 from src.main.config import config
 from src.user.auth.dependencies import (
@@ -121,6 +122,7 @@ async def verify_email(
 )
 async def login_user(
     login_form_data: LoginUserModel,
+    request: Request,
     response: Response,
     transport: Annotated[TokenTransport, Depends(get_token_transport)],
     responder: Annotated[TokenCookieResponder, Depends(get_token_cookie_responder)],
@@ -133,7 +135,7 @@ async def login_user(
     that store tokens themselves should send `X-Token-Transport: body` to receive it
     in the response body instead.
     """
-    tokens = await use_case.execute(data=login_form_data)
+    tokens = await use_case.execute(data=login_form_data, ip=get_client_ip(request))
     return responder.apply(tokens, response, transport)
 
 

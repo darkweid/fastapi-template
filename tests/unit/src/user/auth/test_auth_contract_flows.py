@@ -48,7 +48,7 @@ class LoginUseCaseFake:
         self._access_token = access_token
         self._refresh_token = refresh_token
 
-    async def execute(self, data: LoginUserModel) -> TokenModel:
+    async def execute(self, data: LoginUserModel, ip: str | None = None) -> TokenModel:
         self._state.access_token = self._access_token
         self._state.refresh_token = self._refresh_token
         return TokenModel(

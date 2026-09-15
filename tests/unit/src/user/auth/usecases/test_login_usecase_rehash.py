@@ -6,6 +6,7 @@ from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.schemas import TokenModel
 from src.core.utils.security import DUMMY_PASSWORD_HASH
+from src.event_log.enums import ActorType
 from src.user.auth.schemas import LoginUserModel
 import src.user.auth.usecases.login as login_usecase
 from src.user.auth.usecases.login import (
@@ -123,6 +124,9 @@ async def test_login_does_not_rehash_when_not_needed(
     # Login invalidates unconditionally, even on the no-rehash path where the row
     # is not written - see LoginUserUseCase's docstring for why.
     assert await cache.get(cache_key) is None
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    assert logged_event.code == "user.signed_in"
+    assert logged_actor.actor_id == user.id
 
 
 @pytest.mark.asyncio
@@ -148,7 +152,13 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
     verify_mock.assert_awaited_once_with("plain-pass", DUMMY_PASSWORD_HASH)
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
-    uow.commit.assert_not_awaited()
+    # The rejection commits on its own: the audit row is the only thing this
+    # transaction carries, and it has to survive the error that follows it.
+    uow.commit.assert_awaited_once()
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    assert logged_actor.actor_type is ActorType.ANONYMOUS
+    assert logged_event.code == "user.sign_in_failed"
+    assert logged_event.reason == "unknown_email"
     debug_mock.assert_called_once()
     assert "not found" in debug_mock.call_args.args[0]
 
@@ -177,7 +187,12 @@ async def test_login_returns_unified_error_for_wrong_password(
     verify_mock.assert_awaited_once_with("wrong-pass", user.password_hash)
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
-    uow.commit.assert_not_awaited()
+    uow.commit.assert_awaited_once()
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    # Anonymous although the account is known: the password did not match, so
+    # nothing here proves the owner made the attempt.
+    assert logged_actor.actor_type is ActorType.ANONYMOUS
+    assert logged_event.reason == "wrong_password"
     debug_mock.assert_called_once()
     assert "Incorrect password" in debug_mock.call_args.args[0]
 
@@ -214,7 +229,11 @@ async def test_login_returns_unified_error_for_account_state_failures(
     verify_mock.assert_awaited_once_with("plain-pass", user.password_hash)
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
-    uow.commit.assert_not_awaited()
+    uow.commit.assert_awaited_once()
+    logged_actor, logged_event = uow.event_logs.recorded[0]
+    # The password matched, so this attempt is the account owner's.
+    assert logged_actor.actor_id == user.id
+    assert logged_event.reason == expected_violation
     debug_mock.assert_called_once_with(
         "[LoginUser] Account of '%s' fails admission (%s).",
         "us***@ex***",

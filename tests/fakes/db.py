@@ -4,6 +4,8 @@ from collections.abc import Generator, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.fakes.event_log import FakeEventLogRepository
+
 
 class AsyncTransactionContext:
     """Stands in for AsyncSessionTransaction: awaitable like the real
@@ -32,6 +34,9 @@ class AsyncTransactionContext:
     ) -> None:
         if not self._was_in_transaction:
             self._session.set_in_transaction(False)
+        if exc_type is None and self._session.fail_nested_with is not None:
+            error, self._session.fail_nested_with = self._session.fail_nested_with, None
+            raise error
         return None
 
     async def rollback(self) -> None:
@@ -50,8 +55,17 @@ class FakeAsyncSession:
         self.flush = AsyncMock()
         self.refresh = AsyncMock()
         self.execute = AsyncMock()
-        self.add = MagicMock()
+        # Rows handed to `add()`, in order: the event log inserts through the
+        # session instead of a repository method.
+        self.added: list[Any] = []
+        # Still a MagicMock: tests assert on `session.add` being called, and a
+        # plain method would not record those calls.
+        self.add = MagicMock(side_effect=self.added.append)
         self.delete = AsyncMock()
+        # When set, the next `begin_nested()` block raises this on a clean exit -
+        # the only way to exercise the event log's swallow-and-report path on a
+        # fake session.
+        self.fail_nested_with: Exception | None = None
         # Mirrors real `AsyncSession.info`: a plain dict the UoW uses to mark
         # itself active for the repository commit guard.
         self.info: dict[str, Any] = {}
@@ -102,7 +116,10 @@ class FakeUnitOfWork:
         repositories: dict[str, Any] | None = None,
     ) -> None:
         self._session = session or FakeAsyncSession()
-        self._repositories = repositories or {}
+        self._repositories = dict(repositories or {})
+        # Every use case may log; a test that does not care about the event
+        # should not have to wire the repository that stores it.
+        self._repositories.setdefault("event_logs", FakeEventLogRepository())
         self._completed = False
         self._after_commit_hooks: list[Any] = []
         self.commit = AsyncMock(side_effect=self._commit)

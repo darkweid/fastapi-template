@@ -6,5 +6,6 @@ table relationships effectively.
 """
 
 from src.core.outbox.models import OutboxMessage as OutboxMessage
+from src.event_log.models import EventLog as EventLog
 from src.note.models import Note as Note
 from src.user.models import User as User

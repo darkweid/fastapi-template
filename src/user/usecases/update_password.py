@@ -19,9 +19,11 @@ from src.core.errors.exceptions import (
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
 from src.core.utils.security import hash_password, mask_email, verify_password
+from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
+from src.user.events import UserPasswordChanged
 
 logger = get_logger(__name__)
 
@@ -35,6 +37,7 @@ class UpdateUserPasswordUseCase:
     else's password is a separate scenario and must not ask for the current one.
 
     Side effects:
+    - Appends `user.password_changed` to the event log, in this transaction.
     - Deletes every session key of the user before the commit rather than
       after: with Redis unavailable the change then fails as a whole, instead
       of leaving a new password alongside sessions holding the old one.
@@ -51,7 +54,9 @@ class UpdateUserPasswordUseCase:
         self.redis_client = redis_client
         self.cache = cache
 
-    async def execute(self, data: UserNewPassword, user_id: UUID) -> SuccessResponse:
+    async def execute(
+        self, data: UserNewPassword, user_id: UUID, actor: Actor
+    ) -> SuccessResponse:
         async with self.uow as uow:
             user = await uow.users.get_single(uow.session, id=user_id)
             if not user:
@@ -86,6 +91,11 @@ class UpdateUserPasswordUseCase:
                 partial(
                     self.cache.invalidate, user_cache_keys.namespace(updated_user.id)
                 )
+            )
+            # No payload: the only thing that changed is a secret, and an audit
+            # row outlives the account it describes.
+            await uow.event_logs.record(
+                uow.session, actor, UserPasswordChanged(object_id=user_id)
             )
             await uow.commit()
             logger.debug(
