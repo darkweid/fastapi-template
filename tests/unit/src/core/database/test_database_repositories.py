@@ -657,12 +657,42 @@ async def test_soft_delete_repository_update_requires_filters() -> None:
 
 
 @pytest.mark.asyncio
+async def test_soft_delete_repository_update_rejects_only_any_state() -> None:
+    """Removing the sole scope must not turn an update into an arbitrary-row write."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    with pytest.raises(ValueError):
+        await repo.update(
+            session=session,
+            data={"name": "new"},
+            is_deleted=repository_module.ANY_STATE,
+        )
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_repository_delete_requires_filters() -> None:
     repo = RepositorySoftDeleteRepository()
     session = RepositorySession()
 
     with pytest.raises(ValueError):
         await repo.delete(session=session)
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_delete_rejects_only_any_state() -> None:
+    """Removing the sole scope must not turn a delete into an arbitrary-row write."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    with pytest.raises(ValueError):
+        await repo.delete(session=session, is_deleted=repository_module.ANY_STATE)
 
     session.execute.assert_not_awaited()
 
@@ -706,6 +736,42 @@ async def test_soft_delete_repository_batch_soft_delete_returns_rowcount(
     )
 
     assert result == 2
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_batch_soft_delete_keeps_in_filter() -> None:
+    """Dropping the ID collection turns a bounded update into a table-wide one."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeExecuteResult(rowcount=2)
+
+    await repo.batch_soft_delete(
+        session=session,
+        filters=FilterCondition(in_={"id": [1, 3]}),
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "repository_models.id IN" in compiled
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_batch_soft_delete_empty_in_matches_nothing() -> (
+    None
+):
+    """An empty requested set must never soft-delete every active row."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeExecuteResult(rowcount=0)
+
+    await repo.batch_soft_delete(
+        session=session,
+        filters=FilterCondition(in_={"id": []}),
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "WHERE false" in compiled
 
 
 @pytest.mark.asyncio

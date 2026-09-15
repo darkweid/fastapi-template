@@ -279,6 +279,9 @@ class BaseRepository(Generic[T]):
         # would make a filter-less call look filtered.
         self._ensure_filters_present(filters)
         filters = self._scope_filters(filters)
+        # A scope may consume an explicit sentinel; it must not leave a write
+        # without a real predicate.
+        self._ensure_filters_present(filters)
         # setattr with a mistyped key would silently attach a plain Python
         # attribute the flush ignores - the caller believes the row changed.
         # Boundary: mapped attributes (columns and relationships) pass; hybrid
@@ -405,6 +408,9 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         if commit:
             self._ensure_commit_allowed(session)
         filters = self._scope_filters(filters)
+        # `ANY_STATE` is a read opt-out, never permission for an unfiltered
+        # write when it was the caller's only condition.
+        self._ensure_filters_present(filters)
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
@@ -451,6 +457,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
             gt=filters.gt,
             lte=filters.lte,
             gte=filters.gte,
+            in_=filters.in_,
         )
         try:
             stmt = update(self.model).values(is_deleted=True, deleted_at=get_utc_now())
