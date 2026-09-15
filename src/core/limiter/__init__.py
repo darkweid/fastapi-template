@@ -7,6 +7,7 @@ import redis.asyncio as aredis
 from loggers import get_logger
 from src.core.errors.exceptions import TooManyRequestsException
 from src.core.limiter.script import lua_script
+from src.core.request_ip import get_client_ip
 
 logger = get_logger(__name__)
 
@@ -20,7 +21,7 @@ async def default_identifier(request: Request) -> str:
     here again would take the attacker-controlled left edge of the chain and
     hand out a fresh limit bucket per request.
     """
-    ip = request.client.host if request.client else "unknown"
+    ip = get_client_ip(request) or "unknown"
 
     return f"{ip}:{request.scope['path']}"
 
