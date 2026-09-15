@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, load_only, mapped_column, relationship
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
 from src.core.database.query import ListQuery
+import src.core.database.repositories as repository_module
 from src.core.database.repositories import (
     BaseRepository,
     SoftDeleteRepository,
@@ -231,6 +232,20 @@ async def test_base_repository_get_list_applies_default_created_at_ordering() ->
     query = session.execute.await_args.args[0]
     order_by_clause = list(query._order_by_clauses)[0]
     assert str(order_by_clause) == "repository_models.created_at DESC"
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_repository_can_read_rows_in_any_state() -> None:
+    """History readers must resolve actors even after an account is deleted."""
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_list(session=session, is_deleted=repository_module.ANY_STATE)
+
+    query = session.execute.await_args.args[0]
+    compiled = str(query.compile(dialect=postgresql.dialect()))
+    assert "WHERE" not in compiled
 
 
 @pytest.mark.asyncio

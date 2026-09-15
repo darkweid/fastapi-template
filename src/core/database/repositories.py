@@ -26,6 +26,7 @@ from src.core.utils.datetime_utils import get_utc_now
 logger = get_logger(__name__)
 
 T = TypeVar("T", bound=SQLAlchemyBase)
+ANY_STATE = object()
 
 
 class BaseRepository(Generic[T]):
@@ -390,7 +391,10 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     def _scope_filters(self, filters: dict[str, Any]) -> dict[str, Any]:
         # setdefault, not assignment: an explicit `is_deleted=True` still reaches
         # the query, which is how a caller reads the soft-deleted rows.
-        filters.setdefault("is_deleted", False)
+        if filters.get("is_deleted") is ANY_STATE:
+            filters.pop("is_deleted")
+        else:
+            filters.setdefault("is_deleted", False)
         return filters
 
     async def delete(
