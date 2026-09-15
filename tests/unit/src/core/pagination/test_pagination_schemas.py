@@ -9,7 +9,7 @@ from pydantic import ValidationError
 import pytest
 
 from src.core.database.filters import FilterCondition
-from src.core.pagination import ListQueryParams
+from src.core.pagination import ListQueryParams, SortableListQueryParams
 from src.core.pagination.schemas import (
     PaginatedResponse,
     PaginationParams,
@@ -167,3 +167,22 @@ def test_list_query_params_rejects_unknown_query_parameter() -> None:
     response = client.get("/items", params={"utm_source": "newsletter"})
 
     assert response.status_code == 422
+
+
+def test_sortable_list_query_params_publish_no_search() -> None:
+    """A resource whose repository declares no `searchable_fields` answers any
+    non-empty search with a 400, so it must not advertise the parameter."""
+    assert "search" not in SortableListQueryParams.model_fields
+
+    with pytest.raises(ValidationError):
+        SortableListQueryParams(search="anything")
+
+
+def test_sortable_list_query_params_leave_the_search_clause_empty() -> None:
+    """`ListQuery` reads `search`; without a field the base must still supply
+    the None that means 'no search clause', not raise on the attribute."""
+    query = SortableListQueryParams(order_by="name", order="asc").to_list_query()
+
+    assert query.search is None
+    assert query.order_by == "name"
+    assert query.order == "asc"
