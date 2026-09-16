@@ -31,7 +31,12 @@ class TokenModel(Base):
 
 
 class EmailNormalizationMixin(BaseModel):
-    @field_validator("email", mode="before", check_fields=False)
+    # The validator binds to these literal names. A model that calls its field
+    # anything else inherits the mixin and gets no normalization at all, with
+    # nothing to notice: the address reaches the database in whatever case it
+    # arrived, so a uniqueness check and every later lookup miss each other.
+    # Add the name here rather than writing a second validator downstream.
+    @field_validator("email", "new_email", mode="before", check_fields=False)
     @classmethod
     def _normalize_email(cls, v: str | EmailStr) -> str:
         return normalize_email(str(v))
