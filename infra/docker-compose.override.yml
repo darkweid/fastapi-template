@@ -1,4 +1,9 @@
 # Do not deploy this file on server, it is only for local development
+#
+# Every service drops the base file's restart policy: on a server the stack
+# must come back by itself, on a laptop it must not. Without this, starting
+# Docker for anything at all resurrects the whole dev stack, and a hung one
+# comes back hung.
 
 services:
   app-builder:
@@ -8,6 +13,7 @@ services:
     image: template-app-dev-image:latest
 
   app:
+    restart: "no"
     container_name: template-app
     image: template-app-dev-image:latest
     command: uvicorn src.main.web:app --host 0.0.0.0 --port ${APP_BACKEND_PORT} --reload
@@ -21,6 +27,7 @@ services:
       - /app/.venv
 
   worker:
+    restart: "no"
     image: template-app-dev-image:latest
     command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver --max-async-tasks 20 --reload
     volumes:
@@ -28,6 +35,7 @@ services:
       - /app/.venv
 
   scheduler:
+    restart: "no"
     image: template-app-dev-image:latest
     volumes:
       - ..:/app
@@ -37,8 +45,15 @@ services:
   # forwarded headers TrustedProxy reads, the body limit, the WebSocket upgrade -
   # behave locally the way they will on a server. Only the published port differs.
   nginx:
+    restart: "no"
     # !override replaces the published ports instead of appending to them: dev keeps
     # the stack off the privileged ports, where a locally running web server usually
     # already sits.
     ports: !override
       - "8000:80"
+
+  postgres:
+    restart: "no"
+
+  redis:
+    restart: "no"
