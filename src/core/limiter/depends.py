@@ -59,7 +59,8 @@ class RateLimiter:
         The four duration arguments add up into one window, so
         `seconds=30, minutes=1` is a 90-second window rather than a conflict.
         `identifier` decides what the limit counts: the default buckets by
-        client IP, and `get_user_id_from_token` buckets per user instead.
+        client IP, and a realm's `principal_id_from_access_token` buckets
+        per authenticated principal instead.
         """
         if FastAPILimiter.identifier is None or FastAPILimiter.http_callback is None:
             raise RuntimeError("FastAPILimiter must be initialized before use.")

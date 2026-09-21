@@ -64,7 +64,8 @@ class RealmAuth(Generic[PrincipalT]):
     authenticated_principal: Callable[..., Coroutine[Any, Any, PrincipalT]]
     logout_identity: Callable[..., Coroutine[Any, Any, SessionIdentity | None]]
     access_by_refresh: Callable[..., Coroutine[Any, Any, tuple[PrincipalT, JWTPayload]]]
-    principal_id_from_token: Callable[..., Coroutine[Any, Any, str]]
+    principal_id_from_refresh_token: Callable[..., Coroutine[Any, Any, str]]
+    principal_id_from_access_token: Callable[..., Coroutine[Any, Any, str]]
 
 
 def build_realm_auth(
@@ -224,14 +225,40 @@ def build_realm_auth(
 
         return principal, payload
 
-    async def principal_id_from_token(request: Request) -> str:
-        """Extract the subject id from the refresh token, for the rate limiter key."""
+    async def principal_id_from_refresh_token(request: Request) -> str:
+        """Subject id of the refresh token, for the rate limiter key.
+
+        Only routes the refresh cookie is path-scoped to can use this; every
+        other authenticated route carries an access token instead and buckets
+        through `principal_id_from_access_token`.
+        """
         credentials = read_refresh_credentials(request, realm)
         if credentials is None:
             raise UnauthorizedException("Authentication token not found")
 
         redis_client = await get_redis_client(request)
         payload = await verify_jti(credentials.token, redis_client, realm)
+        try:
+            return payload["sub"]
+        except KeyError:
+            raise UnauthorizedException("Invalid or expired token") from None
+
+    async def principal_id_from_access_token(request: Request) -> str:
+        """Subject id of the access token, for the rate limiter key.
+
+        The token is only decoded and checked against the session registry, not
+        resolved to a principal: the endpoint's own auth dependency does that
+        afterwards, and a limiter that queried the database would hand an
+        unauthenticated caller a way to make one.
+        """
+        token = request.headers.get("Authorization")
+        if not token:
+            raise UnauthorizedException("Authentication token not found")
+
+        redis_client = await get_redis_client(request)
+        payload = await verify_jti(token, redis_client, realm)
+        if payload.get("mode") != "access_token":
+            raise UnauthorizedException(credentials_error)
         try:
             return payload["sub"]
         except KeyError:
@@ -248,5 +275,6 @@ def build_realm_auth(
         authenticated_principal=authenticated_principal,
         logout_identity=logout_identity,
         access_by_refresh=access_by_refresh,
-        principal_id_from_token=principal_id_from_token,
+        principal_id_from_refresh_token=principal_id_from_refresh_token,
+        principal_id_from_access_token=principal_id_from_access_token,
     )

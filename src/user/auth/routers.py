@@ -15,7 +15,7 @@ from src.user.auth.dependencies import (
     get_access_by_refresh_token,
     get_logout_identity,
     get_token_cookie_responder,
-    get_user_id_from_token,
+    get_user_id_from_refresh_token,
     verify_csrf,
 )
 from src.user.auth.schemas import (
@@ -160,7 +160,7 @@ async def login_user(
             RateLimiter(
                 times=5,
                 minutes=15,
-                identifier=get_user_id_from_token,
+                identifier=get_user_id_from_refresh_token,
             )
         ),
     ],

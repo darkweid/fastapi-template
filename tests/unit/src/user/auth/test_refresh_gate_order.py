@@ -3,7 +3,7 @@ Pins the order of the refresh route's gates against the *real* rate limiter.
 
 Every other refresh test replaces `RateLimiter.__call__` with a no-op, which also
 skips the limiter's identifier - and the identifier is precisely what must not run
-before the CSRF check. `get_user_id_from_token` reads the refresh cookie and calls
+before the CSRF check. `get_user_id_from_refresh_token` reads the refresh cookie and calls
 `verify_jti` on it, so a forged cross-site request that reached it would consume one
 of the victim's five refresh slots per fifteen minutes (five such requests lock the
 legitimate client out) and could trigger reuse detection, all before the 403.
@@ -49,7 +49,7 @@ async def live_limiter(
     """
     Point the real limiter at the fake redis, and put it back afterwards.
 
-    `app.state.redis_client` is set too: `get_user_id_from_token` calls
+    `app.state.redis_client` is set too: `get_user_id_from_refresh_token` calls
     `get_redis_client(request)` directly rather than through DI, so a dependency
     override would not reach it.
     """
