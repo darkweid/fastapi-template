@@ -20,7 +20,7 @@ from src.user.auth.dependencies import (
     get_current_user,
     get_token_cookie_responder,
     get_user_actor,
-    get_user_id_from_token,
+    get_user_id_from_access_token,
 )
 from src.user.auth.permissions.enum import Permission
 from src.user.auth.permissions.ownership import require_self_or_permission
@@ -108,7 +108,9 @@ async def update_user_profile(
     "/me/password",
     response_model=SuccessResponse,
     dependencies=[
-        Depends(RateLimiter(times=5, minutes=60, identifier=get_user_id_from_token))
+        Depends(
+            RateLimiter(times=5, minutes=60, identifier=get_user_id_from_access_token)
+        )
     ],
 )
 async def update_user_password(

@@ -32,7 +32,8 @@ get_current_user_with_session = USER_AUTH.current_principal_with_session
 get_authenticated_user = USER_AUTH.authenticated_principal
 get_logout_identity = USER_AUTH.logout_identity
 get_access_by_refresh_token = USER_AUTH.access_by_refresh
-get_user_id_from_token = USER_AUTH.principal_id_from_token
+get_user_id_from_refresh_token = USER_AUTH.principal_id_from_refresh_token
+get_user_id_from_access_token = USER_AUTH.principal_id_from_access_token
 
 
 def get_user_actor(

@@ -28,7 +28,8 @@ from src.user.auth.dependencies import (
     get_authenticated_user,
     get_current_user,
     get_current_user_with_session,
-    get_user_id_from_token,
+    get_user_id_from_access_token,
+    get_user_id_from_refresh_token,
     verify_csrf,
 )
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
@@ -349,17 +350,17 @@ async def test_get_access_by_refresh_token_success(
 
 
 @pytest.mark.asyncio
-async def test_get_user_id_from_token_missing_header(
+async def test_get_user_id_from_refresh_token_missing_header(
     fake_redis: InMemoryRedis,
 ) -> None:
     request = build_request()
 
     with pytest.raises(UnauthorizedException, match="Authentication token not found"):
-        await get_user_id_from_token(request)
+        await get_user_id_from_refresh_token(request)
 
 
 @pytest.mark.asyncio
-async def test_get_user_id_from_token_success(
+async def test_get_user_id_from_refresh_token_success(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     payload = build_access_payload("user-1")
@@ -373,7 +374,60 @@ async def test_get_user_id_from_token_success(
     get_redis_mock = AsyncMock(return_value=fake_redis)
     monkeypatch.setattr(core_auth_dependencies, "get_redis_client", get_redis_mock)
 
-    result = await get_user_id_from_token(request)
+    result = await get_user_id_from_refresh_token(request)
+
+    assert result == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_get_user_id_from_access_token_missing_header(
+    fake_redis: InMemoryRedis,
+) -> None:
+    request = build_request()
+
+    with pytest.raises(UnauthorizedException, match="Authentication token not found"):
+        await get_user_id_from_access_token(request)
+
+
+@pytest.mark.asyncio
+async def test_get_user_id_from_access_token_rejects_a_refresh_token(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A realm signs both tokens with one secret, so without the mode check a
+    refresh token would resolve here and let one principal hold two buckets."""
+    payload = build_refresh_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
+        payload["jti"],
+        ex=60,
+    )
+    request = build_request(headers={"Authorization": token})
+    monkeypatch.setattr(
+        core_auth_dependencies, "get_redis_client", AsyncMock(return_value=fake_redis)
+    )
+
+    with pytest.raises(UnauthorizedException):
+        await get_user_id_from_access_token(request)
+
+
+@pytest.mark.asyncio
+async def test_get_user_id_from_access_token_success(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = build_access_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
+        payload["jti"],
+        ex=60,
+    )
+    request = build_request(headers={"Authorization": token})
+    monkeypatch.setattr(
+        core_auth_dependencies, "get_redis_client", AsyncMock(return_value=fake_redis)
+    )
+
+    result = await get_user_id_from_access_token(request)
 
     assert result == "user-1"
 
