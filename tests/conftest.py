@@ -35,8 +35,10 @@ def settings() -> Config:
     return get_settings()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def app() -> FastAPI:
+    # Built once: `dependency_overrides` restores what a test replaced, and a
+    # test needing a pristine application builds a bare `FastAPI()`.
     return get_application()
 
 
