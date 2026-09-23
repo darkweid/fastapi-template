@@ -24,6 +24,9 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # The `changes` gate lists this repository's artifacts to find a passing run
+  # of the same tree.
+  actions: read
 
 jobs:
   # Runs on every event so the workflow always reports. Skipping a workflow
@@ -35,6 +38,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      tree: ${{ steps.verified.outputs.tree }}
+      verified: ${{ steps.verified.outputs.verified }}
 
     steps:
       - name: Checkout code
@@ -50,12 +55,41 @@ jobs:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
-  # Not gated, like gitleaks: `make lint` runs pre-commit over every file, and
-  # end-of-file-fixer, trailing-whitespace and check-yaml all apply to markdown.
-  # Skipping it here would let a documentation PR merge a violation that then
-  # fails the next code PR, on a commit that did not cause it.
+      # A squash merge lands a new commit whose tree is byte-for-byte the tree the
+      # pull request's merge ref was tested on, as long as the base did not move
+      # in between. `record-pass` leaves an artifact named after every tree that
+      # passed, so a push finding one skips the checks and goes straight to the
+      # image build. A different tree - the base moved, or the push did not come
+      # from a tested pull request - finds nothing and runs everything. Only runs
+      # of this repository's own branches count: a fork's pull request runs its
+      # own copy of this file and could record a pass it never earned.
+      - name: Look for a passing run of the same tree
+        id: verified
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          echo "tree=${tree}" >> "$GITHUB_OUTPUT"
+          verified=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            found="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=ci-passed-${tree}&per_page=100" \
+              --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | length')"
+            if [ "${found}" -gt 0 ]; then
+              verified=true
+              echo "::notice::Tree ${tree} already passed CI; checks are skipped."
+            fi
+          fi
+          echo "verified=${verified}" >> "$GITHUB_OUTPUT"
+
+  # Not gated on docs_only, like gitleaks: `make lint` runs pre-commit over every
+  # file, and end-of-file-fixer, trailing-whitespace and check-yaml all apply to
+  # markdown. Skipping it here would let a documentation PR merge a violation
+  # that then fails the next code PR, on a commit that did not cause it.
   lint:
     name: Lint
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -109,7 +143,7 @@ jobs:
   migration-heads:
     name: Migration HEADs
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -163,7 +197,7 @@ jobs:
   unit-tests:
     name: Unit tests
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -230,7 +264,7 @@ jobs:
   integration-tests:
     name: Integration tests
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -305,7 +339,7 @@ jobs:
   bandit:
     name: Bandit
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -333,7 +367,7 @@ jobs:
   pip-audit:
     name: pip-audit
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -368,6 +402,8 @@ jobs:
 
   gitleaks:
     name: Gitleaks
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -385,6 +421,28 @@ jobs:
           # organization; without it the action exits before scanning.
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
+  # The artifact's name is the whole record: `changes` only asks whether one
+  # with this tree exists. Every check has to have passed or been skipped by a
+  # gate; one failure or cancellation and nothing is recorded.
+  record-pass:
+    name: Record passing tree
+    needs: [changes, lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.changes.outputs.verified != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Write the tree id
+        shell: bash
+        run: echo "${{ needs.changes.outputs.tree }}" > "${RUNNER_TEMP}/tree.txt"
+
+      - name: Upload the pass marker
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-passed-${{ needs.changes.outputs.tree }}
+          path: ${{ runner.temp }}/tree.txt
+          retention-days: 30
+
   # Builds the image once, here, so a broken Dockerfile fails in CI instead of
   # on the box mid-deploy. CD then pulls this exact sha tag. `latest` only ever
   # moves on the production caller - a staging build must not become the tag a
@@ -394,7 +452,9 @@ jobs:
     needs: [changes, lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
     # Branch and event filtering happens in the caller; here the decision arrives
     # as a single input so stage and prod share one implementation.
-    if: ${{ needs.changes.outputs.docs_only != 'true' && inputs.push_image }}
+    # Checks skipped by a gate count as passed; the explicit status test is what
+    # lets this job run when they were skipped rather than failed.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.changes.outputs.docs_only != 'true' && inputs.push_image }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

@@ -36,3 +36,4 @@ jobs:
       contents: read
       packages: write
       pull-requests: write
+      actions: read
