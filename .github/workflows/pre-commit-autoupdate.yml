@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           pre-commit autoupdate
-          python scripts/sync_precommit_mypy_deps.py
+          python scripts/ops/sync_precommit_deps.py
           pre-commit validate-config
 
       - name: Create or update pull request

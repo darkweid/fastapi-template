@@ -49,6 +49,6 @@ runs:
         echo "Changed paths:"
         printf '%s\n' "$changed"
         verdict="$(printf '%s\n' "$changed" \
-          | python3 "${GITHUB_WORKSPACE}/scripts/docs_only_change.py")"
+          | python3 "${GITHUB_WORKSPACE}/scripts/ops/docs_only_change.py")"
         echo "docs_only=${verdict}"
         echo "docs_only=${verdict}" >> "$GITHUB_OUTPUT"

@@ -32,7 +32,7 @@ test -f .env || {
   echo "[deploy] .env is missing on the box - copy .env.example and fill it in"
   exit 1
 }
-python3 scripts/check_env.py
+python3 scripts/ops/check_env.py
 
 # The database image stays box-local in both modes - CD ships application code,
 # never the database. It is rebuilt every deploy because `up` reuses an existing

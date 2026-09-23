@@ -26,12 +26,26 @@ repos:
       - id: requirements-txt-fixer
         exclude: ^infra/requirements/.*\.txt$ # Exclude compiled reqs files
       - id: check-json
+      - id: detect-private-key
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: [ --fix=lf ]
 
   - repo: local
     hooks:
+      - id: migration-heads
+        name: single alembic head
+        # Alembic answers this too, but only with the project installed and an
+        # .env in place. A second head is born when two branches that each
+        # added a migration meet, which is long before CI sees the result.
+        entry: python scripts/ops/check_migration_heads.py
+        language: python
+        pass_filenames: false
+        files: ^migrations/versions/
+
       - id: sort-requirements-in
         name: sort requirements .in
-        entry: python scripts/sort_requirements_in.py
+        entry: python scripts/ops/sort_requirements_in.py
         language: python
         files: ^infra/requirements/.*\.in$
 
@@ -65,7 +79,7 @@ repos:
           "--non-interactive",
           "--config-file=mypy.ini"
         ]
-        exclude: ^(tests/|migrations/|scripts/)
+        exclude: ^(tests/|migrations/)
         additional_dependencies:
           - aiosmtplib==5.1.2
           - fastapi==0.141.1
@@ -93,3 +107,18 @@ repos:
       - id: bandit
         args: [ -q ]
         files: ^(src|scripts|migrations)/
+
+  # deploy.sh is the single deploy path and firewall rules run as root; nothing
+  # else in this pipeline reads a shell script.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+
+  # All the pipeline logic lives in the reusable workflows, and a typo in an
+  # expression or a `needs` entry does not fail there - it silently stops
+  # doing what it was supposed to do.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint

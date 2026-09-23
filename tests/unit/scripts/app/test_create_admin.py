@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 from pydantic import ValidationError
 import pytest
 
-from scripts.create_admin import _AdminCredentialsModel, ensure_admin, main
+from scripts.app.create_admin import _AdminCredentialsModel, ensure_admin, main
 from src.core.utils.security import is_password_hash
 from src.user.enums import UserRole
 from src.user.models import User

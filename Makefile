@@ -117,7 +117,7 @@ redis-cli: ## Open redis-cli inside the redis container
 create-admin: ## Bootstrap the first admin (env: ADMIN_EMAIL, ADMIN_PASSWORD)
 # docker compose exec does not forward the caller's shell environment on its own; each
 # -e without a value re-requests it from the host process running this recipe.
-	$(DOCKER_COMPOSE_EXEC) -e ADMIN_EMAIL -e ADMIN_PASSWORD -e ADMIN_FIRST_NAME -e ADMIN_LAST_NAME -e ADMIN_USERNAME -e ADMIN_PHONE $(APP_CONTAINER) python -m scripts.create_admin
+	$(DOCKER_COMPOSE_EXEC) -e ADMIN_EMAIL -e ADMIN_PASSWORD -e ADMIN_FIRST_NAME -e ADMIN_LAST_NAME -e ADMIN_USERNAME -e ADMIN_PHONE $(APP_CONTAINER) python -m scripts.app.create_admin
 
 ##@ Logs
 
@@ -169,7 +169,7 @@ req-compile: ## Recompile the lockfiles inside a Linux container
 		-v $(CURDIR):/app \
 		-w /app \
 		$(REQ_COMPILE_IMAGE) \
-		sh -lc 'set -e; python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile $(REQ_COMPILE_FLAGS) "$${name}.in" -o "$${name}.txt"; done'
+		sh -lc 'set -e; python -m pip install --user --no-cache-dir --upgrade pip pip-tools && python scripts/ops/sort_requirements_in.py $(addprefix $(REQ_DIR)/,$(addsuffix .in,$(REQ_NAMES))) && cd $(REQ_DIR) && for name in $(REQ_NAMES); do python -m piptools compile $(REQ_COMPILE_FLAGS) "$${name}.in" -o "$${name}.txt"; done'
 
 .PHONY: req-upgrade
 req-upgrade: ## Recompile the lockfiles, bumping every pin to its newest allowed release
