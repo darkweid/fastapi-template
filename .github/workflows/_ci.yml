@@ -400,10 +400,11 @@ jobs:
             -r infra/requirements/dev.txt \
             -r infra/requirements/prod.txt
 
+  # Never skipped by the tree gate: it scans history, and a push that adds a
+  # secret and removes it again can end on a tree that already passed while the
+  # secret stays reachable in its commits.
   gitleaks:
     name: Gitleaks
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
