@@ -115,7 +115,7 @@ cp .env.example .env
 ```
 
 Every placeholder in `.env.example` carries the marker `-not-real`.
-`scripts/check_env.py` rejects any value still carrying it — but that script is
+`scripts/ops/check_env.py` rejects any value still carrying it — but that script is
 the *deploy* gate (`infra/deploy/deploy.sh` runs it first), not a local one. A
 placeholder left in place therefore boots fine locally and blocks the first
 deploy.
@@ -292,7 +292,7 @@ and `gitleaks`, and nothing else, and does not deploy. `lint` stays because
 markdown: gating it would let a documentation PR merge a violation that then
 fails the next code PR, on a commit that did not cause it. The `changes` job in `_ci.yml`
 calls `.github/actions/docs-only-change`, which asks
-`scripts/docs_only_change.py` whether every changed path is documentation;
+`scripts/ops/docs_only_change.py` whether every changed path is documentation;
 `_deploy.yml` asks the same question about the commit it is about to deploy. On
 a private fork this is the difference between roughly three billed Actions minutes
 and roughly twenty-five.
@@ -300,8 +300,8 @@ and roughly twenty-five.
 Documentation means `*.md` at any depth, anything under `docs/`, and `LICENSE`.
 Everything else is code, deliberately: a wrong `true` shows up as a green PR with
 nothing run, because GitHub counts a job skipped through `if:` as a passing
-required check. Widen the rules in `scripts/docs_only_change.py` and add the case
-to `tests/unit/scripts/test_docs_only_change.py` in the same commit.
+required check. Widen the rules in `scripts/ops/docs_only_change.py` and add the case
+to `tests/unit/scripts/ops/test_docs_only_change.py` in the same commit.
 
 ---
 

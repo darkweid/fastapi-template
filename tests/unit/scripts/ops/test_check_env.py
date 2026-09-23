@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts.check_env import (
+from scripts.ops.check_env import (
     PLACEHOLDER_MARKER,
     SECRET_KEY_PATTERN,
     collect_problems,
     parse_env,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 EXAMPLE = {
     "DEBUG": "false",

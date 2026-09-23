@@ -61,7 +61,7 @@ Those pages read the token out of the query string and call the API themselves:
 the token is a credential, and a GET would copy it into access logs, proxy
 caches and the `Referer` header.
 
-`scripts/check_env.py` (run by the deploy workflow) rejects a `PUBLIC_BASE_URL`
+`scripts/ops/check_env.py` (run by the deploy workflow) rejects a `PUBLIC_BASE_URL`
 pointing at localhost, so the example value cannot reach a deploy unnoticed.
 
 Upgrading an existing fork: the email tasks no longer take `base_url` and the
@@ -264,7 +264,7 @@ for `app.conf` once the certificate is in place.
 - `make create-admin` — bootstrap the first admin account (env: `ADMIN_EMAIL`, `ADMIN_PASSWORD`) — see *Bootstrap the First Admin* below
 
 ## Bootstrap the First Admin
-`make create-admin` runs `scripts/create_admin.py` inside the app container. It
+`make create-admin` runs `scripts/app/create_admin.py` inside the app container. It
 creates the first admin user, or — if an account with that email already
 exists — promotes it to `role=admin` and marks it active/verified without
 touching its stored password. Requires migrations applied first (`make migrate`).

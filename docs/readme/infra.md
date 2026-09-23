@@ -98,7 +98,7 @@ make clean            # remove stack + volumes/images/orphans
 - `make restore f=backups/<file>.dump` — restores from a dump with `pg_restore --clean --if-exists`, which drops conflicting existing objects before recreating them. Run it against a stopped or otherwise quiesced app to avoid restoring under live writes.
 - `make psql` — opens an interactive `psql` shell inside the Postgres container, authenticated with the compose-provided `POSTGRES_USER`/`POSTGRES_DB`.
 - `make redis-cli` — opens an interactive `redis-cli` shell inside the Redis container, authenticated with `REDIS_PASSWORD`.
-- `make create-admin` — bootstraps the first admin account, or promotes an existing account to admin, via `scripts/create_admin.py`; see the *Bootstrap the first admin* section in [README.md](../../README.md) for the environment variables it reads.
+- `make create-admin` — bootstraps the first admin account, or promotes an existing account to admin, via `scripts/app/create_admin.py`; see the *Bootstrap the first admin* section in [README.md](../../README.md) for the environment variables it reads.
 
 ## Dependencies (pip-tools)
 - Source files: `infra/requirements/*.in` list direct dependencies (no pins by default).

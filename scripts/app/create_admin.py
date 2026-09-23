@@ -33,7 +33,7 @@ DEFAULT_PHONE_NUMBER = "+10000000000"
 
 USAGE = (
     "Usage: ADMIN_EMAIL=<email> ADMIN_PASSWORD=<password> "
-    "python -m scripts.create_admin"
+    "python -m scripts.app.create_admin"
 )
 
 

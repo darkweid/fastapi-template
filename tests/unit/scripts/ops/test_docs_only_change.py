@@ -2,7 +2,7 @@ import io
 
 import pytest
 
-from scripts.docs_only_change import (
+from scripts.ops.docs_only_change import (
     changes_are_documentation_only,
     is_documentation,
     main,

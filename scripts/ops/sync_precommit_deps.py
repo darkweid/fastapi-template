@@ -5,7 +5,9 @@ import re
 
 PRECOMMIT_CONFIG_PATH = Path(".pre-commit-config.yaml")
 DEV_REQUIREMENTS_PATH = Path("infra/requirements/dev.txt")
+SECURITY_REQUIREMENTS_PATH = Path("infra/requirements/security.txt")
 MYPY_REPO_MARKER = "- repo: https://github.com/pre-commit/mirrors-mypy"
+BANDIT_REPO_MARKER = "- repo: https://github.com/PyCQA/bandit"
 ADDITIONAL_DEPS_MARKER = "additional_dependencies:"
 # pip-compile keeps requested extras in the lockfile line (taskiq[reload]==...);
 # the version pins the base package, so the extras group is matched and dropped.
@@ -47,38 +49,47 @@ def extract_dep_package(dep_spec: str) -> tuple[str, str]:
     return package_token, normalize_package_name(base_name)
 
 
-def sync_mypy_rev(config_text: str, versions: dict[str, str]) -> str:
-    """
-    Pins the mirrors-mypy hook rev to the mypy version from the dev lockfile.
+def sync_hook_rev(
+    config_text: str,
+    versions: dict[str, str],
+    *,
+    repo_marker: str,
+    package: str,
+    requirements_path: Path,
+    tag_prefix: str,
+) -> str:
+    """Pin one hook's rev to the version the lockfile pins for `package`.
 
-    The mirror tags releases as v<mypy version>, so a rev drifting from the
-    pinned mypy means pre-commit and the lockfile type-check with different
-    mypy releases.
+    A rev drifting from the lockfile means pre-commit and CI run different
+    releases of the same tool, which shows up as a finding that reproduces in
+    one place and not the other. `tag_prefix` is the repository's own tagging
+    habit - the mypy mirror tags v<version>, bandit tags <version> - and
+    getting it wrong pins a tag that does not exist.
     """
-    mypy_version = versions.get("mypy")
-    if mypy_version is None:
-        raise RuntimeError("mypy is not pinned in infra/requirements/dev.txt")
+    version = versions.get(normalize_package_name(package))
+    if version is None:
+        raise RuntimeError(f"{package} is not pinned in {requirements_path}")
 
     lines = config_text.splitlines()
     try:
-        mypy_repo_idx = next(
-            idx for idx, line in enumerate(lines) if line.strip() == MYPY_REPO_MARKER
+        repo_idx = next(
+            idx for idx, line in enumerate(lines) if line.strip() == repo_marker
         )
     except StopIteration as exc:
         raise RuntimeError(
-            "mypy repo block was not found in .pre-commit-config.yaml"
+            f"{package} repo block was not found in .pre-commit-config.yaml"
         ) from exc
 
-    for idx in range(mypy_repo_idx + 1, len(lines)):
+    for idx in range(repo_idx + 1, len(lines)):
         stripped = lines[idx].strip()
         if stripped.startswith("- repo: "):
             break
         if stripped.startswith("rev:"):
             indent = lines[idx][: len(lines[idx]) - len(lines[idx].lstrip(" "))]
-            lines[idx] = f"{indent}rev: v{mypy_version}"
+            lines[idx] = f"{indent}rev: {tag_prefix}{version}"
             return "\n".join(lines) + ("\n" if config_text.endswith("\n") else "")
 
-    raise RuntimeError("rev line was not found in the mypy repo block")
+    raise RuntimeError(f"rev line was not found in the {package} repo block")
 
 
 def sync_mypy_additional_dependencies(
@@ -151,25 +162,44 @@ def sync_mypy_additional_dependencies(
 def main() -> None:
     if not PRECOMMIT_CONFIG_PATH.exists():
         raise SystemExit(f"Missing file: {PRECOMMIT_CONFIG_PATH}")
-    if not DEV_REQUIREMENTS_PATH.exists():
-        raise SystemExit(f"Missing file: {DEV_REQUIREMENTS_PATH}")
+    for requirements_path in (DEV_REQUIREMENTS_PATH, SECURITY_REQUIREMENTS_PATH):
+        if not requirements_path.exists():
+            raise SystemExit(f"Missing file: {requirements_path}")
 
-    requirements_text = DEV_REQUIREMENTS_PATH.read_text(encoding="utf-8")
-    versions = parse_requirements_versions(requirements_text)
+    versions = parse_requirements_versions(
+        DEV_REQUIREMENTS_PATH.read_text(encoding="utf-8")
+    )
     if not versions:
         raise SystemExit("No pinned dependencies found in infra/requirements/dev.txt")
 
+    security_versions = parse_requirements_versions(
+        SECURITY_REQUIREMENTS_PATH.read_text(encoding="utf-8")
+    )
+
     original_config = PRECOMMIT_CONFIG_PATH.read_text(encoding="utf-8")
-    updated_config = sync_mypy_rev(original_config, versions)
+    updated_config = sync_hook_rev(
+        original_config,
+        versions,
+        repo_marker=MYPY_REPO_MARKER,
+        package="mypy",
+        requirements_path=DEV_REQUIREMENTS_PATH,
+        tag_prefix="v",
+    )
     updated_config = sync_mypy_additional_dependencies(updated_config, versions)
+    updated_config = sync_hook_rev(
+        updated_config,
+        security_versions,
+        repo_marker=BANDIT_REPO_MARKER,
+        package="bandit",
+        requirements_path=SECURITY_REQUIREMENTS_PATH,
+        tag_prefix="",
+    )
 
     if updated_config != original_config:
         PRECOMMIT_CONFIG_PATH.write_text(updated_config, encoding="utf-8")
-        print(
-            "Updated the mypy rev and additional_dependencies in .pre-commit-config.yaml"
-        )
+        print("Updated the pinned hook revs in .pre-commit-config.yaml")
     else:
-        print("mypy rev and additional_dependencies are already in sync")
+        print("Hook revs and mypy additional_dependencies are already in sync")
 
 
 if __name__ == "__main__":
