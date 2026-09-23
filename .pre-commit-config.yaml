@@ -84,3 +84,12 @@ repos:
           - types-PyYAML==6.0.12.20260815
           - types-requests==2.33.0.20260712
           - types-ujson==5.10.0.20250822
+
+  # Mirrors CI's `bandit -r src scripts migrations -q`: without it a B-finding
+  # first appears minutes after a push, on a run that is otherwise green.
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: [ -q ]
+        files: ^(src|scripts|migrations)/
