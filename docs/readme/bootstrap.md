@@ -315,7 +315,11 @@ On the target box:
 3. Close the host: `scp -r infra/firewall <host>:/tmp/firewall` then
    `ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'`. Docker-published ports
    bypass UFW, which is why this installs a `DOCKER-USER` chain as well.
-4. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
+4. Put the API's hostname into `server_name` in `infra/nginx/app.conf` (and in
+   `tls.conf.example`, in place of `api.example.com`). The default server drops
+   every request for a name it does not list, so a box reached by a name missing
+   from there answers nothing at all.
+5. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
    the exact steps, and swapping the config file is only the first of them: the
    server block reads `/etc/nginx/certs/fullchain.pem`, and the `nginx` service
    currently mounts configuration files only. Put the certificate and key under
@@ -331,7 +335,7 @@ On the target box:
    renew through certbot, and declare `certbot-webroot` under `volumes:` in the
    same file. Without the certificate mount Nginx cannot start and the first
    deploy fails at the last step.
-5. `make deploy-prod` — the bootstrap path, which builds the image on the box
+6. `make deploy-prod` — the bootstrap path, which builds the image on the box
    because no registry image exists yet.
 
 From then on CD runs `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>`
@@ -362,5 +366,5 @@ hardening in [security.md](security.md).
 [ ] make lint && make test green
 [ ] src/note copied for the first domain, then deleted
 [ ] production environment holds the CD secrets and APP_DIR; PROD_DEPLOY_ENABLED=true (when a server exists)
-[ ] Host hardened, TLS in place, first make deploy-prod done
+[ ] API hostname in nginx server_name, host hardened, TLS in place, first make deploy-prod done
 ```

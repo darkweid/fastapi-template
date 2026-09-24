@@ -4,8 +4,8 @@ from enum import StrEnum
 class ErrorCode(StrEnum):
     """Stable machine-readable error codes: the `code` field of every error body.
 
-    This enum is the complete client-facing registry, including the two codes
-    produced only by the nginx error pages (`infra/nginx/proxy.inc`). A frontend
+    This enum is the complete client-facing registry, including the codes
+    produced only by the nginx error pages (`infra/nginx/error_pages.inc`). A frontend
     keeps a `code -> translation` map; `message` is the English fallback.
     """
 
@@ -30,5 +30,8 @@ class ErrorCode(StrEnum):
     PROCESSING_ERROR = "processing_error"
     METHOD_NOT_ALLOWED = "method_not_allowed"
     # Produced only by the nginx error pages, never by the application.
+    BAD_REQUEST = "bad_request"
+    URI_TOO_LONG = "uri_too_long"
+    MISDIRECTED_REQUEST = "misdirected_request"
     BAD_GATEWAY = "bad_gateway"
     GATEWAY_TIMEOUT = "gateway_timeout"

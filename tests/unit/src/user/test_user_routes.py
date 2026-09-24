@@ -389,3 +389,28 @@ async def test_unverified_user_still_reads_own_profile(
 
     assert response.status_code == 200
     assert response.json()["id"] == str(unverified.id)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"first_name": "A"}, {"first_name": None}, {"first_name": 5}],
+    ids=["too-short", "explicit-null", "wrong-type"],
+)
+@pytest.mark.asyncio
+async def test_update_user_profile_names_the_field_once_in_a_422(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    payload: dict[str, object],
+) -> None:
+    """A PATCH field declared as a real union reported each branch as its own
+    error, with pydantic's branch tag in the path (`first_name.constrained-str`
+    plus a bogus `first_name.none`), which no form can map back to its input."""
+    dependency_overrides.set(get_current_user, ProvideValue(build_user()))
+    dependency_overrides.set(
+        get_update_user_profile_use_case, ProvideValue(FakeUpdateProfileUseCase())
+    )
+
+    response = await async_client.patch("/v1/users/me", json=payload)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["first_name"]

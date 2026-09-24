@@ -10,12 +10,39 @@
 #      - certbot-webroot:/var/www/certbot:ro
 # 3. Replace api.example.com below with the real hostname.
 #
+# Any other Host is dropped by the default servers: 444 on port 80, and on 443
+# the TLS handshake itself is refused for an unknown SNI name, so no certificate
+# is shown to a scanner walking the address space.
+#
 # The proxy body lives in proxy.inc, the same file app.conf includes, so the two
 # servers cannot drift apart.
 
 upstream app_service_upstream {
     server app:8001;
     keepalive 256;
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    server_tokens off;
+
+    include /etc/nginx/conf.d/error_pages.inc;
+
+    location / {
+        return 444;
+    }
+}
+
+# A connection opened for api.example.com that then names another Host is
+# answered 421 by this server, the one that Host resolves to, so it carries the
+# JSON error pages as well.
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_reject_handshake on;
+
+    include /etc/nginx/conf.d/error_pages.inc;
 }
 
 server {
@@ -28,8 +55,10 @@ server {
         root /var/www/certbot;
     }
 
+    # The redirect names the configured server, never the Host header a
+    # client sent.
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://$server_name$request_uri;
     }
 }
 

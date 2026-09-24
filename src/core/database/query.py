@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any, Literal, cast
 
 from sqlalchemy import inspect, or_
@@ -10,7 +10,6 @@ from sqlalchemy.sql.expression import ColumnClause
 
 from src.core.database.filters import FilterCondition
 from src.core.errors.exceptions import FilteringError
-from src.core.utils.datetime_utils import ensure_aware_utc
 
 SortOrder = Literal["asc", "desc"]
 
@@ -43,12 +42,16 @@ class ListQuery:
     """
 
     search: str | None = None
-    date_from: datetime | None = None
-    date_to: datetime | None = None
+    date_from: date | datetime | None = None
+    date_to: date | datetime | None = None
     date_field: str = "created_at"
     order_by: str | None = None
     order: SortOrder = "desc"
     conditions: FilterCondition | None = None
+    # The calendar a bare date or a naive datetime bound is read in. UTC until
+    # the project declares a timezone of its own; a service whose users think
+    # in local days passes theirs, or "until the 24th" ends hours off.
+    local_timezone: tzinfo = UTC
 
     def build_where_clauses(
         self,
@@ -86,26 +89,58 @@ class ListQuery:
         ):
             raise FilteringError("Date filtering is not supported for this resource")
 
-        # Both bounds are normalised to UTC before anything else touches them.
-        # A client can send one naive and one aware bound; comparing those two
-        # raises `TypeError`, which escapes the `FilteringError` handler and
-        # turns a malformed range into a 500. Normalising also keeps a naive
-        # bound from reaching a `DateTime(timezone=True)` column, where the
-        # driver would read it in the session timezone instead of UTC.
-        date_from = (
-            ensure_aware_utc(self.date_from) if self.date_from is not None else None
+        # Both bounds become aware UTC instants before anything else touches
+        # them: comparing a naive bound with an aware one raises `TypeError`,
+        # which escapes the `FilteringError` handler as a 500, and a naive
+        # value bound to a `DateTime(timezone=True)` column is read in the
+        # session timezone. A bare `date_to` names a whole day, so it becomes
+        # an exclusive bound at the next midnight.
+        upper_is_exclusive = self.date_to is not None and not isinstance(
+            self.date_to, datetime
         )
-        date_to = ensure_aware_utc(self.date_to) if self.date_to is not None else None
+        try:
+            lower = (
+                self._to_utc(self.date_from, next_day=False)
+                if self.date_from is not None
+                else None
+            )
+            upper = (
+                self._to_utc(self.date_to, next_day=True)
+                if self.date_to is not None
+                else None
+            )
+        except OverflowError:
+            raise FilteringError(
+                "Date range is outside the supported calendar"
+            ) from None
 
-        if date_from is not None and date_to is not None and date_from > date_to:
-            raise FilteringError("Date range start must not be later than its end")
+        if lower is not None and upper is not None:
+            if lower > upper or (upper_is_exclusive and lower == upper):
+                raise FilteringError("Date range start must not be later than its end")
 
         clauses: list[ColumnElement[bool]] = []
-        if date_from is not None:
-            clauses.append(column >= date_from)
-        if date_to is not None:
-            clauses.append(column <= date_to)
+        if lower is not None:
+            clauses.append(column >= lower)
+        if upper is not None:
+            clauses.append(column < upper if upper_is_exclusive else column <= upper)
         return clauses
+
+    def _to_utc(self, bound: date | datetime, *, next_day: bool) -> datetime:
+        """The UTC instant a bound stands for.
+
+        A datetime is its own instant, a naive one read in `local_timezone`. A
+        bare date is local midnight of that day, or of the day after it when
+        `next_day` is set. Raises `OverflowError` at the ends of the calendar.
+        """
+        if isinstance(bound, datetime):
+            moment = bound
+        else:
+            moment = datetime.combine(bound, time.min)
+            if next_day:
+                moment += timedelta(days=1)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=self.local_timezone)
+        return moment.astimezone(UTC)
 
     def _build_search_clause(
         self,

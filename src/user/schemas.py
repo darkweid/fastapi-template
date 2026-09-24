@@ -2,27 +2,16 @@ from typing import Annotated
 from uuid import UUID
 
 from pydantic import EmailStr, Field, field_validator
-from pydantic.json_schema import SkipJsonSchema
 
-from src.core.schemas import Base
+from src.core.schemas import Base, PatchField
 from src.core.validations import FULL_NAME_PATTERN
 from src.user.enums import UserRole
 
 
 class UserProfileUpdateModel(Base):
-    # SkipJsonSchema[None] keeps the fields optional at runtime while removing
-    # the null branch from the OpenAPI contract - the validator below rejects
-    # an explicit null, so the schema must not advertise it. Constraints sit
-    # inside the str branch so they never apply to the None default.
-    first_name: (
-        Annotated[str, Field(min_length=2, max_length=30)] | SkipJsonSchema[None]
-    ) = None
-    last_name: (
-        Annotated[str, Field(min_length=2, max_length=30)] | SkipJsonSchema[None]
-    ) = None
-    username: (
-        Annotated[str, Field(min_length=3, max_length=50)] | SkipJsonSchema[None]
-    ) = None
+    first_name: PatchField[Annotated[str, Field(min_length=2, max_length=30)]] = None
+    last_name: PatchField[Annotated[str, Field(min_length=2, max_length=30)]] = None
+    username: PatchField[Annotated[str, Field(min_length=3, max_length=50)]] = None
 
     @field_validator("first_name", "last_name", "username")
     @classmethod

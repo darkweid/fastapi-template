@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Query
@@ -11,6 +11,7 @@ import pytest
 from src.core.database.filters import FilterCondition
 from src.core.pagination import ListQueryParams, SortableListQueryParams
 from src.core.pagination.schemas import (
+    MAX_PAGE,
     PaginatedResponse,
     PaginationParams,
     make_paginated_response,
@@ -37,6 +38,27 @@ def test_pagination_params_validation() -> None:
 
     with pytest.raises(ValidationError):
         PaginationParams(page=1, size=101)
+
+
+def test_pagination_params_accept_the_last_allowed_page() -> None:
+    assert PaginationParams(page=MAX_PAGE).page == MAX_PAGE
+
+
+def test_pagination_page_above_the_ceiling_answers_422() -> None:
+    """`(page - 1) * size` is bound as OFFSET, a bigint: an unbounded page
+    overflows it and asyncpg's DataError reaches the client as a 500 and
+    Sentry as a fault, for what is a malformed request."""
+    app = FastAPI()
+
+    @app.get("/items")
+    def list_items(params: Annotated[PaginationParams, Query()]) -> dict[str, Any]:
+        return params.model_dump(mode="json")
+
+    client = TestClient(app)
+
+    assert client.get("/items", params={"page": MAX_PAGE}).status_code == 200
+    assert client.get("/items", params={"page": MAX_PAGE + 1}).status_code == 422
+    assert client.get("/items", params={"page": 2**62}).status_code == 422
 
 
 def test_make_paginated_response_with_schema() -> None:
@@ -186,3 +208,41 @@ def test_sortable_list_query_params_leave_the_search_clause_empty() -> None:
     assert query.search is None
     assert query.order_by == "name"
     assert query.order == "asc"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2026-09-24", date(2026, 9, 24)),
+        ("2026-09-24T00:00:00", datetime(2026, 9, 24, 0, 0)),
+        (
+            "2026-09-24T10:30:00+05:00",
+            datetime.fromisoformat("2026-09-24T10:30:00+05:00"),
+        ),
+    ],
+    ids=["bare-date", "midnight-datetime", "aware-datetime"],
+)
+def test_list_query_params_keep_a_bare_date_apart_from_a_datetime(
+    raw: str, expected: date
+) -> None:
+    """A bare `date_to` means the whole day and a datetime means that instant;
+    left to pydantic's union matching, midnight datetimes parse as dates and
+    bare dates as midnight datetimes, depending on the member order."""
+    params = SortableListQueryParams.model_validate({"date_from": raw, "date_to": raw})
+
+    assert type(params.date_from) is type(expected)
+    assert params.date_from == expected
+    assert type(params.to_list_query().date_to) is type(expected)
+
+
+def test_list_query_params_reject_an_impossible_bare_date() -> None:
+    app = FastAPI()
+
+    @app.get("/items")
+    def list_items(params: Annotated[ListQueryParams, Query()]) -> dict[str, Any]:
+        return params.model_dump(mode="json")
+
+    client = TestClient(app)
+
+    assert client.get("/items", params={"date_to": "2026-09-24"}).status_code == 200
+    assert client.get("/items", params={"date_to": "2026-02-30"}).status_code == 422
