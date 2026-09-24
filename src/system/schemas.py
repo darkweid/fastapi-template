@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from src.core.schemas import Base
@@ -24,4 +25,6 @@ class HealthCheckResponse(Base):
 
 
 class ServerTimeResponse(Base):
-    time: str
+    # A datetime, not a preformatted string: the serializer writes UTC as
+    # `Z`, the same spelling as every other instant the API answers with.
+    time: datetime

@@ -38,6 +38,5 @@ async def check_health(
 
 @router.get("/time/", response_model=ServerTimeResponse)
 def get_utc_time() -> ServerTimeResponse:
-    """Returns the current server time in UTC, ISO 8601 format."""
-    now = get_utc_now()
-    return ServerTimeResponse(time=now.replace(microsecond=0).isoformat())
+    """The current server time in UTC, to the second."""
+    return ServerTimeResponse(time=get_utc_now().replace(microsecond=0))
