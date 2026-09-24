@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
@@ -155,6 +156,91 @@ def test_build_where_clauses_binds_naive_date_bound_as_utc() -> None:
 
     assert bound.tzinfo is not None
     assert bound == naive.replace(tzinfo=UTC)
+
+
+TASHKENT = ZoneInfo("Asia/Tashkent")
+
+
+def test_bare_date_to_covers_the_whole_day() -> None:
+    """A bare `date_to=2026-09-24` used to become midnight at the start of that
+    day, so a list asked for "up to the 24th" silently dropped the 24th."""
+    query = ListQuery(date_to=date(2026, 9, 24))
+
+    compiled = compile_clauses(query.build_where_clauses(QueryModel, SEARCHABLE))
+
+    assert "created_at <" in compiled.string
+    assert "created_at <=" not in compiled.string
+    assert compiled.params["created_at_1"] == datetime(2026, 9, 25, tzinfo=UTC)
+
+
+def test_bare_date_from_starts_at_midnight() -> None:
+    query = ListQuery(date_from=date(2026, 9, 24))
+
+    compiled = compile_clauses(query.build_where_clauses(QueryModel, SEARCHABLE))
+
+    assert "created_at >=" in compiled.string
+    assert compiled.params["created_at_1"] == datetime(2026, 9, 24, tzinfo=UTC)
+
+
+def test_bare_dates_follow_the_local_calendar() -> None:
+    """A day in Tashkent starts at 19:00 UTC the evening before; reading a bare
+    date in UTC would shift the whole period by five hours."""
+    query = ListQuery(
+        date_from=date(2026, 9, 24),
+        date_to=date(2026, 9, 24),
+        local_timezone=TASHKENT,
+    )
+
+    compiled = compile_clauses(query.build_where_clauses(QueryModel, SEARCHABLE))
+
+    assert compiled.params["created_at_1"] == datetime(2026, 9, 23, 19, tzinfo=UTC)
+    assert compiled.params["created_at_2"] == datetime(2026, 9, 24, 19, tzinfo=UTC)
+
+
+def test_naive_datetime_bound_is_read_in_the_local_timezone() -> None:
+    query = ListQuery(date_from=datetime(2026, 9, 24, 9, 0), local_timezone=TASHKENT)
+
+    compiled = compile_clauses(query.build_where_clauses(QueryModel, SEARCHABLE))
+
+    assert compiled.params["created_at_1"] == datetime(2026, 9, 24, 4, tzinfo=UTC)
+
+
+def test_aware_datetime_bound_ignores_the_local_timezone() -> None:
+    query = ListQuery(
+        date_to=datetime(2026, 9, 24, 9, 0, tzinfo=UTC), local_timezone=TASHKENT
+    )
+
+    compiled = compile_clauses(query.build_where_clauses(QueryModel, SEARCHABLE))
+
+    assert "created_at <=" in compiled.string
+    assert compiled.params["created_at_1"] == datetime(2026, 9, 24, 9, tzinfo=UTC)
+
+
+def test_period_ending_on_a_day_before_its_start_is_inverted() -> None:
+    query = ListQuery(
+        date_from=datetime(2026, 9, 25, 0, 0, tzinfo=UTC),
+        date_to=date(2026, 9, 24),
+    )
+
+    with pytest.raises(FilteringError):
+        query.build_where_clauses(QueryModel, SEARCHABLE)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        ListQuery(date_to=date.max),
+        ListQuery(date_from=datetime.fromisoformat("0001-01-01T00:00:00+05:00")),
+    ],
+    ids=["day-after-the-last-date", "before-the-first-instant"],
+)
+def test_date_bound_outside_the_calendar_is_a_filtering_error(
+    query: ListQuery,
+) -> None:
+    """Moving such a bound to UTC raises OverflowError, which no handler maps,
+    so the client got a 500 for a malformed period."""
+    with pytest.raises(FilteringError):
+        query.build_where_clauses(QueryModel, SEARCHABLE)
 
 
 def test_build_where_clauses_rejects_unknown_date_field() -> None:

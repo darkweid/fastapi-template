@@ -1,9 +1,10 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from math import ceil
-from typing import Any, Generic, TypeVar
+import re
+from typing import Annotated, Any, Generic, TypeVar
 
-from pydantic import Field, field_validator
+from pydantic import BeforeValidator, Field, field_validator
 
 from src.core.database.filters import FilterCondition
 from src.core.database.query import ListQuery, SortOrder
@@ -16,6 +17,24 @@ SchemaT = TypeVar("SchemaT", bound=Base)
 # page overflows it and the driver's DataError answers a malformed request
 # with a 500. No list a client pages through by hand reaches this depth.
 MAX_PAGE = 100_000
+
+_BARE_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _parse_bare_date(value: object) -> object:
+    """Settle `YYYY-MM-DD` as a date before the union sees it.
+
+    Left to pydantic, `datetime | date` parses a bare date as midnight and
+    `date | datetime` parses a midnight datetime as a date, so the whole-day
+    reading of `date_to` would depend on the member order instead of on what
+    the client sent.
+    """
+    if isinstance(value, str) and _BARE_DATE.fullmatch(value):
+        return date.fromisoformat(value)
+    return value
+
+
+DateBound = Annotated[datetime | date, BeforeValidator(_parse_bare_date)]
 
 
 class PaginationParams(Base):
@@ -34,7 +53,10 @@ class SortableListQueryParams(PaginationParams):
 
     - order_by: field to sort by; the resource decides which fields are allowed
     - order: sort direction, "asc" or "desc" (default: "desc")
-    - date_from / date_to: inclusive bounds of the period to select
+    - date_from / date_to: inclusive bounds of the period to select, each a
+      datetime or a bare date (`2026-09-24`); a bare `date_to` includes that
+      whole day; a bare date or a datetime without an offset is read in
+      `ListQuery.local_timezone` (UTC by default)
 
     A resource whose repository declares no `searchable_fields` extends this
     instead of `ListQueryParams`: inheriting `search` would publish a query
@@ -43,8 +65,8 @@ class SortableListQueryParams(PaginationParams):
 
     order_by: str | None = None
     order: SortOrder = "desc"
-    date_from: datetime | None = None
-    date_to: datetime | None = None
+    date_from: DateBound | None = None
+    date_to: DateBound | None = None
 
     @field_validator("order_by", "search", mode="after", check_fields=False)
     @classmethod
