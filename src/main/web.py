@@ -35,6 +35,10 @@ def get_application() -> FastAPI:
         docs_url=DOCS_URL if docs_are_public else None,
         redoc_url=REDOC_URL if docs_are_public else None,
         openapi_url=OPENAPI_URL if docs_are_public else None,
+        # Starlette builds the slash redirect from the Host header and drops
+        # the port the proxy listens on, so a forged Host made it an open
+        # redirect. A path is served exactly as declared, or answers 404.
+        redirect_slashes=False,
     )
 
     if not docs_are_public:

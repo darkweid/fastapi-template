@@ -147,6 +147,7 @@ services:
       # the stock nginx page to any request whose Host is literally "localhost".
       - ./nginx/app.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/proxy.inc:/etc/nginx/conf.d/proxy.inc:ro
+      - ./nginx/error_pages.inc:/etc/nginx/conf.d/error_pages.inc:ro
     # 443 is published although app.conf serves plain http: TLS terminates here
     # once the host has a certificate (see nginx/tls.conf.example), and the host
     # firewall opens exactly these two ports.

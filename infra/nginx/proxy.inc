@@ -3,44 +3,13 @@
 # nginx auto-loads /etc/nginx/conf.d/*.conf, and this file is meant to be
 # included from inside a server block, not loaded on its own.
 
-# Errors nginx answers itself never reach the app, so its stock HTML pages would
-# break the {"code","message"} contract every other response follows: an
-# oversized body (413) and an app that is down or too slow (502/504).
-error_page 413 = @error_payload_too_large;
-error_page 502 = @error_bad_gateway;
-error_page 504 = @error_gateway_timeout;
+include /etc/nginx/conf.d/error_pages.inc;
 
-# The CORS headers below are what makes the JSON readable: without them a
-# browser blocks the response and a cross-origin SPA sees a network error
-# instead of the body. The origin is reflected rather than matched against a
-# list, which nginx does not have - these three responses carry a fixed string
-# and no application data, and the real allowlist stays in the app's CORS
-# middleware, which answers every non-error request.
-location @error_payload_too_large {
-    default_type application/json;
-    add_header Access-Control-Allow-Origin $http_origin always;
-    add_header Access-Control-Allow-Credentials true always;
-    add_header Vary Origin always;
-    add_header X-Request-ID $request_id always;
-    return 413 '{"code":"payload_too_large","message":"Request body exceeds the maximum allowed size"}';
-}
-
-location @error_bad_gateway {
-    default_type application/json;
-    add_header Access-Control-Allow-Origin $http_origin always;
-    add_header Access-Control-Allow-Credentials true always;
-    add_header Vary Origin always;
-    add_header X-Request-ID $request_id always;
-    return 502 '{"code":"bad_gateway","message":"The service is temporarily unreachable"}';
-}
-
-location @error_gateway_timeout {
-    default_type application/json;
-    add_header Access-Control-Allow-Origin $http_origin always;
-    add_header Access-Control-Allow-Credentials true always;
-    add_header Vary Origin always;
-    add_header X-Request-ID $request_id always;
-    return 504 '{"code":"gateway_timeout","message":"The service took too long to respond"}';
+# The API speaks these methods and no others. nginx refuses TRACE on its own;
+# anything else unknown (PROPFIND, CONNECT, a typo) is refused here, before it
+# costs an upstream connection, with the same JSON body as the app's 405.
+if ($request_method !~ ^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$) {
+    return 405;
 }
 
 location / {

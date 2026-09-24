@@ -61,3 +61,17 @@ def test_docs_route_uses_docs_friendly_csp(monkeypatch: pytest.MonkeyPatch) -> N
     assert response.headers["Content-Security-Policy"] == DOCS_CONTENT_SECURITY_POLICY
     assert "cdn.jsdelivr.net" in response.text
     assert "<script>" in response.text
+
+
+@pytest.mark.asyncio
+async def test_a_path_without_its_trailing_slash_is_not_redirected(
+    async_client,
+) -> None:
+    """Starlette builds the slash redirect from the Host header, dropping the
+    port nginx listens on: a forged Host turned the API into an open redirect
+    (`Host: evil.com` -> `Location: http://evil.com/live/`)."""
+    response = await async_client.get("/live", headers={"Host": "evil.com"})
+
+    assert response.status_code == 404
+    assert "location" not in response.headers
+    assert response.json()["code"] == "not_found"
