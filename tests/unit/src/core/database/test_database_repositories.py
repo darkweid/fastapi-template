@@ -197,6 +197,20 @@ async def test_base_repository_get_single_returns_first() -> None:
 
 
 @pytest.mark.asyncio
+async def test_base_repository_get_single_can_overwrite_a_held_instance() -> None:
+    """A re-read after a foreign key change must not answer the relationship
+    the identity map still holds."""
+    repo = RepositoryModelRepository()
+    session = RepositorySession()
+    session.execute.return_value = FakeResult(items=[])
+
+    await repo.get_single(session=session, populate_existing=True, id=1)
+
+    query = session.execute.await_args.args[0]
+    assert query.get_execution_options()["populate_existing"] is True
+
+
+@pytest.mark.asyncio
 async def test_base_repository_get_single_applies_for_update_scope() -> None:
     repo = RepositoryModelRepository()
     session = RepositorySession()

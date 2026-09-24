@@ -174,9 +174,16 @@ class BaseRepository(Generic[T]):
         session: AsyncSession,
         eager: EagerLoadSequence | None = None,
         for_update: bool = False,
+        populate_existing: bool = False,
         **filters: Any,
     ) -> T | None:
-        """Retrieve a single record using the provided session."""
+        """Retrieve a single record using the provided session.
+
+        `populate_existing=True` overwrites an instance the session already
+        holds, relationships included. Without it an eager option skips a
+        relationship that is loaded already, so a re-read after changing a
+        foreign key keeps answering the old related object.
+        """
         filters = self._scope_filters(filters)
         query = select(self.model).filter_by(**filters).limit(1)
 
@@ -184,6 +191,8 @@ class BaseRepository(Generic[T]):
             query = query.options(*eager)
         if for_update:
             query = self._apply_for_update(query)
+        if populate_existing:
+            query = query.execution_options(populate_existing=True)
 
         result = await session.execute(query)
         return result.unique().scalars().first()
