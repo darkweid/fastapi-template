@@ -132,8 +132,19 @@ def test_trimmed_text_refuses_other_control_characters(control: str) -> None:
 
 @pytest.mark.parametrize(
     "control",
-    ["\x80", "\x85", "\x9f", "\u202a", "\u202e", "\u2066", "\u2069"],
-    ids=["c1-first", "nel", "c1-last", "lre", "rlo", "lri", "pdi"],
+    [
+        "\x80",
+        "\x85",
+        "\x9f",
+        "\u202a",
+        "\u202e",
+        "\u2066",
+        "\u2069",
+        "\u061c",
+        "\u200e",
+        "\u200f",
+    ],
+    ids=["c1-first", "nel", "c1-last", "lre", "rlo", "lri", "pdi", "alm", "lrm", "rlm"],
 )
 def test_trimmed_types_refuse_c1_and_bidi_controls(control: str) -> None:
     """A C1 control is as invisible as a C0 one, and a bidi override makes
