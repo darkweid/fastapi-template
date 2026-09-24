@@ -52,4 +52,4 @@ async def test_system_routes_contract(
     time_response = await async_client.get("/time/")
 
     assert time_response.status_code == 200
-    assert time_response.json() == {"time": "2024-01-01T12:00:00+00:00"}
+    assert time_response.json() == {"time": "2024-01-01T12:00:00Z"}

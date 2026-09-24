@@ -164,4 +164,4 @@ async def test_get_utc_time(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> No
         response = await client.get("/time/")
 
         assert response.status_code == 200
-        assert response.json() == {"time": "2024-01-01T12:30:45+00:00"}
+        assert response.json() == {"time": "2024-01-01T12:30:45Z"}
