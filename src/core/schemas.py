@@ -96,13 +96,18 @@ that needs one of its own writes both steps into a single callable.
 TrimmedStr = Annotated[
     str,
     StringConstraints(
-        strip_whitespace=True, min_length=1, pattern=r"^[^\x00-\x1f\x7f]*$"
+        strip_whitespace=True,
+        min_length=1,
+        pattern=r"^[^\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]*$",
     ),
 ]
-"""Free text a person types: stripped, not blank, no ASCII control characters.
+"""Free text a person types: stripped, not blank, no control characters.
 
 A NUL fails PostgreSQL's text input with a 500, and a line break or an escape
-sequence inside a name corrupts whatever prints it. Add limits outside it,
+sequence inside a name corrupts whatever prints it. C1 controls (U+0080 to
+U+009F) are refused for the same reason, and the bidi embedding, override and
+isolate controls (U+202A to U+202E, U+2066 to U+2069) because they make a
+name render in an order other than the one stored. Add limits outside it,
 `Annotated[TrimmedStr, Field(max_length=100)]`: they merge into the same
 string schema, so lengths are measured after stripping. An outer `pattern=` or
 `min_length=0` replaces the built-in one and drops that guard with it.
@@ -114,7 +119,9 @@ TrimmedText = Annotated[
     StringConstraints(
         strip_whitespace=True,
         min_length=1,
-        pattern=r"^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]*$",
+        pattern=(
+            r"^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]*$"
+        ),
     ),
 ]
 """`TrimmedStr` for text that may span lines: a comment, a message, a
