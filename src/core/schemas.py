@@ -107,3 +107,17 @@ sequence inside a name corrupts whatever prints it. Add limits outside it,
 string schema, so lengths are measured after stripping. An outer `pattern=` or
 `min_length=0` replaces the built-in one and drops that guard with it.
 """
+
+
+TrimmedText = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        pattern=r"^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]*$",
+    ),
+]
+"""`TrimmedStr` for text that may span lines: a comment, a message, a
+description. Tab, line feed and carriage return pass; every other control
+character is refused for the reasons `TrimmedStr` gives. Limits compose the
+same way."""

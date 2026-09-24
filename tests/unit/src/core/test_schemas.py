@@ -3,7 +3,13 @@ from typing import Annotated
 from pydantic import EmailStr, Field, ValidationError
 import pytest
 
-from src.core.schemas import Base, EmailNormalizationMixin, PatchField, TrimmedStr
+from src.core.schemas import (
+    Base,
+    EmailNormalizationMixin,
+    PatchField,
+    TrimmedStr,
+    TrimmedText,
+)
 
 
 class _EmailChangeModel(EmailNormalizationMixin, Base):
@@ -102,3 +108,23 @@ def test_trimmed_str_publishes_its_rules_in_the_schema() -> None:
     assert title["minLength"] == 2
     assert title["maxLength"] == 5
     assert "pattern" in title
+
+
+class _TextModel(Base):
+    text: Annotated[TrimmedText, Field(max_length=10)]
+
+
+def test_trimmed_text_keeps_inner_line_breaks_and_tabs() -> None:
+    assert _TextModel(text="  a\r\nb\tc \n").text == "a\r\nb\tc"
+
+
+@pytest.mark.parametrize("blank", ["", "  ", "\n\t"])
+def test_trimmed_text_refuses_a_blank_value(blank: str) -> None:
+    with pytest.raises(ValidationError):
+        _TextModel(text=blank)
+
+
+@pytest.mark.parametrize("control", ["\x00", "\x1b", "\x7f", "\x0b", "\x0c"])
+def test_trimmed_text_refuses_other_control_characters(control: str) -> None:
+    with pytest.raises(ValidationError):
+        _TextModel(text=f"a{control}b")
