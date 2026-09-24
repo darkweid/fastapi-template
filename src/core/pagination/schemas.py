@@ -12,15 +12,20 @@ from src.core.schemas import Base
 T = TypeVar("T")
 SchemaT = TypeVar("SchemaT", bound=Base)
 
+# `(page - 1) * size` is bound as OFFSET, a bigint: without a ceiling a huge
+# page overflows it and the driver's DataError answers a malformed request
+# with a 500. No list a client pages through by hand reaches this depth.
+MAX_PAGE = 100_000
+
 
 class PaginationParams(Base):
     """Pagination request parameters.
 
-    - page: page number starting from 1 (default: 1)
+    - page: page number from 1 to 100000 (default: 1)
     - size: page size from 1 to 100 (default: 50)
     """
 
-    page: int = Field(default=1, ge=1)
+    page: int = Field(default=1, ge=1, le=MAX_PAGE)
     size: int = Field(default=50, ge=1, le=100)
 
 

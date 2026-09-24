@@ -11,6 +11,7 @@ import pytest
 from src.core.database.filters import FilterCondition
 from src.core.pagination import ListQueryParams, SortableListQueryParams
 from src.core.pagination.schemas import (
+    MAX_PAGE,
     PaginatedResponse,
     PaginationParams,
     make_paginated_response,
@@ -37,6 +38,27 @@ def test_pagination_params_validation() -> None:
 
     with pytest.raises(ValidationError):
         PaginationParams(page=1, size=101)
+
+
+def test_pagination_params_accept_the_last_allowed_page() -> None:
+    assert PaginationParams(page=MAX_PAGE).page == MAX_PAGE
+
+
+def test_pagination_page_above_the_ceiling_answers_422() -> None:
+    """`(page - 1) * size` is bound as OFFSET, a bigint: an unbounded page
+    overflows it and asyncpg's DataError reaches the client as a 500 and
+    Sentry as a fault, for what is a malformed request."""
+    app = FastAPI()
+
+    @app.get("/items")
+    def list_items(params: Annotated[PaginationParams, Query()]) -> dict[str, Any]:
+        return params.model_dump(mode="json")
+
+    client = TestClient(app)
+
+    assert client.get("/items", params={"page": MAX_PAGE}).status_code == 200
+    assert client.get("/items", params={"page": MAX_PAGE + 1}).status_code == 422
+    assert client.get("/items", params={"page": 2**62}).status_code == 422
 
 
 def test_make_paginated_response_with_schema() -> None:
