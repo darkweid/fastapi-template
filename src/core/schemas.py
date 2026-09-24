@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from typing import Annotated, Any, TypeVar
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from src.core.utils.security import normalize_email
 from src.core.validations import (
@@ -6,6 +8,8 @@ from src.core.validations import (
     PASSWORD_MIN_LENGTH,
     STRONG_PASSWORD_VALIDATOR,
 )
+
+T = TypeVar("T")
 
 
 class Base(BaseModel):
@@ -51,3 +55,32 @@ class StrongPasswordValidationMixin(BaseModel):
                 f"Password must be {PASSWORD_MIN_LENGTH}-{PASSWORD_MAX_LENGTH} characters long and contain at least one lowercase letter, one uppercase letter, one digit, and one non-alphanumeric non-space character. Printable ASCII characters are allowed."
             )
         return value
+
+
+def _hide_null_from_schema(schema: dict[str, Any]) -> None:
+    branches = schema.pop("anyOf", None)
+    if branches is not None:
+        kept = [branch for branch in branches if branch != {"type": "null"}]
+        if len(kept) == 1:
+            schema.update(kept[0])
+        else:
+            schema["anyOf"] = kept
+    if "default" in schema and schema["default"] is None:
+        del schema["default"]
+
+
+PatchField = Annotated[T | None, Field(json_schema_extra=_hide_null_from_schema)]
+"""A PATCH field that may be omitted but must not be null.
+
+Declare it as `name: PatchField[X] = None`, with constraints inside:
+`PatchField[Annotated[str, Field(min_length=2)]]`. The `None` default is what
+makes the field omittable; the model still needs a validator that refuses an
+explicit null, since this alias changes only the published schema.
+
+Pydantic builds a nullable schema from `X | None`, so an error is reported
+under the bare field name. `X | SkipJsonSchema[None]` hides null as well, but
+it is a real union: every error is reported once per branch, with pydantic's
+branch tag in the path (`first_name.constrained-str` next to a bogus
+`first_name.none`). The alias owns the field's `json_schema_extra`; a field
+that needs one of its own writes both steps into a single callable.
+"""
