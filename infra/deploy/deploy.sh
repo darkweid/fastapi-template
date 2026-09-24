@@ -34,6 +34,18 @@ test -f .env || {
 }
 python3 scripts/ops/check_env.py
 
+# The nginx configuration this checkout ships is tested in a fresh container
+# with the new mounts before anything is rolled: a broken vhost or a missing
+# certificate aborts the deploy with the previous stack still serving. Testing
+# it later would be too late - rolling the app moves it to a new address the
+# running nginx cannot follow. The test resolves the app upstream, so it needs
+# an app container on the network; on the first deploy there is none, nothing
+# is serving yet either, and nginx's own start below reports the error.
+if [ -n "$("${COMPOSE[@]}" ps -q app)" ]; then
+  echo "[deploy] testing the nginx configuration"
+  "${COMPOSE[@]}" run --rm --no-deps --entrypoint nginx nginx -t
+fi
+
 # The database image stays box-local in both modes - CD ships application code,
 # never the database. It is rebuilt every deploy because `up` reuses an existing
 # tag, so a change to infra/postgres/ would otherwise never reach the server.
