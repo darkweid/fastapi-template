@@ -1,6 +1,13 @@
 from typing import Annotated, Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from src.core.utils.security import normalize_email
 from src.core.validations import (
@@ -83,4 +90,20 @@ it is a real union: every error is reported once per branch, with pydantic's
 branch tag in the path (`first_name.constrained-str` next to a bogus
 `first_name.none`). The alias owns the field's `json_schema_extra`; a field
 that needs one of its own writes both steps into a single callable.
+"""
+
+
+TrimmedStr = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, min_length=1, pattern=r"^[^\x00-\x1f\x7f]*$"
+    ),
+]
+"""Free text a person types: stripped, not blank, no ASCII control characters.
+
+A NUL fails PostgreSQL's text input with a 500, and a line break or an escape
+sequence inside a name corrupts whatever prints it. Add limits outside it,
+`Annotated[TrimmedStr, Field(max_length=100)]`: they merge into the same
+string schema, so lengths are measured after stripping. An outer `pattern=` or
+`min_length=0` replaces the built-in one and drops that guard with it.
 """
