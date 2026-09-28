@@ -13,6 +13,7 @@ class S3ClientProtocol(Protocol):
         *,
         bucket: str | None = None,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> None: ...
     async def upload_uploadfile(
         self, key: str, file: UploadFile, *, bucket: str | None = None
@@ -25,6 +26,7 @@ class S3ClientProtocol(Protocol):
         bucket: str | None = None,
         part_size_bytes: int = 8 * 1024 * 1024,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> None: ...
     async def download_bytes(self, key: str, *, bucket: str | None = None) -> bytes: ...
     async def delete_object(self, key: str, *, bucket: str | None = None) -> None: ...

@@ -160,7 +160,13 @@ class S3Adapter(S3ClientProtocol):
         *,
         bucket: str | None = None,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> None:
+        """Store `data` under `key`.
+
+        `cache_control` is saved as object metadata and served back as the
+        `Cache-Control` header of every GET of the object.
+        """
         client = self._ensure_client()
         put_kwargs: dict[str, Any] = {
             "Bucket": self._get_bucket(bucket),
@@ -169,6 +175,8 @@ class S3Adapter(S3ClientProtocol):
         }
         if content_type:
             put_kwargs["ContentType"] = content_type
+        if cache_control:
+            put_kwargs["CacheControl"] = cache_control
         await client.put_object(**put_kwargs)
 
     async def upload_uploadfile(
@@ -210,6 +218,7 @@ class S3Adapter(S3ClientProtocol):
         bucket: str | None = None,
         part_size_bytes: int = 16 * 1024 * 1024,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> None:
         """
         Upload a large UploadFile using multipart upload.
@@ -230,6 +239,7 @@ class S3Adapter(S3ClientProtocol):
                     data=b"",
                     bucket=bucket,
                     content_type=content_type or file.content_type or None,
+                    cache_control=cache_control,
                 )
                 return
             required_part_size = max(
@@ -249,6 +259,8 @@ class S3Adapter(S3ClientProtocol):
         }
         if resolved_content_type:
             create_kwargs["ContentType"] = resolved_content_type
+        if cache_control:
+            create_kwargs["CacheControl"] = cache_control
 
         response = await client.create_multipart_upload(**create_kwargs)
         upload_id = response["UploadId"]

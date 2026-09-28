@@ -225,6 +225,52 @@ async def test_upload_and_download_bytes(
 
 
 @pytest.mark.asyncio
+async def test_upload_bytes_stores_cache_control(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """S3 serves the stored value back as the Cache-Control header of every GET;
+    omitting it leaves browsers revalidating each object on every view."""
+    adapter, client, _ = s3_mocks
+
+    async with adapter:
+        await adapter.upload_bytes("key1", b"hello", cache_control="public, max-age=60")
+
+    assert client.put_object.await_args.kwargs["CacheControl"] == "public, max-age=60"
+
+
+@pytest.mark.asyncio
+async def test_upload_large_uploadfile_stores_cache_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AsyncMock()
+    cm = FakeClientCM(client)
+    session = FakeSession(client, cm)
+    monkeypatch.setattr("src.core.storage.s3.adapter.aioboto3.Session", lambda: session)
+    monkeypatch.setattr("src.core.storage.s3.adapter.MIN_MULTIPART_PART_SIZE_BYTES", 5)
+    monkeypatch.setattr(
+        S3Adapter, "_round_up_to_megabyte", lambda self, size_bytes: size_bytes
+    )
+    adapter = S3Adapter(
+        bucket="default-bucket",
+        region="us-east-1",
+        access_key="ak",
+        secret_key="sk",
+        default_presign_ttl=300,
+    )
+    client.create_multipart_upload.return_value = {"UploadId": "u1"}
+    client.upload_part.return_value = {"ETag": "e1"}
+    upload = UploadFile(filename="file.txt", file=io.BytesIO(b"01234"))
+
+    async with adapter:
+        await adapter.upload_large_uploadfile(
+            "key-large", upload, part_size_bytes=5, cache_control="no-cache"
+        )
+
+    create_kwargs = client.create_multipart_upload.await_args.kwargs
+    assert create_kwargs["CacheControl"] == "no-cache"
+
+
+@pytest.mark.asyncio
 async def test_list_keys_returns_keys_or_empty(
     s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
 ) -> None:
