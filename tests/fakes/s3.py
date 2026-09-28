@@ -22,6 +22,7 @@ class InMemoryS3Client:
         *,
         bucket: str | None = None,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> None:
         target = self._get_bucket(bucket)
         target[key] = data
@@ -44,9 +45,16 @@ class InMemoryS3Client:
         bucket: str | None = None,
         part_size_bytes: int = 8 * 1024 * 1024,
         content_type: str | None = None,
+        cache_control: str | None = None,
     ) -> None:
         data = await file.read()
-        await self.upload_bytes(key, data, bucket=bucket, content_type=content_type)
+        await self.upload_bytes(
+            key,
+            data,
+            bucket=bucket,
+            content_type=content_type,
+            cache_control=cache_control,
+        )
 
     async def download_bytes(self, key: str, *, bucket: str | None = None) -> bytes:
         source = self._get_bucket(bucket)
