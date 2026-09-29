@@ -26,7 +26,7 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 - **Postgres:** `infra/postgres/Dockerfile`, stores data in volume.
 - **App:** Uvicorn/Gunicorn serving FastAPI under a non-root runtime user.
 - **Worker:** Runs taskiq tasks consumed from Redis Streams, with `IdempotencyReceiver` for worker-side dedup and `--max-async-tasks 20` concurrency (mirrored by the `tasks_engine` pool in `src/core/database/engine.py`).
-- **Scheduler:** Fires periodic tasks (`schedule=[{"cron": "..."}]` on the task decorator) into the stream, including the outbox sweeper (every minute) and purge (daily) tasks, and fires delayed retries written by `SmartRetryMiddleware`; exactly one instance runs.
+- **Scheduler:** Fires periodic tasks (`schedule=[{"cron": "..."}]` on the task decorator) into the stream, including the outbox sweeper (every minute, taking only rows older than `SWEEPER_GRACE` so it does not race a row's own after-commit publish) and purge (daily) tasks, and fires delayed retries written by `SmartRetryMiddleware`; exactly one instance runs.
 - **Nginx:** Reverse proxy to app with template security headers.
 - **Redis:** Cache backend with password; also the taskiq broker (Streams), the retry schedule source for delayed retries, and storage for `IdempotencyReceiver` dedup markers — no task result backend.
 

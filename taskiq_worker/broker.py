@@ -17,6 +17,11 @@ STREAM_MAXLEN = 100_000
 
 RETRY_DELAY_SECONDS = 60
 
+# How long a delivered, unacked message waits before another worker reclaims it
+# (XAUTOCLAIM). taskiq_redis defaults to the same ten minutes; it is spelled out
+# because the receiver's running claim is sized against it.
+STREAM_IDLE_TIMEOUT_SECONDS = 600
+
 
 def create_retry_schedule_source() -> ListRedisScheduleSource:
     return ListRedisScheduleSource(config.redis.tasks_dsn)
@@ -41,6 +46,7 @@ def create_production_broker() -> AsyncBroker:
         url=config.redis.tasks_dsn,
         maxlen=STREAM_MAXLEN,
         approximate=True,
+        idle_timeout=STREAM_IDLE_TIMEOUT_SECONDS * 1000,
     )
     # Retries are scheduled onto retry_schedule_source at now + delay; without
     # a schedule source RedisStreamBroker ignores the `delay` label and every

@@ -17,6 +17,10 @@ logger = get_logger(__name__)
 SWEEPER_BATCH_SIZE = 100
 MAX_PUBLISH_ATTEMPTS = 10
 PUBLISHED_RETENTION_DAYS = 7
+# How long a fresh row belongs to its own after-commit publish before the
+# sweeper may take it. Far longer than a kiq plus one UPDATE ever takes, and
+# short enough that a publish which did fail is retried within a sweep or two.
+SWEEPER_GRACE = timedelta(seconds=60)
 
 
 def _report_failed_message(message: OutboxMessage) -> None:
@@ -39,7 +43,7 @@ async def outbox_sweeper(
     uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
     async with uow:
         batch = await uow.outbox.get_batch_for_publish(
-            uow.session, limit=SWEEPER_BATCH_SIZE
+            uow.session, limit=SWEEPER_BATCH_SIZE, min_age=SWEEPER_GRACE
         )
         for message in batch:
             task = broker.find_task(message.task_name)

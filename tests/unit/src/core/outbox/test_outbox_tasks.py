@@ -50,6 +50,10 @@ async def test_sweeper_publishes_pending_with_row_id_as_task_id() -> None:
     kicker.with_task_id.return_value.kiq.assert_awaited_once_with("hello", flag=True)
     repo.mark_published.assert_awaited_once()
     assert result == "Published 1, failed 0."
+    # A row younger than the grace may still be in its own after-commit publish.
+    assert repo.get_batch_for_publish.await_args.kwargs["min_age"] == (
+        outbox_tasks.SWEEPER_GRACE
+    )
 
 
 async def test_sweeper_increments_attempts_on_publish_error() -> None:
