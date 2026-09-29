@@ -162,3 +162,9 @@ def test_every_step_of_the_roll_checks_its_own_status() -> None:
     assert critical
     for line in critical:
         assert line.endswith(("|| return 1", "|| true")), line
+
+
+def test_no_pipeline_is_cut_short_by_head() -> None:
+    """Under pipefail the writer's SIGPIPE fails the pipeline, and errexit then
+    aborts a deploy that finds two healthy app containers."""
+    assert "| head" not in _script()

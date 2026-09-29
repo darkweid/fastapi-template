@@ -243,7 +243,11 @@ echo "[deploy] testing the nginx configuration"
 # then name the new image. Empty on the first deploy, when there is nothing to
 # go back to.
 PREVIOUS_IMAGE=""
-RUNNING_APP="$(healthy_app_ids | head -n 1)"
+# The first line taken in the shell, not with `head`: head exits after one line,
+# and with two healthy containers left by an interrupted roll the writer's
+# SIGPIPE fails the pipeline under pipefail.
+RUNNING_APP="$(healthy_app_ids)"
+RUNNING_APP="${RUNNING_APP%%$'\n'*}"
 if [ -n "$RUNNING_APP" ]; then
   PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' "$RUNNING_APP")"
 fi
