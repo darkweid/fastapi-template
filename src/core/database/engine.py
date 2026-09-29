@@ -19,10 +19,11 @@ def session_timeouts(
     asyncpg `connect_args` that set session-level timeouts at connection startup.
 
     They are session defaults, so `set_local_statement_timeout` still raises
-    or lowers the statement cap for one transaction. A timeout of 0 is left out
-    rather than sent, which keeps the server's own setting (no limit by default).
-    Values are whole milliseconds, rounded up so a sub-millisecond setting does
-    not become 0 and switch the limit off.
+    or lowers the statement cap for one transaction. Both are always sent: a 0
+    goes out as "0", so "no limit" holds even where the server has a global
+    timeout of its own (ALTER SYSTEM, postgresql.conf). Values are whole
+    milliseconds, rounded up so a sub-millisecond setting does not become 0 and
+    switch the limit off.
     """
     settings = {
         name: str(math.ceil(seconds * 1000))
@@ -33,9 +34,8 @@ def session_timeouts(
                 idle_in_transaction_timeout_seconds,
             ),
         )
-        if seconds > 0
     }
-    return {"server_settings": settings} if settings else {}
+    return {"server_settings": settings}
 
 
 engine = create_async_engine(

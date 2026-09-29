@@ -116,9 +116,9 @@ async def test_set_local_statement_timeout_rounds_up_to_whole_milliseconds() -> 
     ]
 
 
-def test_session_timeouts_send_whole_milliseconds_and_skip_disabled_limits() -> None:
-    """0 means "no limit" to PostgreSQL, so a disabled limit is left out rather
-    than sent, and a sub-millisecond one rounds up instead of down to 0."""
+def test_session_timeouts_send_whole_milliseconds_and_disabled_limits() -> None:
+    """A disabled limit is sent as "0": left out, it would inherit a global
+    timeout the server may have. A sub-millisecond one rounds up, not to 0."""
     assert session_timeouts(
         statement_timeout_seconds=30, idle_in_transaction_timeout_seconds=0.0001
     ) == {
@@ -128,6 +128,8 @@ def test_session_timeouts_send_whole_milliseconds_and_skip_disabled_limits() -> 
         }
     }
     assert session_timeouts(idle_in_transaction_timeout_seconds=300) == {
-        "server_settings": {"idle_in_transaction_session_timeout": "300000"}
+        "server_settings": {
+            "statement_timeout": "0",
+            "idle_in_transaction_session_timeout": "300000",
+        }
     }
-    assert session_timeouts() == {}
