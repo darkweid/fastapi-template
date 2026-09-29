@@ -133,6 +133,20 @@ echoed back in the `X-CSRF-Token` header on the next refresh.
 - Be careful in multi-instance deployments: this fallback is not distributed, so each instance enforces its own local counter and the effective global limit becomes higher than the configured value.
 - Even with that limitation, the fallback is still useful because requests remain best-effort rate-limited instead of becoming completely unlimited during a Redis outage.
 
+## Database Session Limits
+Every connection of the API pool starts with server-side limits, so a request that
+awaits something slow inside an open transaction, or a query gone wrong, cannot hold
+its locks and its connection indefinitely. Values are seconds; `0` turns a limit off.
+- `DB_STATEMENT_TIMEOUT_SECONDS` (default `30`) — the longest a single statement may
+  run. A transaction that needs longer raises its own cap with
+  `set_local_statement_timeout` (`src/core/database/transactions.py`).
+- `DB_IDLE_IN_TRANSACTION_TIMEOUT_SECONDS` (default `60`) — the server ends a session
+  whose transaction sits idle this long, releasing its locks.
+- `DB_TASKS_IDLE_IN_TRANSACTION_TIMEOUT_SECONDS` (default `300`) — the same limit for
+  the worker's pool, which has no statement limit: its batch jobs cap themselves.
+
+Migrations run with neither.
+
 ## Response Caching
 `GET /v1/users/{user_id}` (requires the `VIEW_USERS` permission) is the template's
 one live example of route caching (`@cached_route`, `src/core/cache/decorators.py`).

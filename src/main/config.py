@@ -252,6 +252,16 @@ class PostgresConfig(BaseSettings):
     # session, and an undersized pool surfaces as pool_timeout errors.
     DB_TASKS_POOL_SIZE: int = Field(5, gt=0)
     DB_TASKS_MAX_OVERFLOW: int = Field(15, ge=0)
+    # Server-side session limits for the API pool, sent as connection startup
+    # parameters; 0 turns one off. A request whose code awaits something slow
+    # inside an open transaction, or a query gone wrong, otherwise holds its
+    # locks and its connection for as long as it likes. A transaction that
+    # needs more time raises its own cap with set_local_statement_timeout.
+    DB_STATEMENT_TIMEOUT_SECONDS: float = Field(30, ge=0)
+    DB_IDLE_IN_TRANSACTION_TIMEOUT_SECONDS: float = Field(60, ge=0)
+    # The tasks pool runs batch jobs that cap their own statements, so it only
+    # gets the idle-in-transaction limit, and a longer one.
+    DB_TASKS_IDLE_IN_TRANSACTION_TIMEOUT_SECONDS: float = Field(300, ge=0)
 
     model_config = SettingsConfigDict(extra="ignore")
 

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.database.engine import session_timeouts
 from src.core.database.transactions import (
     _string_to_int64,
     advisory_xact_lock,
@@ -113,3 +114,20 @@ async def test_set_local_statement_timeout_rounds_up_to_whole_milliseconds() -> 
         "1",
         True,
     ]
+
+
+def test_session_timeouts_send_whole_milliseconds_and_skip_disabled_limits() -> None:
+    """0 means "no limit" to PostgreSQL, so a disabled limit is left out rather
+    than sent, and a sub-millisecond one rounds up instead of down to 0."""
+    assert session_timeouts(
+        statement_timeout_seconds=30, idle_in_transaction_timeout_seconds=0.0001
+    ) == {
+        "server_settings": {
+            "statement_timeout": "30000",
+            "idle_in_transaction_session_timeout": "1",
+        }
+    }
+    assert session_timeouts(idle_in_transaction_timeout_seconds=300) == {
+        "server_settings": {"idle_in_transaction_session_timeout": "300000"}
+    }
+    assert session_timeouts() == {}
