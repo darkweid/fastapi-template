@@ -47,6 +47,9 @@ Follow `src/user/auth/` as the worked example throughout.
    will call to decide whether an authenticated principal may actually use the
    session (`src/user/policies.py`'s `ensure_can_use_session` is the reference:
    raise the real, unmasked reason, since the caller already holds a valid token).
+   The principal reaches the gate and the endpoint detached from the session,
+   with its columns loaded and no relationship: the gate reads columns only,
+   and a write re-reads the row inside its own unit of work.
 
 4. **Wire the realm's dependencies.** `src/<module>/auth/dependencies.py`:
    ```python

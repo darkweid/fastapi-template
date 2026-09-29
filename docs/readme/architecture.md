@@ -9,6 +9,7 @@ The `src/core/database/uow/` package keeps DB work transactional and coordinates
 - Repository coordination: single transaction boundary for multiple repositories.
 - Clean API design: consistent interface (`commit`, `rollback`) for callers.
 - Exit contract: leaving the UoW context without an explicit `commit()` rolls the transaction back - commit is never implicit.
+- Request session: the auth dependency loads the principal, detaches it and ends its own read transaction (`load_principal` in `src/core/auth/dependencies.py`), so an authenticated request holds no connection while its handler waits on something outside the database, and a UoW it opens is a top-level transaction. The UoW takes a SAVEPOINT only when an earlier read on the same session has already begun a transaction.
 
 Implementations:
 - `SQLAlchemyUnitOfWork`: AsyncSession-based implementation and the contract itself (`uow/sqlalchemy.py`).

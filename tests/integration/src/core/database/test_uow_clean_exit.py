@@ -45,8 +45,8 @@ async def test_clean_exit_without_commit_persists_nothing_on_fresh_session(
 async def test_clean_exit_without_commit_discards_savepoint_work(
     db_session: AsyncSession,
 ) -> None:
-    # Mimic the authenticated-request path: a prior SELECT autobegins the
-    # outer transaction, so the UoW enters through begin_nested().
+    # A prior read on the shared session autobegins the outer transaction, so
+    # the UoW enters through begin_nested().
     await db_session.execute(select(1))
     tag = f"uow-nested-{uuid4().hex[:12]}"
     uow = ApplicationUnitOfWork(db_session)

@@ -32,10 +32,11 @@ class SQLAlchemyUnitOfWork:
         """
         Start a transaction and keep a handle on it.
 
-        A SAVEPOINT when the session is already in a transaction - the normal
-        case for authenticated requests, where the auth dependency's SELECT has
-        autobegun on the shared request session - so rollback can target exactly
-        this UoW's scope instead of the whole session transaction.
+        Top-level on an idle session, which is what a request hands over after
+        authentication: the auth dependency ends its own read transaction. A
+        SAVEPOINT when an earlier read on the shared session has already
+        autobegun one, so rollback can target exactly this UoW's scope instead
+        of the whole session transaction.
         """
         if self._session.in_transaction():
             self._transaction = await self._session.begin_nested()
@@ -49,8 +50,8 @@ class SQLAlchemyUnitOfWork:
         Roll back on any exit without a prior commit().
 
         Without this, a clean exit's outcome would depend on invisible context:
-        a fresh session's `begin()` block commits on clean exit, while a shared
-        request session (every authenticated route) releases the SAVEPOINT and
+        an idle session's `begin()` block commits on clean exit, while a session
+        an earlier read left in a transaction releases the SAVEPOINT and
         discards the work later at session close.
         """
         try:
