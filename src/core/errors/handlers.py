@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from loggers import get_logger
 from src.core.errors.codes import ErrorCode
 from src.core.errors.exceptions import CoreException
+from src.core.errors.scrubbed import scrubbed
 
 response_logger = get_logger("app.request.error_response", plain_format=True)
 
@@ -172,18 +173,36 @@ async def handle_request_validation_exception(
     )
 
 
+def describe_validation_error(exc: ValidationError) -> str:
+    """
+    Summarize a backend ValidationError by model, location and error type.
+
+    `str(exc)` prints every `input_value`, `errors()` carries `input` and a
+    `ctx` that can repeat it, and a validator's own message may quote it, so
+    none of them reach a log line or Sentry.
+    """
+    locations = "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['type']}"
+        for error in exc.errors(
+            include_url=False, include_context=False, include_input=False
+        )
+    )
+    return f"{exc.title}: {locations}"
+
+
 async def handle_validation_error(
     request: Request,
     exc: ValidationError,
 ) -> JSONResponse:
+    summary = describe_validation_error(exc)
     log_message = format_log_message(
         request,
         ErrorCode.INTERNAL_ERROR,
-        str(jsonable_encoder(exc.errors())),
+        summary,
         include_request_path=True,
     )
     response_logger.error(log_message)
-    sentry_sdk.capture_exception(exc)
+    sentry_sdk.capture_exception(scrubbed(summary, exc))
     return JSONResponse(
         status_code=500,
         content=format_error_response(ErrorCode.INTERNAL_ERROR, "Unexpected error"),

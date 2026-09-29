@@ -399,3 +399,86 @@ def test_timing_log_record_carries_the_response_request_id(
     assert timing_records
     assert timing_records[0].request_id != "-"
     assert timing_records[0].request_id == resp.headers["X-Request-ID"]
+
+
+class AsyncpgCheckViolationCause(Exception):
+    sqlstate = "23514"
+    constraint_name = "ck_users_age"
+    table_name = "users"
+    column_name = None
+
+
+class AsyncpgAdaptedCheckViolation(Exception):
+    """SQLAlchemy's asyncpg adapter: sqlstate copied, the rest on __cause__."""
+
+    sqlstate = "23514"
+
+
+def _asyncpg_check_violation() -> IntegrityError:
+    driver_error = AsyncpgAdaptedCheckViolation(
+        'new row violates check constraint "ck_users_age"\n'
+        "DETAIL:  Failing row contains (secret@example.com, +998901234567)."
+    )
+    driver_error.__cause__ = AsyncpgCheckViolationCause()
+    return IntegrityError(
+        "INSERT INTO users", {"email": "secret@example.com"}, driver_error
+    )
+
+
+def test_integrity_error_reaches_logs_and_sentry_without_row_values(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The DETAIL line echoes the row, so a check violation once shipped a
+    user's email and phone to the log and to Sentry."""
+    captured: list[BaseException] = []
+    monkeypatch.setattr(middleware.sentry_sdk, "capture_exception", captured.append)
+    app = _make_app(_asyncpg_check_violation)
+    middleware.logger.addHandler(caplog.handler)
+    try:
+        resp = TestClient(app).get("/boom")
+    finally:
+        middleware.logger.removeHandler(caplog.handler)
+
+    assert resp.status_code == 500
+    assert "secret@example.com" not in caplog.text
+    assert "+998901234567" not in caplog.text
+    assert "sqlstate=23514 constraint_name=ck_users_age table_name=users" in (
+        caplog.text
+    )
+    [reported] = captured
+    assert "secret@example.com" not in str(reported)
+    assert "constraint_name=ck_users_age" in str(reported)
+    assert reported.__cause__ is None
+    assert reported.__traceback__ is not None
+
+
+def test_unique_violation_log_line_omits_the_conflicting_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = _make_app(lambda: IntegrityError("msg", None, DummyUnique()))  # type: ignore[arg-type]
+    middleware.logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO)
+    try:
+        TestClient(app).get("/boom")
+    finally:
+        middleware.logger.removeHandler(caplog.handler)
+
+    assert "sqlstate=23505" in caplog.text
+    assert "test@example.com" not in caplog.text
+
+
+def test_describe_integrity_error_reads_psycopg_diagnostics() -> None:
+    class Diagnostics:
+        sqlstate = "23505"
+        constraint_name = "uq_users_email"
+        table_name = "users"
+        column_name = None
+
+    class PsycopgUniqueViolation(Exception):
+        diag = Diagnostics()
+
+    error = IntegrityError("msg", None, PsycopgUniqueViolation("DETAIL: x"))
+
+    assert middleware.describe_integrity_error(error) == (
+        "sqlstate=23505 constraint_name=uq_users_email table_name=users"
+    )

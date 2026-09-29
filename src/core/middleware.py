@@ -1,6 +1,5 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import re
 import time
 
 from fastapi import FastAPI, Request
@@ -16,6 +15,7 @@ from starlette.responses import Response
 from loggers import get_logger
 from src.core.errors.codes import ErrorCode
 from src.core.errors.handlers import format_error_response
+from src.core.errors.scrubbed import scrubbed
 from src.core.request_context import request_id_var, resolve_request_id
 
 logger = get_logger(__name__)
@@ -114,13 +114,14 @@ def register_middlewares(app: FastAPI) -> None:
             return await call_next(request)
         except IntegrityError as exc:
             handled_result = handle_postgresql_error(exc)
-            log_message = f"Integrity error at {request.url.path}: {str(exc.orig)}"
+            summary = describe_integrity_error(exc)
+            log_message = f"Integrity error at {request.url.path}: {summary}"
             if handled_result.is_server_error:
-                logger.error(log_message, exc_info=True)
+                logger.error(log_message, exc_info=scrubbed(summary, exc))
             else:
                 logger.info(log_message)
             if handled_result.send_to_sentry:
-                sentry_sdk.capture_exception(exc)
+                sentry_sdk.capture_exception(scrubbed(summary, exc))
             return handled_result.response
         except OperationalError as e:
             logger.error(
@@ -170,6 +171,46 @@ def register_middlewares(app: FastAPI) -> None:
         return response
 
 
+_INTEGRITY_DIAGNOSTICS = ("constraint_name", "table_name", "column_name")
+
+
+def _diagnostic(error: IntegrityError, name: str) -> str | None:
+    """
+    Read one diagnostic field wherever the driver put it.
+
+    SQLAlchemy's asyncpg adapter copies only `sqlstate` onto the DBAPI error
+    and keeps the asyncpg exception, which has the rest, as its `__cause__`;
+    psycopg exposes them under `.diag`.
+    """
+    driver_error = error.orig
+    for source in (
+        driver_error,
+        getattr(driver_error, "__cause__", None),
+        getattr(driver_error, "diag", None),
+    ):
+        value = getattr(source, name, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def describe_integrity_error(error: IntegrityError) -> str:
+    """
+    Name the violation by its SQLSTATE and schema objects, never by its values.
+
+    The driver's message carries the DETAIL line (`Key (email)=(...) already
+    exists`, `Failing row contains (...)`), which echoes whatever a caller
+    sent, so neither it nor `str(error)` goes to a log or to Sentry.
+    """
+    parts = [f"sqlstate={_diagnostic(error, 'sqlstate')}"]
+    parts.extend(
+        f"{name}={value}"
+        for name in _INTEGRITY_DIAGNOSTICS
+        if (value := _diagnostic(error, name)) is not None
+    )
+    return " ".join(parts)
+
+
 def handle_postgresql_error(
     error: IntegrityError,
 ) -> PostgresqlErrorHandlingResult:
@@ -188,8 +229,7 @@ def handle_postgresql_error(
     is a bug in the application rather than bad input: it answers 500 and goes
     to Sentry.
     """
-    orig_error = error.orig
-    sqlstate = getattr(orig_error, "sqlstate", None)
+    sqlstate = _diagnostic(error, "sqlstate")
 
     if sqlstate == "23505":  # UniqueViolation
         return PostgresqlErrorHandlingResult(
@@ -214,19 +254,6 @@ def handle_postgresql_error(
             send_to_sentry=False,
             is_server_error=False,
         )
-    if sqlstate == "23502":  # NotNullViolation
-        # The column name is the one detail that says which model is out of sync
-        # with its table, and it is not in the generic log line below.
-        raw_message = str(orig_error)
-        column_name = getattr(orig_error, "column_name", None)
-        column_match = (
-            re.search(r'column "([^"]+)"', raw_message) if not column_name else None
-        )
-        logger.error(
-            "NotNullViolation on column=%s",
-            column_name or (column_match.group(1) if column_match else None),
-        )
-
     return PostgresqlErrorHandlingResult(
         response=_internal_error_response(),
         send_to_sentry=True,

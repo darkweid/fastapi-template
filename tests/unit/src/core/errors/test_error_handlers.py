@@ -280,3 +280,25 @@ async def test_http_exception_handler_omits_body_for_bodyless_status() -> None:
     response = await handlers.handle_http_exception(make_request(), not_modified)
     assert response.status_code == 304
     assert response.body == b""
+
+
+async def test_backend_validation_error_keeps_the_input_out_of_logs_and_sentry(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A response model failing on a user's row must not ship that row's
+    values: `str(exc)` and `errors()` both carry `input`."""
+    captured: list[BaseException] = []
+    monkeypatch.setattr(sentry_sdk, "capture_exception", captured.append)
+    try:
+        SampleModel.model_validate({"field": "secret@example.com"})
+    except ValidationError as error:
+        validation_error = error
+
+    with caplog.at_level(logging.DEBUG, logger="response_logger_test"):
+        await handle_validation_error(make_request(), validation_error)
+
+    assert "secret@example.com" not in caplog.text
+    assert "SampleModel: field: int_parsing" in caplog.text
+    [reported] = captured
+    assert "secret@example.com" not in str(reported)
+    assert reported.__cause__ is None
