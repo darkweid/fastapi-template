@@ -13,7 +13,7 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, func, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from taskiq import InMemoryBroker
 
@@ -202,6 +202,35 @@ async def test_the_sweeper_leaves_a_row_younger_than_the_grace_to_its_publish(
     async with AsyncSession(integration_engine) as session, session.begin():
         batch = await OutboxRepository().get_batch_for_publish(
             session, limit=100, min_age=SWEEPER_GRACE
+        )
+
+    assert message_id not in {message.id for message in batch}
+
+
+async def test_a_row_from_a_long_transaction_is_aged_from_its_insert(
+    integration_engine: AsyncEngine,
+    dispatcher: TaskDispatcher,
+    publish_spy: AsyncMock,
+    committed_message_ids: list[UUID],
+) -> None:
+    """now() is frozen at the start of the enqueuing transaction; aged by it, a
+    row from a transaction that stayed open past the grace is fair game for the
+    sweeper the moment it commits, while its own publish is still running."""
+    publish_spy.side_effect = RuntimeError("broker unreachable")
+    grace = timedelta(seconds=2)
+
+    async with AsyncSession(integration_engine, expire_on_commit=False) as session:
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
+        async with uow:
+            await uow.session.execute(select(func.pg_sleep(3)))
+            await dispatcher.enqueue_transactional(uow, probe_task, "late")
+            message_id = await enqueued_id(uow)
+            committed_message_ids.append(message_id)
+            await uow.commit()
+
+    async with AsyncSession(integration_engine) as session, session.begin():
+        batch = await OutboxRepository().get_batch_for_publish(
+            session, limit=100, min_age=grace
         )
 
     assert message_id not in {message.id for message in batch}

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum as SQLEnum, Index, String, Text, text
+from sqlalchemy import DateTime, Enum as SQLEnum, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,12 @@ class OutboxMessage(Base, UUID7IDMixin, TimestampMixin):
         ),
     )
 
+    # The insert's own clock, not now(): now() is the start of the enqueuing
+    # transaction, and a row from a long transaction would look older than
+    # SWEEPER_GRACE the moment it commits, while its own publish still runs.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.clock_timestamp()
+    )
     task_name: Mapped[str] = mapped_column(String(255))
     args: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     kwargs: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
