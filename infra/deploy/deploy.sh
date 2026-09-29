@@ -201,10 +201,15 @@ roll_app() {
         leftover_ids="${leftover_ids} ${id}"
       fi
     done
+    # nginx is pinned before any leftover stops: an interrupted deploy may have
+    # reloaded nginx onto a container without recording it as applied, so what
+    # nginx really routes to is known only after this reload.
+    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
+    route_app_to $(container_names $old_ids) || return 1
     if [ -n "$leftover_ids" ]; then
-      # An interrupted roll may have moved nginx off a container whose retired
-      # workers still carry requests to it; they finish before it stops, and
-      # it stops gracefully like any old container.
+      # The workers that reload retired may still carry requests to a leftover;
+      # they finish before it stops, and it stops gracefully like any old
+      # container.
       wait_for_retired_nginx_workers
       for id in $leftover_ids; do
         echo "[deploy] stopping $(container_names "$id"), left behind by an interrupted deploy and no longer routed to"
@@ -212,8 +217,6 @@ roll_app() {
         docker rm "$id" >/dev/null || return 1
       done
     fi
-    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
-    route_app_to $(container_names $old_ids) || return 1
   else
     # Nothing is verified to serve, so there is nothing to pin nginx to; the
     # containers still count as old ones and stop once the new one is healthy.

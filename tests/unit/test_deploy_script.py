@@ -225,4 +225,8 @@ def test_leftover_containers_stop_after_the_retired_nginx_workers() -> None:
     assert leftover.index("wait_for_retired_nginx_workers") < leftover.index(
         'docker stop "$id"'
     )
+    # The pin reload comes first: the applied record may lag what nginx routes to.
+    assert body.index("route_app_to $(container_names $old_ids)") < body.index(
+        'if [ -n "$leftover_ids" ]; then'
+    )
     assert 'docker rm -f "$id"' not in body[: body.index("discard_new_app()")]
