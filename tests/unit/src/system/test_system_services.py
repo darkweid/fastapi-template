@@ -14,8 +14,15 @@ from tests.fakes.db import FakeAsyncSession
 
 
 class RedisOk:
+    def __init__(self, used_memory: int = 100, maxmemory: int = 1000) -> None:
+        self.memory = {"used_memory": used_memory, "maxmemory": maxmemory}
+
     async def ping(self) -> bool:
         return True
+
+    async def info(self, section: str) -> dict[str, int]:
+        assert section == "memory"
+        return self.memory
 
 
 class RedisFail:
@@ -120,3 +127,30 @@ async def test_ensure_ready_raises_when_the_probe_times_out(
 
     with pytest.raises(ServiceUnavailableException):
         await build_readiness(session).ensure_ready()
+
+
+@pytest.mark.asyncio
+async def test_health_reports_redis_memory_use() -> None:
+    result = await build_service(RedisOk(250, 1000), FakeAsyncSession()).get_status()
+
+    assert result.status == "ok"
+    assert result.redis_memory_used_ratio == 0.25
+
+
+@pytest.mark.asyncio
+async def test_health_degrades_when_redis_nears_its_memory_cap() -> None:
+    """Under noeviction a full Redis refuses every write - sessions, OTPs, task
+    enqueues - while PING still answers, so the ping alone reports "ok"."""
+    result = await build_service(RedisOk(950, 1000), FakeAsyncSession()).get_status()
+
+    assert result.status == "degraded"
+    assert result.redis is True
+    assert result.redis_memory_used_ratio == 0.95
+
+
+@pytest.mark.asyncio
+async def test_health_reports_no_ratio_without_a_memory_cap() -> None:
+    result = await build_service(RedisOk(950, 0), FakeAsyncSession()).get_status()
+
+    assert result.status == "ok"
+    assert result.redis_memory_used_ratio is None

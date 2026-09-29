@@ -472,6 +472,10 @@ class InMemoryRedis:
         self._expire(sessions_key, refresh_ttl_seconds)
         return "OK"
 
+    async def info(self, section: str | None = None) -> dict[str, int]:
+        """No memory cap, like a Redis started without `maxmemory`."""
+        return {"used_memory": 0, "maxmemory": 0}
+
     async def time(self) -> tuple[int, int]:
         now = self.wall_clock()
         return int(now), int((now % 1) * 1_000_000)

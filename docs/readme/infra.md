@@ -26,7 +26,7 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 - **Postgres:** `infra/postgres/Dockerfile`, stores data in volume. The image carries `infra/postgres/postgresql.conf` and the server reads it at every start (`-c config_file=`), so a changed setting reaches an existing database on the next deploy, which rebuilds the image with `--pull` and recreates the container.
 - **App:** Uvicorn/Gunicorn serving FastAPI under a non-root runtime user.
 - **Worker:** Runs taskiq tasks consumed from Redis Streams, with `IdempotencyReceiver` for worker-side dedup (a running task holds a claim it renews every 20 seconds, so a second delivery of the same task id is skipped however long the first one runs) and `--max-async-tasks 20` concurrency (mirrored by the `tasks_engine` pool in `src/core/database/engine.py`).
-- **Scheduler:** Fires periodic tasks (`schedule=[{"cron": "..."}]` on the task decorator) into the stream, including the outbox sweeper (every minute, taking only rows older than `SWEEPER_GRACE` so it does not race a row's own after-commit publish) and purge (daily) tasks, and fires delayed retries written by `SmartRetryMiddleware`; exactly one instance runs.
+- **Scheduler:** Fires periodic tasks (`schedule=[{"cron": "..."}]` on the task decorator) into the stream, including the outbox sweeper (every minute, taking only rows older than `SWEEPER_GRACE` so it does not race a row's own after-commit publish) and purge (daily) tasks, and fires delayed retries written by `SmartRetryMiddleware`; exactly one instance runs. Its healthcheck asserts a heartbeat the scheduler loop writes to Redis at every schedule update, once a minute, under a key named after the container (`taskiq_worker/heartbeat.py`), so a wedged loop turns the container unhealthy even while Redis answers.
 - **Nginx:** Reverse proxy to app with template security headers.
 - **Redis:** Cache backend with password; also the taskiq broker (Streams), the retry schedule source for delayed retries, and storage for `IdempotencyReceiver` dedup markers — no task result backend.
 
@@ -42,13 +42,17 @@ the retry schedule source), so an API container holds two Redis connection pools
 and a worker or scheduler container holds the broker's — size `maxclients` from
 that count, not from one pool per process.
 
-- Under memory pressure, prefer `maxmemory-policy allkeys-lru` (or actively monitor
-  `INFO stats` → `evicted_keys`). Every namespace and tag version counter is itself
-  a Redis key; if the eviction policy reclaims a counter before the values it
-  guards, the next read falls back to version `0` and can serve a value that a
-  prior `invalidate()` or `invalidate_tags()` call was supposed to have retired.
-  Counters are few and tiny — one per namespace, one per tag — so this is a
-  policy question, not a capacity one.
+- Keep `maxmemory-policy noeviction` (`infra/redis.conf`). One instance holds
+  sessions and refresh-token state, OTP and one-time challenges, rate-limit
+  windows and the task queue next to the cache, and none of those may disappear
+  to make room: an evicted session logs a user out, an evicted stream entry is a
+  task that never runs, and an evicted cache version counter falls back to `0`
+  and serves a value an `invalidate()` or `invalidate_tags()` call already
+  retired. Under `noeviction` a full Redis refuses writes instead, which fails
+  loudly. Watch for it before it happens: `/health/` reports
+  `redis_memory_used_ratio` and turns `degraded` at 90% of `maxmemory`. When the
+  cache outgrows its share, move it to a separate instance with its own eviction
+  policy rather than turning eviction on here.
 - The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
   per invocation without hash tags, so as written they run correctly against a
   single Redis instance but not against a sharded Redis Cluster — a cluster

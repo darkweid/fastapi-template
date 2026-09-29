@@ -120,6 +120,7 @@ async def test_check_health_endpoint(
             "status": "degraded",
             "postgres": True,
             "redis": False,
+            "redis_memory_used_ratio": None,
         }
 
         head_response = await client.head("/health/")
@@ -149,6 +150,7 @@ async def test_check_health_keeps_answering_when_postgres_is_down(
             "status": "degraded",
             "postgres": False,
             "redis": True,
+            "redis_memory_used_ratio": None,
         }
 
 

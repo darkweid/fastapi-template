@@ -128,7 +128,10 @@ services:
     command: taskiq scheduler taskiq_worker.scheduler:scheduler
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import asyncio; from redis.asyncio import Redis; from src.main.config import config; asyncio.run(Redis.from_url(config.redis.tasks_dsn).ping())'"]
+      # A Redis ping would stay green while the scheduler loop fires nothing: the
+      # check asserts the heartbeat the loop itself writes every minute
+      # (taskiq_worker/heartbeat.py).
+      test: ["CMD", "python", "-m", "taskiq_worker.heartbeat"]
       interval: 30s
       timeout: 10s
       retries: 3

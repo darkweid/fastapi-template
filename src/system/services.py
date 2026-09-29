@@ -15,6 +15,11 @@ logger = get_logger(__name__)
 # half a minute before hearing anything at all.
 POSTGRES_PROBE_TIMEOUT_SECONDS = 2.0
 
+# Share of maxmemory past which /health/ reports "degraded". Redis runs with
+# `noeviction` (infra/redis.conf), so at 100% every write fails; this leaves
+# monitoring room to act first.
+REDIS_MEMORY_DEGRADED_RATIO = 0.9
+
 
 class ReadinessService:
     """
@@ -87,11 +92,17 @@ class HealthService:
         """
         postgres_is_ok = await self.readiness.check_postgres()
         redis_is_ok = await self._check_redis()
-        is_healthy = postgres_is_ok and redis_is_ok
+        memory_ratio = await self._redis_memory_used_ratio() if redis_is_ok else None
+        is_healthy = (
+            postgres_is_ok
+            and redis_is_ok
+            and (memory_ratio is None or memory_ratio < REDIS_MEMORY_DEGRADED_RATIO)
+        )
         return HealthCheckResponse(
             status="ok" if is_healthy else "degraded",
             postgres=postgres_is_ok,
             redis=redis_is_ok,
+            redis_memory_used_ratio=memory_ratio,
         )
 
     async def _check_redis(self) -> bool:
@@ -100,3 +111,16 @@ class HealthService:
         except Exception as exc:
             logger.warning("Redis health check failed: %s", exc)
             return False
+
+    async def _redis_memory_used_ratio(self) -> float | None:
+        """None without a maxmemory cap, and when INFO cannot be read."""
+        try:
+            memory = await self.redis_client.info("memory")
+            used = int(memory["used_memory"])
+            limit = int(memory["maxmemory"])
+        except Exception as exc:
+            logger.warning("Redis memory check failed: %s", exc)
+            return None
+        if limit <= 0:
+            return None
+        return round(used / limit, 4)
