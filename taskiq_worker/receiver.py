@@ -61,17 +61,23 @@ class IdempotencyReceiver(Receiver):
         message: TaskiqMessage,
         ack_controller: AckController | None = None,
     ) -> TaskiqResult[Any]:
-        if await self._is_done(message.task_id):
-            logger.debug(
-                "Task %s already completed, skipping duplicate delivery",
-                message.task_id,
-            )
-            return _skipped()
+        # Claim first, then read the marker. Read first, a run finishing in
+        # between would write its marker and release its claim, and this
+        # delivery would take the free claim and run again. A run releases only
+        # after its marker is written, so a claim that is free is one whose
+        # marker, if any, is already readable.
         if not await self._claim(message.task_id):
             logger.debug(
                 "Task %s is running elsewhere, skipping duplicate delivery",
                 message.task_id,
             )
+            return _skipped()
+        if await self._is_done(message.task_id):
+            logger.debug(
+                "Task %s already completed, skipping duplicate delivery",
+                message.task_id,
+            )
+            await self._release_claim(message.task_id)
             return _skipped()
 
         try:

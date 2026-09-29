@@ -39,16 +39,40 @@ def error_result() -> TaskiqResult:
 
 
 async def test_marker_present_skips_execution() -> None:
-    client = AsyncMock()
-    client.get = AsyncMock(return_value="1")
-    receiver = make_receiver(client)
+    client = InMemoryRedis()
+    await client.set(build_idempotency_marker_key("row-uuid"), "1")
+    receiver = make_receiver(client)  # type: ignore[arg-type]
 
     with patch.object(Receiver, "run_task", new=AsyncMock()) as super_run:
         result = await receiver.run_task(MagicMock(), make_message())
 
     super_run.assert_not_awaited()
     assert result.is_err is False
-    client.set.assert_not_awaited()
+    # The claim taken to read the marker safely is given back.
+    assert await client.exists(build_running_claim_key("row-uuid")) == 0
+
+
+class OriginalFinishesBeforeTheClaim(InMemoryRedis):
+    """The first delivery completes - marker written, claim released - while the
+    duplicate is on its way to take the claim."""
+
+    async def set(self, key: str | bytes, value: object, **kwargs: object) -> bool:
+        if kwargs.get("nx") and not getattr(self, "_finished", False):
+            self._finished = True
+            await super().set(build_idempotency_marker_key("row-uuid"), "1")
+            await super().delete(build_running_claim_key("row-uuid"))
+        return await super().set(key, value, **kwargs)  # type: ignore[arg-type]
+
+
+async def test_a_run_finishing_just_before_the_claim_is_not_repeated() -> None:
+    """Reading the marker before claiming would miss one written in between and
+    then find the claim free, so the task would run a second time."""
+    receiver = make_receiver(OriginalFinishesBeforeTheClaim())  # type: ignore[arg-type]
+
+    with patch.object(Receiver, "run_task", new=AsyncMock()) as super_run:
+        await receiver.run_task(MagicMock(), make_message())
+
+    super_run.assert_not_awaited()
 
 
 async def test_success_sets_marker_with_ttl() -> None:
