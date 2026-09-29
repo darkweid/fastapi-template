@@ -218,6 +218,15 @@ def test_app_config_rejects_wildcard_proxy_trust() -> None:
         AppConfig(**data)
 
 
+@pytest.mark.parametrize("entry", ["0.0.0.0/0", "::/0", "64.0.0.0/2"])
+def test_app_config_rejects_a_proxy_range_that_trusts_everyone(entry: str) -> None:
+    data = _base_app_config_data()
+    data["TRUST_PROXY_HOSTS"] = f"127.0.0.1,{entry}"
+
+    with pytest.raises(ValueError, match="TRUST_PROXY_HOSTS"):
+        AppConfig(**data)
+
+
 def test_app_config_accepts_explicit_proxy_ranges() -> None:
     data = _base_app_config_data()
     data["TRUST_PROXY_HOSTS"] = "10.0.0.0/8,172.16.0.0/12"

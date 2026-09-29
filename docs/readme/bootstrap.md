@@ -168,7 +168,8 @@ applies to them — see [auth-realms.md](auth-realms.md).
 - `CORS_ALLOWED_ORIGINS` — JSON list.
 - `COOKIE_DOMAIN`, `COOKIE_SAMESITE`, `COOKIE_SECURE` — see the README
   *Auth Cookie & CSRF Configuration* section for the cross-origin SPA case.
-- `TRUST_PROXY_HOSTS` — the real proxy hops. `*` is rejected at startup. The
+- `TRUST_PROXY_HOSTS` — the real proxy hops. `*` is rejected at startup, as is
+  any range wider than `/8` (IPv4) or `/32` (IPv6), `0.0.0.0/0` included. The
   default trusts loopback and `172.30.0.128/25`, the range compose assigns on
   `app-network` (pinned in `infra/docker-compose.yml`), where nginx sits. The
   network's gateway, `172.30.0.1`, stays outside it: Docker forwards
