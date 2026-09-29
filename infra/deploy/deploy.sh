@@ -56,8 +56,15 @@ nginx_is_running() {
 # always names what the running nginx routes to: pinned_app_names reads it after
 # an interrupted deploy, and infra/nginx/entrypoint.sh restores it when nginx
 # restarts.
+#
+# nginx is started before the app rolls, so one that is not running here is
+# stopped or crash-looping: the roll must fail rather than go on unrouted, and
+# leave behind an applied pin naming a container it then removes.
 route_app_to() {
-  nginx_is_running || return 0
+  if ! nginx_is_running; then
+    echo "[deploy] nginx is not running; the app cannot be routed"
+    return 1
+  fi
   # shellcheck disable=SC2016  # expanded by the shell inside the nginx container
   "${COMPOSE[@]}" exec -T nginx sh -c '
     for host in "$@"; do
@@ -178,7 +185,7 @@ serving_app_ids() {
 # so every step that must not be skipped checks its own status.
 roll_app() {
   local image="$1"
-  local all_ids old_ids new_id new_name id count=1
+  local all_ids old_ids leftover_ids new_id new_name id count=1
 
   # A stopped container of the service would be started again by the scale-up
   # below and counted as one of its replicas. `ps -a` from here on: a container
@@ -188,12 +195,23 @@ roll_app() {
   all_ids="$("${COMPOSE[@]}" ps -a -q app)" || return 1
   old_ids="$(serving_app_ids)" || return 1
   if [ -n "$old_ids" ]; then
+    leftover_ids=""
     for id in $all_ids; do
       if ! printf '%s\n' "$old_ids" | grep -qxF "$id"; then
-        echo "[deploy] removing $(container_names "$id"), left behind by an interrupted deploy and serving nothing"
-        docker rm -f "$id" >/dev/null || return 1
+        leftover_ids="${leftover_ids} ${id}"
       fi
     done
+    if [ -n "$leftover_ids" ]; then
+      # An interrupted roll may have moved nginx off a container whose retired
+      # workers still carry requests to it; they finish before it stops, and
+      # it stops gracefully like any old container.
+      wait_for_retired_nginx_workers
+      for id in $leftover_ids; do
+        echo "[deploy] stopping $(container_names "$id"), left behind by an interrupted deploy and no longer routed to"
+        docker stop "$id" >/dev/null || return 1
+        docker rm "$id" >/dev/null || return 1
+      done
+    fi
     # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
     route_app_to $(container_names $old_ids) || return 1
   else

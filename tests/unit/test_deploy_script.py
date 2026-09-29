@@ -202,3 +202,27 @@ def test_an_interrupted_roll_keeps_the_container_nginx_is_pinned_to() -> None:
 
     assert 'old_ids="$(serving_app_ids)"' in script
     assert 'RUNNING_APP="$(serving_app_ids)"' in script
+
+
+def test_routing_fails_when_nginx_is_not_running() -> None:
+    """nginx is started before the roll; skipping the route when it is down let
+    the roll remove the old app and left a pin naming the removed container."""
+    script = _script()
+    body = script[script.index("route_app_to() {") :]
+    body = body[: body.index("\n}\n")]
+
+    assert "return 0" not in body
+    assert "if ! nginx_is_running; then" in body
+
+
+def test_leftover_containers_stop_after_the_retired_nginx_workers() -> None:
+    """A container nginx was moved off by an interrupted roll can still carry
+    requests from the workers that reload retired."""
+    script = _script()
+    body = script[script.index("roll_app() {") :]
+    leftover = body[body.index('if [ -n "$leftover_ids" ]; then') :]
+
+    assert leftover.index("wait_for_retired_nginx_workers") < leftover.index(
+        'docker stop "$id"'
+    )
+    assert 'docker rm -f "$id"' not in body[: body.index("discard_new_app()")]
