@@ -19,6 +19,30 @@ TrustedAddress = IPv4Address | IPv6Address
 # in scope["scheme"] and from there in redirect Location headers.
 ALLOWED_FORWARDED_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 
+# The widest range a proxy list may name. `0.0.0.0/0` or `::/0` trusts every
+# hop just as "*" does, and a /1 or a /4 is the same hole with a smaller sign
+# on it; no real proxy fleet, CDN edge list included, needs more than a /8 of
+# IPv4 or a /32 of IPv6 in one entry.
+MIN_TRUSTED_IPV4_PREFIX = 8
+MIN_TRUSTED_IPV6_PREFIX = 32
+
+
+def too_wide_trusted_networks(values: Sequence[str]) -> list[str]:
+    """Entries naming a network wider than the prefix floor, as written."""
+    too_wide: list[str] = []
+    for raw_value in values:
+        value = raw_value.strip()
+        try:
+            network = ip_network(value, strict=False)
+        except ValueError:
+            continue
+        floor = (
+            MIN_TRUSTED_IPV4_PREFIX if network.version == 4 else MIN_TRUSTED_IPV6_PREFIX
+        )
+        if network.prefixlen < floor:
+            too_wide.append(value)
+    return too_wide
+
 
 def _normalize_trusted_hosts(
     values: Sequence[str],
@@ -30,8 +54,15 @@ def _normalize_trusted_hosts(
     of the forwarded chain to start from, so the caller would be free to pick
     their own address. `AppConfig` rejects "*" outright, and anything that
     reaches here and is not an address ends up as a literal that no real hop
-    can match - fail-closed either way.
+    can match - fail-closed either way. A network wider than the prefix floor
+    is the same wildcard spelled as a range, so it raises here as well as in
+    `AppConfig`.
     """
+    if too_wide := too_wide_trusted_networks(values):
+        raise ValueError(
+            f"Trusted proxy ranges wider than /{MIN_TRUSTED_IPV4_PREFIX} (IPv4) "
+            f"or /{MIN_TRUSTED_IPV6_PREFIX} (IPv6): {', '.join(too_wide)}"
+        )
     networks: list[TrustedNetwork] = []
     literals: set[str] = set()
 

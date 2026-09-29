@@ -4,11 +4,13 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from fastapi.routing import APIRoute
+import jwt
 import pytest
 
 from src.core.auth.credentials import SessionIdentity, verify_jti
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.session_issuance import issue_session_pair
+from src.core.auth.tokens import rotate_session_tokens
 from src.core.database.session import get_unit_of_work
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.limiter.depends import RateLimiter
@@ -518,8 +520,16 @@ async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
     dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
     await fake_redis.set(USER_AUTH_REALM.keys.refresh("user-1", "session-1"), "jti")
+    await fake_redis.set(
+        USER_AUTH_REALM.keys.latest_access("user-1", "session-1"), "access-jti"
+    )
     token = encode_access_payload(
-        build_access_payload("user-1", session_id="session-1", expires_in_minutes=-10)
+        build_access_payload(
+            "user-1",
+            session_id="session-1",
+            jti="access-jti",
+            expires_in_minutes=-10,
+        )
     )
 
     response = await async_client.post(
@@ -614,7 +624,10 @@ async def test_logout_everywhere_with_an_expired_token_of_a_live_session_wipes_a
     )
     expired_token = encode_access_payload(
         build_access_payload(
-            subject_id, session_id="session-current", expires_in_minutes=-10
+            subject_id,
+            session_id="session-current",
+            jti=_jti(current.access_token),
+            expires_in_minutes=-10,
         )
     )
 
@@ -628,3 +641,76 @@ async def test_logout_everywhere_with_an_expired_token_of_a_live_session_wipes_a
     for token in (current.refresh_token, other.refresh_token):
         with pytest.raises(UnauthorizedException):
             await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
+
+
+def _jti(token: str) -> str:
+    return str(jwt.decode(token, options={"verify_signature": False})["jti"])
+
+
+@pytest.mark.asyncio
+async def test_logout_everywhere_with_a_rotated_out_access_token_wipes_nothing(
+    async_client_with_fakes,
+    fake_redis: InMemoryRedis,
+) -> None:
+    """The session is live, but a refresh has replaced this access token: a copy
+    leaked before that refresh must not log the subject out everywhere."""
+    subject_id = str(build_user().id)
+    first = await issue_session_pair(
+        realm=USER_AUTH_REALM,
+        subject_id=subject_id,
+        claims={},
+        redis_client=fake_redis,
+        session_id="session-live",
+    )
+    refresh_payload = jwt.decode(
+        first.refresh_token, options={"verify_signature": False}
+    )
+    rotated = await rotate_session_tokens(
+        refresh_payload, fake_redis, realm=USER_AUTH_REALM
+    )
+
+    response = await async_client_with_fakes.post(
+        "/v1/users/auth/logout",
+        headers={"Authorization": f"Bearer {first.access_token}"},
+        json={"terminate_all_sessions": True},
+    )
+
+    assert response.status_code == 200
+    await verify_jti(rotated.refresh_token, fake_redis, realm=USER_AUTH_REALM)
+    await verify_jti(rotated.access_token, fake_redis, realm=USER_AUTH_REALM)
+
+
+@pytest.mark.asyncio
+async def test_logout_with_the_rotated_access_token_ends_the_session(
+    async_client_with_fakes,
+    fake_redis: InMemoryRedis,
+) -> None:
+    subject_id = str(build_user().id)
+    first = await issue_session_pair(
+        realm=USER_AUTH_REALM,
+        subject_id=subject_id,
+        claims={},
+        redis_client=fake_redis,
+        session_id="session-live",
+    )
+    refresh_payload = jwt.decode(
+        first.refresh_token, options={"verify_signature": False}
+    )
+    rotated = await rotate_session_tokens(
+        refresh_payload, fake_redis, realm=USER_AUTH_REALM
+    )
+
+    response = await async_client_with_fakes.post(
+        "/v1/users/auth/logout",
+        headers={"Authorization": f"Bearer {rotated.access_token}"},
+    )
+
+    assert response.status_code == 200
+    with pytest.raises(UnauthorizedException):
+        await verify_jti(rotated.refresh_token, fake_redis, realm=USER_AUTH_REALM)
+    assert (
+        await fake_redis.get(
+            USER_AUTH_REALM.keys.latest_access(subject_id, "session-live")
+        )
+        is None
+    )

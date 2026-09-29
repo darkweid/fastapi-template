@@ -3,9 +3,11 @@
 # version while every compose stack runs another.
 FROM postgres:18-bookworm
 
-# Copy custom configuration and initialization scripts into the image
-COPY infra/postgres/postgresql.conf /custom-config/postgresql.conf
-COPY infra/postgres/setup-config.sh /docker-entrypoint-initdb.d/00-setup-config.sh
+# The server reads this file at every start (the CMD below), not only at initdb,
+# so a changed setting reaches an existing database with the next image build and
+# container recreation. Baked in rather than bind-mounted: a single-file bind mount
+# keeps the inode it was created with, and a `git checkout` that replaces the file
+# would leave the container reading the old one.
+COPY --chmod=0644 infra/postgres/postgresql.conf /etc/postgresql/postgresql.conf
 
-RUN chmod 0644 /custom-config/postgresql.conf \
-    && chmod +x /docker-entrypoint-initdb.d/00-setup-config.sh
+CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]

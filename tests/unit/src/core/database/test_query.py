@@ -295,24 +295,38 @@ def order_by_strings(
 def test_build_order_by_uses_requested_column_and_direction() -> None:
     clauses = order_by_strings(ListQuery(order_by="name", order="asc"))
 
-    assert clauses[0] == "query_models.name ASC NULLS LAST"
+    assert clauses[0] == "query_models.name ASC"
+
+
+def test_build_order_by_puts_nulls_last_only_on_a_nullable_column() -> None:
+    """`DESC NULLS LAST` on a NOT NULL column changes no row but cannot use a
+    plain btree scanned backwards, so every such list paid a full Sort."""
+    not_null = order_by_strings(ListQuery(order_by="name"))
+    nullable = order_by_strings(ListQuery(order_by="created_at"))
+
+    assert not_null[0] == "query_models.name DESC"
+    assert nullable[0] == "query_models.created_at DESC NULLS LAST"
+
+
+def test_build_order_by_keeps_nulls_last_when_nullability_is_unknown() -> None:
+    clauses = order_by_strings(
+        ListQuery(order_by="computed_created_at"),
+        sortable=("computed_created_at",),
+    )
+
+    assert clauses[0].endswith("DESC NULLS LAST")
 
 
 def test_build_order_by_appends_primary_key_tiebreaker() -> None:
-    # The primary key is NOT NULL by definition, so its tiebreaker clause
-    # does not carry `nulls_last()` — unlike the requested/default sort
-    # column, which may be nullable.
     clauses = order_by_strings(ListQuery(order_by="name", order="asc"))
 
     assert clauses[1] == "query_models.id ASC"
 
 
 def test_build_order_by_does_not_duplicate_primary_key() -> None:
-    # Here the primary key *is* the requested sort column, so this exercises
-    # `_directed()` (with `nulls_last()`), not the plain tiebreaker clause.
     clauses = order_by_strings(ListQuery(order_by="id"), sortable=("id",))
 
-    assert clauses == ["query_models.id DESC NULLS LAST"]
+    assert clauses == ["query_models.id DESC"]
 
 
 def test_build_order_by_rejects_field_outside_allowlist() -> None:

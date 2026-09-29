@@ -2,6 +2,8 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from redis import exceptions as redis_exceptions
+
 from src.core.outbox import tasks as outbox_tasks
 from src.core.outbox.tasks import (
     MAX_PUBLISH_ATTEMPTS,
@@ -118,3 +120,31 @@ async def test_purge_uses_retention_cutoff() -> None:
     cutoff = repo.purge_published.await_args.args[1]
     assert cutoff == frozen_now - timedelta(days=7)
     assert result == "Deleted 5 published outbox messages."
+
+
+async def test_unreachable_broker_does_not_spend_publish_attempts() -> None:
+    """A Redis outage says nothing about the message; counting it moved every
+    pending row to FAILED within ten sweeps of a flapping Redis."""
+    first, second = make_message(attempts=MAX_PUBLISH_ATTEMPTS - 1), make_message()
+    uow, repo = make_uow([first, second])
+    kicker = MagicMock()
+    kicker.with_task_id.return_value.kiq = AsyncMock(
+        side_effect=redis_exceptions.ConnectionError("connection refused")
+    )
+    task = MagicMock()
+    task.kicker.return_value = kicker
+
+    with patch_uow(uow), patch.object(
+        outbox_tasks.broker, "find_task", return_value=task
+    ), patch.object(outbox_tasks, "_report_failed_message") as report:
+        result = await outbox_sweeper(session=FakeAsyncSession())
+
+    repo.mark_publish_failure.assert_awaited_once()
+    assert repo.mark_publish_failure.await_args.args[1] == first.id
+    assert repo.mark_publish_failure.await_args.kwargs == {
+        "final": False,
+        "count_attempt": False,
+    }
+    report.assert_not_called()
+    assert kicker.with_task_id.return_value.kiq.await_count == 1
+    assert result == "Published 0, failed 1."

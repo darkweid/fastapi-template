@@ -1,6 +1,7 @@
 from datetime import timedelta
 from typing import Annotated
 
+from redis import exceptions as redis_exceptions
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 from taskiq import TaskiqDepends
@@ -21,6 +22,15 @@ PUBLISHED_RETENTION_DAYS = 7
 # sweeper may take it. Far longer than a kiq plus one UPDATE ever takes, and
 # short enough that a publish which did fail is retried within a sweep or two.
 SWEEPER_GRACE = timedelta(seconds=60)
+# A broker that cannot be reached says nothing about the message: counting it
+# toward MAX_PUBLISH_ATTEMPTS would move every pending row to FAILED during a
+# ten-minute Redis outage, or a Redis that flaps for an hour.
+BROKER_UNREACHABLE_ERRORS: tuple[type[Exception], ...] = (
+    redis_exceptions.ConnectionError,
+    redis_exceptions.TimeoutError,
+    ConnectionError,
+    TimeoutError,
+)
 
 
 def _report_failed_message(message: OutboxMessage) -> None:
@@ -61,6 +71,14 @@ async def outbox_sweeper(
                 await task.kicker().with_task_id(str(message.id)).kiq(
                     *message.args, **message.kwargs
                 )
+            except BROKER_UNREACHABLE_ERRORS as exc:
+                await uow.outbox.mark_publish_failure(
+                    uow.session, message.id, str(exc), final=False, count_attempt=False
+                )
+                failed += 1
+                # The rest of the batch would wait out the same timeout, one
+                # message at a time; the next sweep takes it.
+                break
             except Exception as exc:
                 final = message.attempts + 1 >= MAX_PUBLISH_ATTEMPTS
                 await uow.outbox.mark_publish_failure(

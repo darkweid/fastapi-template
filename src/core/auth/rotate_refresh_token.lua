@@ -2,6 +2,7 @@ local refresh_key = KEYS[1]
 local used_key = KEYS[2]
 local access_key = KEYS[3]
 local sessions_key = KEYS[4]
+local latest_access_key = KEYS[5]
 local expected_jti = ARGV[1]
 local used_ttl_seconds = ARGV[2]
 local grace_seconds = tonumber(ARGV[3])
@@ -41,6 +42,9 @@ redis.call('SETEX', used_key, used_ttl_seconds, tostring(now))
 -- pair could land after a wipe and outlive a password change.
 redis.call('SET', refresh_key, new_refresh_jti, 'EX', refresh_ttl_seconds)
 redis.call('SET', access_key, new_access_jti, 'EX', access_ttl_seconds)
+-- As long as either token of the session can live: logout still names the
+-- session by this access token after it expires.
+redis.call('SET', latest_access_key, new_access_jti, 'EX', math.max(refresh_ttl_seconds, access_ttl_seconds))
 redis.call('ZREMRANGEBYSCORE', sessions_key, 0, now)
 redis.call('ZADD', sessions_key, now + refresh_ttl_seconds, session_id)
 redis.call('EXPIRE', sessions_key, refresh_ttl_seconds)

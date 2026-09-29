@@ -39,6 +39,26 @@ S3_KEY_PREFIX = "S3_"
 LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # noqa: S104 # nosec B104
 
 
+# Compose's dotenv reader: a quoted value is what lies between its quotes and
+# anything after the closing quote is ignored; an unquoted value ends at the
+# first "#" that follows whitespace. Reading it any other way lets
+# `DEBUG=true # temp` reach as_bool as "true # temp", parse as neither boolean,
+# and pass the gate while the container runs with DEBUG on.
+DOUBLE_QUOTED_VALUE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+SINGLE_QUOTED_VALUE = re.compile(r"'([^']*)'")
+INLINE_COMMENT = re.compile(r"\s#")
+
+
+def parse_value(raw: str) -> str:
+    value = raw.strip()
+    for quoted in (DOUBLE_QUOTED_VALUE, SINGLE_QUOTED_VALUE):
+        if match := quoted.match(value):
+            return match.group(1)
+    # Split before stripping: in `KEY= # note` the whitespace ahead of "#" is
+    # what makes it a comment.
+    return INLINE_COMMENT.split(raw, maxsplit=1)[0].strip()
+
+
 def parse_env(path: Path) -> dict[str, str]:
     entries: dict[str, str] = {}
     for line in path.read_text().strip().splitlines():
@@ -46,7 +66,7 @@ def parse_env(path: Path) -> dict[str, str]:
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, _, value = stripped.partition("=")
-        entries[key.strip()] = value.strip().strip('"').strip("'")
+        entries[key.strip()] = parse_value(value)
     return entries
 
 

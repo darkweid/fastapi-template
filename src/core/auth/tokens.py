@@ -120,7 +120,7 @@ async def create_access_token(
     if session_id is None:
         session_id = str(uuid4())
 
-    token, _ = await issue_token(
+    token, jti = await issue_token(
         sub=data["sub"],
         mode="access_token",
         ttl_minutes=config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -129,6 +129,17 @@ async def create_access_token(
         keys=realm.keys,
         session_id=session_id,
         redis_key=realm.keys.access(data["sub"], session_id),
+    )
+    # As long as either token of the session can live: logout still names the
+    # session by this access token after it expires.
+    await redis_client.set(
+        realm.keys.latest_access(data["sub"], session_id),
+        jti,
+        ex=max(
+            config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES,
+            config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES,
+        )
+        * 60,
     )
     return token
 

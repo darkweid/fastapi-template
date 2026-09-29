@@ -566,8 +566,14 @@ async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_
         await verify_csrf(request, credentials, _refresh_responder())
 
 
+LIVE_ACCESS_JTI = "live-access-jti"
+
+
 async def _live_logout_session(fake_redis: InMemoryRedis) -> None:
     await fake_redis.set(USER_AUTH_REALM.keys.refresh("user-1", "session-1"), "jti")
+    await fake_redis.set(
+        USER_AUTH_REALM.keys.latest_access("user-1", "session-1"), LIVE_ACCESS_JTI
+    )
 
 
 @pytest.mark.asyncio
@@ -583,7 +589,10 @@ async def test_get_logout_identity_accepts_an_expired_access_token(
     """
     await _live_logout_session(fake_redis)
     payload = build_access_payload(
-        "user-1", session_id="session-1", expires_in_minutes=-10
+        "user-1",
+        session_id="session-1",
+        jti=LIVE_ACCESS_JTI,
+        expires_in_minutes=-10,
     )
     token = encode_access_payload(payload)
 
@@ -601,7 +610,9 @@ async def test_get_logout_identity_reads_a_bearer_prefixed_token(
     fake_redis: InMemoryRedis,
 ) -> None:
     await _live_logout_session(fake_redis)
-    payload = build_access_payload("user-1", session_id="session-1")
+    payload = build_access_payload(
+        "user-1", session_id="session-1", jti=LIVE_ACCESS_JTI
+    )
     token = encode_access_payload(payload)
 
     identity = await dependencies.get_logout_identity(
@@ -629,7 +640,9 @@ async def test_get_logout_identity_rejects_a_token_signed_with_another_key(
 ) -> None:
     """Relaxing `exp` must not relax the signature: a forged token names no session."""
     await _live_logout_session(fake_redis)
-    payload = build_access_payload("user-1", session_id="session-1")
+    payload = build_access_payload(
+        "user-1", session_id="session-1", jti=LIVE_ACCESS_JTI
+    )
     forged = jwt.encode(payload, "x" * 32, config.jwt.ALGORITHM)
 
     assert (
@@ -671,14 +684,33 @@ async def test_get_logout_identity_ignores_a_token_of_an_ended_session(
 
 
 @pytest.mark.asyncio
-async def test_get_logout_identity_accepts_a_session_whose_refresh_key_lapsed_first(
+async def test_get_logout_identity_ignores_an_access_token_rotated_out_of_a_live_session(
     fake_redis: InMemoryRedis,
 ) -> None:
-    """Nothing forces the refresh lifetime past the access one; a session still
-    holding a usable access token must stay revocable."""
-    await fake_redis.set(USER_AUTH_REALM.keys.access("user-1", "session-1"), "jti")
+    """A leaked access token a refresh has since replaced once logged the victim
+    out of every session: the session was live, and nothing compared the jti."""
+    await _live_logout_session(fake_redis)
+    payload = build_access_payload(
+        "user-1", session_id="session-1", jti="rotated-out-jti"
+    )
+
+    assert (
+        await dependencies.get_logout_identity(
+            redis_client=fake_redis, token=encode_access_payload(payload)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_still_ends_a_session_issued_before_latest_access(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Sessions live when the key was introduced have none until their next
+    refresh; logout must still revoke them rather than only clear cookies."""
+    await fake_redis.set(USER_AUTH_REALM.keys.refresh("user-1", "session-1"), "jti")
     token = encode_access_payload(
-        build_access_payload("user-1", session_id="session-1")
+        build_access_payload("user-1", session_id="session-1", jti="any-jti")
     )
 
     identity = await dependencies.get_logout_identity(

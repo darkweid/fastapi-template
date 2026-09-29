@@ -39,6 +39,7 @@ async def invalidate_all_sessions(
     for session_id in session_ids:
         token_keys.append(keys.access(subject_id, session_id))
         token_keys.append(keys.refresh(subject_id, session_id))
+        token_keys.append(keys.latest_access(subject_id, session_id))
 
     if token_keys:
         await redis_client.delete(*token_keys)
@@ -63,6 +64,7 @@ async def invalidate_session(
     await redis_client.delete(
         keys.access(subject_id, session_id),
         keys.refresh(subject_id, session_id),
+        keys.latest_access(subject_id, session_id),
     )
     await redis_client.zrem(keys.sessions(subject_id), session_id)
 
@@ -125,7 +127,8 @@ async def execute_token_rotation(
     Run the rotation script and translate its verdict.
 
     On 'OK' the script has already registered `new_refresh_jti` and
-    `new_access_jti` as the session's live pair and refreshed its index entry,
+    `new_access_jti` as the session's live pair (the access jti also as the
+    one logout accepts) and refreshed its index entry,
     in the same unit as the check, so the caller writes nothing more.
 
     Answers 'OK' or raises; there is no other return. GRACE is a double-submit
@@ -145,11 +148,12 @@ async def execute_token_rotation(
         Awaitable[str],
         redis_client.eval(
             ROTATE_REFRESH_TOKEN_SCRIPT,
-            4,  # Number of keys
+            5,  # Number of keys
             keys.refresh(subject_id, session_id),
             keys.used(subject_id, jti),
             keys.access(subject_id, session_id),
             keys.sessions(subject_id),
+            keys.latest_access(subject_id, session_id),
             jti,
             str(used_ttl_seconds),
             str(config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS),

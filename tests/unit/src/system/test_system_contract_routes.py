@@ -47,6 +47,7 @@ async def test_system_routes_contract(
         "status": "ok",
         "postgres": True,
         "redis": True,
+        "redis_memory_used_ratio": None,
     }
 
     time_response = await async_client.get("/time/")

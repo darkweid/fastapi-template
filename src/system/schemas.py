@@ -22,6 +22,11 @@ class HealthCheckResponse(Base):
     status: Literal["ok", "degraded"]
     postgres: bool
     redis: bool
+    # used_memory / maxmemory of the Redis instance; null when Redis is down or
+    # has no memory cap. Above REDIS_MEMORY_DEGRADED_RATIO the status degrades:
+    # under `noeviction` a full Redis refuses writes, so logins, OTPs and task
+    # enqueues start failing before anything is down.
+    redis_memory_used_ratio: float | None = None
 
 
 class ServerTimeResponse(Base):

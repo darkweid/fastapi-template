@@ -503,7 +503,7 @@ async def test_base_repository_get_paginated_list_applies_requested_ordering() -
     items_query = session.execute.await_args_list[0].args[0]
     order_by_clauses = [str(clause) for clause in items_query._order_by_clauses]
     assert order_by_clauses == [
-        "repository_models.name ASC NULLS LAST",
+        "repository_models.name ASC",
         "repository_models.id ASC",
     ]
 

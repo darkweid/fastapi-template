@@ -53,12 +53,17 @@ class OutboxRepository(BaseRepository[OutboxMessage]):
         )
 
     async def mark_publish_failure(
-        self, session: AsyncSession, message_id: UUID, error: str, final: bool
+        self,
+        session: AsyncSession,
+        message_id: UUID,
+        error: str,
+        final: bool,
+        *,
+        count_attempt: bool = True,
     ) -> None:
-        values: dict[str, Any] = {
-            "attempts": self.model.attempts + 1,
-            "last_error": error[:LAST_ERROR_MAX_LENGTH],
-        }
+        values: dict[str, Any] = {"last_error": error[:LAST_ERROR_MAX_LENGTH]}
+        if count_attempt:
+            values["attempts"] = self.model.attempts + 1
         if final:
             values["status"] = OutboxMessageStatus.FAILED
         await session.execute(

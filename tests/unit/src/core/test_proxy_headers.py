@@ -299,3 +299,20 @@ async def test_non_http_scope_passes_through() -> None:
     await middleware(scope, receive, send)
 
     assert recorder.scope is scope
+
+
+@pytest.mark.parametrize(
+    "entry", ["0.0.0.0/0", "::/0", "128.0.0.0/1", "10.0.0.0/7", "2001::/31"]
+)
+def test_middleware_refuses_a_range_wide_enough_to_trust_any_caller(
+    entry: str,
+) -> None:
+    """`0.0.0.0/0` is the rejected "*" spelled as a range: every hop in the
+    chain would be trusted and the caller would pick their own address."""
+    with pytest.raises(ValueError, match=entry.replace(".", r"\.")):
+        TrustedProxyHeadersMiddleware(ScopeRecorder(), trusted_hosts=[entry])
+
+
+@pytest.mark.parametrize("entry", ["10.0.0.0/8", "2001:db8::/32", "::1", "proxy"])
+def test_middleware_accepts_ranges_at_the_prefix_floor(entry: str) -> None:
+    TrustedProxyHeadersMiddleware(ScopeRecorder(), trusted_hosts=[entry])

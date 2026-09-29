@@ -7,6 +7,12 @@ from urllib.parse import quote, urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from src.core.proxy_headers import (
+    MIN_TRUSTED_IPV4_PREFIX,
+    MIN_TRUSTED_IPV6_PREFIX,
+    too_wide_trusted_networks,
+)
+
 # Shortest secret the app accepts anywhere. Matches the HMAC-SHA256 block size,
 # which is the weakest signature the JWT algorithm allowlist permits.
 SECRET_MIN_LENGTH = 32
@@ -246,6 +252,16 @@ class PostgresConfig(BaseSettings):
     # session, and an undersized pool surfaces as pool_timeout errors.
     DB_TASKS_POOL_SIZE: int = Field(5, gt=0)
     DB_TASKS_MAX_OVERFLOW: int = Field(15, ge=0)
+    # Server-side session limits for the API pool, sent as connection startup
+    # parameters; 0 turns one off. A request whose code awaits something slow
+    # inside an open transaction, or a query gone wrong, otherwise holds its
+    # locks and its connection for as long as it likes. A transaction that
+    # needs more time raises its own cap with set_local_statement_timeout.
+    DB_STATEMENT_TIMEOUT_SECONDS: float = Field(30, ge=0)
+    DB_IDLE_IN_TRANSACTION_TIMEOUT_SECONDS: float = Field(60, ge=0)
+    # The tasks pool runs batch jobs that cap their own statements, so it only
+    # gets the idle-in-transaction limit, and a longer one.
+    DB_TASKS_IDLE_IN_TRANSACTION_TIMEOUT_SECONDS: float = Field(300, ge=0)
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -401,18 +417,27 @@ class AppConfig(BaseSettings):
     @model_validator(mode="after")
     def reject_wildcard_proxy_trust(self) -> "AppConfig":
         """
-        Fail startup when every proxy hop is trusted.
+        Fail startup when every proxy hop, or a range that wide, is trusted.
 
         With a wildcard nothing in the forwarded chain is attacker-free, so the
         resolver has no honest end to start from and the rate limiter ends up
-        keyed by a value the caller writes. List the edge addresses or ranges
-        instead - for a CDN, the published ranges of that CDN.
+        keyed by a value the caller writes. `0.0.0.0/0` and `::/0` are that
+        wildcard spelled as a range, so a range wider than the prefix floor is
+        refused too. List the edge addresses or ranges instead - for a CDN, the
+        published ranges of that CDN.
         """
         if "*" in [host.strip() for host in self.TRUST_PROXY_HOSTS]:
             raise ValueError(
                 "TRUST_PROXY_HOSTS=* would trust the whole X-Forwarded-For "
                 "chain, which lets any caller pick their own rate-limit "
                 "identity: list the proxy addresses or CIDR ranges instead."
+            )
+        if too_wide := too_wide_trusted_networks(self.TRUST_PROXY_HOSTS):
+            raise ValueError(
+                f"TRUST_PROXY_HOSTS entries {', '.join(too_wide)} are wider than "
+                f"/{MIN_TRUSTED_IPV4_PREFIX} (IPv4) or /{MIN_TRUSTED_IPV6_PREFIX} "
+                "(IPv6) and would trust hops any caller controls: list the "
+                "proxy addresses or narrower ranges instead."
             )
         return self
 
