@@ -30,12 +30,12 @@ Pick a slug — lowercase, no spaces — and replace:
 | What | Where | Becomes |
 | --- | --- | --- |
 | Compose project name `fastapi-template` | `infra/docker-compose.yml:4` | `myapp` |
-| Container names `template-app`, `-worker`, `-scheduler`, `-nginx`, `-postgres`, `-redis`, `-app-builder` | `infra/docker-compose.yml`, `infra/docker-compose.override.yml` | `myapp-*` |
-| Prod image tag `template-app-image:latest` | `infra/docker-compose.yml` (the `APP_IMAGE` fallback, 4 services), `infra/deploy/deploy.sh:21` | `myapp-app-image:latest` |
+| Container names `template-worker`, `-scheduler`, `-nginx`, `-postgres`, `-redis`, `-app-builder` (the app has none: a deploy runs two of it side by side, named after the compose project) | `infra/docker-compose.yml` | `myapp-*` |
+| Prod image tag `template-app-image:latest` | `infra/docker-compose.yml` (the `APP_IMAGE` fallback, 4 services), `infra/deploy/deploy.sh:24` | `myapp-app-image:latest` |
 | Dev image tag `template-app-dev-image:latest` | `infra/docker-compose.override.yml` | `myapp-app-dev-image:latest` |
 | Postgres image tag `template-postgres:18` | `infra/docker-compose.yml:23` | `myapp-postgres:18` |
 | Test Postgres tag `template-postgres-test:18` | `infra/docker-compose.test.yml:26` | `myapp-postgres-test:18` |
-| Volume names `template-postgres-data`, `template-redis-data` | `infra/docker-compose.yml:187,189` | `myapp-postgres-data`, `myapp-redis-data` |
+| Volume names `template-postgres-data`, `template-redis-data`, `template-nginx-upstream` | `infra/docker-compose.yml:225,227,229` | `myapp-postgres-data`, `myapp-redis-data`, `myapp-nginx-upstream` |
 | Integration-suite project prefix `template-test-$$` | `Makefile:145` | `myapp-test-$$` |
 
 If the stack has already run once, tear it down **before** renaming. `make down`
@@ -335,9 +335,11 @@ On the target box:
 5. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
    the exact steps, and swapping the config file is only the first of them: the
    server block reads `/etc/nginx/certs/fullchain.pem`, and the `nginx` service
-   currently mounts configuration files only. Put the certificate and key under
-   `infra/nginx/certs/`, mount `tls.conf.example` **over** the `app.conf` mount,
-   and add the mounts those paths need:
+   currently mounts the configuration directory only. Put the certificate and
+   key under `infra/nginx/certs/`, replace the content of `app.conf` with
+   `tls.conf.example` (the whole `infra/nginx` directory is nginx's `conf.d`, so
+   a second server file beside `app.conf` would clash with it), and add the
+   mounts those paths need:
 
    ```yaml
    - ./nginx/certs:/etc/nginx/certs:ro
@@ -357,7 +359,8 @@ and the production box never compiles.
 `infra/deploy/deploy.sh` validates `.env` before anything starts, brings up
 Postgres and Redis, applies migrations, and only then rolls `app`, `worker` and
 `scheduler`. A failed migration aborts the deploy with the previous containers
-still serving.
+still serving. The app rolls without downtime: the new container starts beside
+the serving one and takes the traffic only once healthy.
 
 Operational detail lives in [infra.md](infra.md); the threat model and the host
 hardening in [security.md](security.md).

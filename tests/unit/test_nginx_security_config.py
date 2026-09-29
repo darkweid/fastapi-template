@@ -192,11 +192,12 @@ def test_the_api_vhost_refuses_methods_outside_the_api_set() -> None:
     )
 
 
-def test_compose_mounts_every_file_the_configs_include() -> None:
-    compose = (PROJECT_ROOT / "infra/docker-compose.yml").read_text(encoding="utf-8")
-
-    for included in ("proxy.inc", "error_pages.inc", "security_headers.inc"):
-        assert f"./nginx/{included}:/etc/nginx/conf.d/{included}:ro" in compose
+def test_every_file_the_configs_include_is_in_the_mounted_directory() -> None:
+    """infra/nginx is mounted as /etc/nginx/conf.d, so an include path outside
+    it names a file the container does not have."""
+    for name in ("app.conf", "tls.conf.example", "proxy.inc", "error_pages.inc"):
+        for included in re.findall(r"include /etc/nginx/conf\.d/(\S+);", _read(name)):
+            assert (NGINX_DIR / included).is_file(), included
 
 
 def _probe_location() -> str:

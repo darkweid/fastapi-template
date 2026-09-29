@@ -9,8 +9,10 @@
 #           instead of halfway through a production deploy.
 #
 # Order matters: data services first, then migrations, then the application.
-# A failed migration aborts the deploy with the previous app still serving; an
-# application that does not turn healthy is rolled back to the previous image.
+# A failed migration aborts the deploy with the previous app still serving. The
+# app rolls without downtime: a new container starts beside the serving one and
+# takes over only once healthy (roll_app below); one that never turns healthy is
+# removed and the previous one keeps serving.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -29,12 +31,265 @@ fi
 
 COMPOSE=(docker compose --env-file .env -f infra/docker-compose.yml)
 
-# nginx resolves the app upstream once, when it loads its configuration, so a
-# recreated app container at a new address leaves it answering 502. A reload
-# resolves it again without dropping the connections in flight, which a restart
-# would.
-reload_nginx() {
-  "${COMPOSE[@]}" exec -T nginx nginx -s reload
+# A new app container gets this long to turn healthy before it is removed. The
+# app healthcheck in infra/docker-compose.yml reports one that never answers
+# unhealthy sooner (start_period plus retries x interval, about 80s).
+APP_HEALTHY_TIMEOUT_SECONDS=120
+# How long the nginx workers retired by a reload get to finish the requests they
+# still carry to the old app. Only a long-lived connection (a WebSocket) holds
+# one longer; it is cut when the old app stops.
+NGINX_DRAIN_TIMEOUT_SECONDS=60
+
+nginx_is_running() {
+  [ -n "$("${COMPOSE[@]}" ps -q nginx)" ]
+}
+
+# nginx routes to whatever /etc/nginx/upstream/app_upstream.inc names (the upstream in
+# infra/nginx/main.conf). It is written inside the nginx container, not in the
+# checkout: it changes on every deploy. Naming single containers keeps nginx off
+# a new one until it is healthy and off an old one before it stops, which
+# Docker's service name cannot do - it resolves to every container of the
+# service, started or stopping. A reload finishes the requests in flight; a
+# restart would drop them.
+#
+# app_upstream.applied records the pin only once the reload has been sent, so it
+# always names what the running nginx routes to: pinned_app_names reads it after
+# an interrupted deploy, and infra/nginx/entrypoint.sh restores it when nginx
+# restarts.
+#
+# nginx is started before the app rolls, so one that is not running here is
+# stopped or crash-looping: the roll must fail rather than go on unrouted, and
+# leave behind an applied pin naming a container it then removes.
+route_app_to() {
+  if ! nginx_is_running; then
+    echo "[deploy] nginx is not running; the app cannot be routed"
+    return 1
+  fi
+  # shellcheck disable=SC2016  # expanded by the shell inside the nginx container
+  "${COMPOSE[@]}" exec -T nginx sh -c '
+    for host in "$@"; do
+      printf "server %s:%s resolve;\n" "$host" "$APP_BACKEND_PORT"
+    done > /etc/nginx/upstream/app_upstream.inc.next
+    mv /etc/nginx/upstream/app_upstream.inc.next /etc/nginx/upstream/app_upstream.inc
+  ' sh "$@" || return 1
+  "${COMPOSE[@]}" exec -T nginx nginx -s reload || return 1
+  "${COMPOSE[@]}" exec -T nginx sh -c '
+    cp /etc/nginx/upstream/app_upstream.inc /etc/nginx/upstream/app_upstream.applied.next
+    mv /etc/nginx/upstream/app_upstream.applied.next /etc/nginx/upstream/app_upstream.applied
+  ' || return 1
+}
+
+# The workers a reload retires keep the requests they already accepted, a body
+# still uploading among them, and forward those to the upstream they were
+# started with. The old app has to stay up until they are gone.
+wait_for_retired_nginx_workers() {
+  nginx_is_running || return 0
+  local deadline=$((SECONDS + NGINX_DRAIN_TIMEOUT_SECONDS))
+  # `nginx -s reload` returns once the master is signalled, before it retires
+  # anything.
+  sleep 1
+  while "${COMPOSE[@]}" exec -T nginx sh -c \
+    'grep -qs "^nginx: worker process is shutting down" /proc/[0-9]*/cmdline'; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "[deploy] nginx workers retired ${NGINX_DRAIN_TIMEOUT_SECONDS}s ago still hold connections; stopping the old app anyway"
+      return 0
+    fi
+    sleep 1
+  done
+}
+
+# Healthy by the container's own healthcheck, not the service's: the old
+# container is healthy too. A restart counts as a failure - the restart policy
+# would otherwise hide a crash loop behind a fresh `starting`.
+wait_until_healthy() {
+  local container="$1" name="$2"
+  local deadline=$((SECONDS + APP_HEALTHY_TIMEOUT_SECONDS))
+  local state
+  while true; do
+    state="$(docker inspect -f '{{.State.Status}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")"
+    case "$state" in
+      "running 0 healthy") return 0 ;;
+      "running 0 starting") ;;
+      *)
+        echo "[deploy] ${name} is ${state:-gone}"
+        return 1
+        ;;
+    esac
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "[deploy] ${name} did not turn healthy within ${APP_HEALTHY_TIMEOUT_SECONDS}s"
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+container_names() {
+  local id
+  for id in "$@"; do
+    docker inspect -f '{{.Name}}' "$id" | sed 's|^/||'
+  done
+}
+
+# The app containers that are running and passing their own healthcheck - the
+# only ones nginx may be pinned to. A deploy interrupted mid-roll can leave a
+# second container behind that is still starting, unhealthy or crash-looping.
+healthy_app_ids() {
+  local id
+  for id in $("${COMPOSE[@]}" ps -a -q app); do
+    if [ "$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id")" = "running healthy" ]; then
+      echo "$id"
+    fi
+  done
+}
+
+# The containers the running nginx is pinned to by name, one per line; nothing
+# while it routes to the service name. Left behind by a deploy interrupted
+# mid-roll.
+pinned_app_names() {
+  nginx_is_running || return 0
+  "${COMPOSE[@]}" exec -T nginx sh -c 'cat /etc/nginx/upstream/app_upstream.applied 2>/dev/null' \
+    | sed -n 's/^server \([^: ]*\):.*/\1/p' | grep -vx app || true
+}
+
+# The healthy containers that serve: the ones nginx is pinned to when an
+# interrupted roll left it pinned to healthy ones - after the cutover that is
+# the new container, and the old one it no longer routes to must not come back
+# - otherwise every healthy one.
+serving_app_ids() {
+  local healthy pinned id serving=""
+  healthy="$(healthy_app_ids)"
+  pinned="$(pinned_app_names)"
+  if [ -n "$pinned" ]; then
+    for id in $healthy; do
+      if printf '%s\n' "$pinned" | grep -qxF "$(container_names "$id")"; then
+        serving="${serving}${id}"$'\n'
+      fi
+    done
+  fi
+  if [ -n "$serving" ]; then
+    printf '%s' "$serving"
+  elif [ -n "$healthy" ]; then
+    printf '%s\n' "$healthy"
+  fi
+}
+
+# Rolls the app to the image given, with no request refused: pin nginx to the
+# healthy serving containers, start one more beside them, wait for it to turn
+# healthy, move nginx onto it, let the retired nginx workers finish, then stop
+# the old containers - gunicorn drains what they still serve within its graceful
+# timeout, which the compose stop_grace_period covers - and point nginx back at
+# the service name. A new container that never turns healthy is removed without
+# having served anything.
+#
+# Callers test it in an `if`, which switches errexit off for everything inside,
+# so every step that must not be skipped checks its own status.
+roll_app() {
+  local image="$1"
+  local all_ids old_ids leftover_ids new_id new_name id count=1
+
+  # A stopped container of the service would be started again by the scale-up
+  # below and counted as one of its replicas. `ps -a` from here on: a container
+  # the restart policy is bringing back up is not listed as running.
+  "${COMPOSE[@]}" rm -f app >/dev/null || return 1
+
+  all_ids="$("${COMPOSE[@]}" ps -a -q app)" || return 1
+  old_ids="$(serving_app_ids)" || return 1
+  if [ -n "$old_ids" ]; then
+    leftover_ids=""
+    for id in $all_ids; do
+      if ! printf '%s\n' "$old_ids" | grep -qxF "$id"; then
+        leftover_ids="${leftover_ids} ${id}"
+      fi
+    done
+    # nginx is pinned before any leftover stops: an interrupted deploy may have
+    # reloaded nginx onto a container without recording it as applied, so what
+    # nginx really routes to is known only after this reload.
+    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
+    route_app_to $(container_names $old_ids) || return 1
+    if [ -n "$leftover_ids" ]; then
+      # The workers that reload retired may still carry requests to a leftover;
+      # they finish before it stops, and it stops gracefully like any old
+      # container.
+      wait_for_retired_nginx_workers
+      for id in $leftover_ids; do
+        echo "[deploy] stopping $(container_names "$id"), left behind by an interrupted deploy and no longer routed to"
+        docker stop "$id" >/dev/null || return 1
+        docker rm "$id" >/dev/null || return 1
+      done
+    fi
+  else
+    # Nothing is verified to serve, so there is nothing to pin nginx to; the
+    # containers still count as old ones and stop once the new one is healthy.
+    old_ids="$all_ids"
+    if [ -n "$old_ids" ]; then
+      echo "[deploy] no app container is healthy; the new one takes over once it is"
+    fi
+  fi
+  for id in $old_ids; do
+    count=$((count + 1))
+  done
+
+  # --no-recreate leaves the serving containers alone and adds one more from the
+  # current configuration; --no-deps keeps app-builder out of the CD path.
+  if ! APP_IMAGE="$image" "${COMPOSE[@]}" up -d --no-deps --no-recreate --scale "app=${count}" app; then
+    echo "[deploy] starting the new app container failed"
+    discard_new_app "$old_ids"
+    return 1
+  fi
+
+  new_id=""
+  for id in $("${COMPOSE[@]}" ps -a -q app); do
+    printf '%s\n' "$old_ids" | grep -qxF "$id" || new_id="$id"
+  done
+  if [ -z "$new_id" ]; then
+    echo "[deploy] no new app container was started"
+    route_app_to app || true
+    return 1
+  fi
+  new_name="$(container_names "$new_id")"
+  echo "[deploy] waiting for ${new_name} to turn healthy"
+
+  if ! wait_until_healthy "$new_id" "$new_name"; then
+    echo "[deploy] last log lines of ${new_name}:"
+    docker logs --tail 50 "$new_id" 2>&1 || true
+    discard_new_app "$old_ids"
+    return 1
+  fi
+
+  if ! route_app_to "$new_name"; then
+    echo "[deploy] nginx could not be moved onto ${new_name}"
+    discard_new_app "$old_ids"
+    return 1
+  fi
+  if [ -n "$old_ids" ]; then
+    wait_for_retired_nginx_workers
+    echo "[deploy] stopping the previous app container"
+    # shellcheck disable=SC2086  # container ids, one word each
+    docker stop $old_ids >/dev/null || return 1
+    # shellcheck disable=SC2086
+    docker rm $old_ids >/dev/null || return 1
+  fi
+  route_app_to app || return 1
+}
+
+# Removes every app container the roll started, the ones given excepted. nginx
+# goes back to those first, and the workers that reload retires finish, since a
+# failure after the cutover reload leaves nginx routing to the new container.
+# Best effort: it runs on a path that already failed.
+discard_new_app() {
+  local keep="$1" id
+  if [ -n "$keep" ]; then
+    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
+    route_app_to $(container_names $keep) || true
+    wait_for_retired_nginx_workers || true
+  fi
+  for id in $("${COMPOSE[@]}" ps -a -q app); do
+    if ! printf '%s\n' "$keep" | grep -qxF "$id"; then
+      docker stop "$id" >/dev/null 2>&1 || true
+      docker rm -f "$id" >/dev/null || true
+    fi
+  done
+  route_app_to app || true
 }
 
 test -f .env || {
@@ -45,22 +300,24 @@ python3 scripts/ops/check_env.py
 
 # The nginx configuration this checkout ships is tested in a fresh container
 # with the new mounts before anything is rolled: a broken vhost or a missing
-# certificate aborts the deploy with the previous stack still serving. Testing
-# it later would be too late - rolling the app moves it to a new address the
-# running nginx cannot follow. The test resolves the app upstream, so it needs
-# an app container on the network; on the first deploy there is none, nothing
-# is serving yet either, and nginx's own start below reports the error.
-RUNNING_APP="$("${COMPOSE[@]}" ps -q app)"
-if [ -n "$RUNNING_APP" ]; then
-  echo "[deploy] testing the nginx configuration"
-  "${COMPOSE[@]}" run --rm --no-deps --entrypoint nginx nginx -t
-fi
+# certificate aborts the deploy with the previous stack still serving. It goes
+# through the service's entrypoint, which writes app_upstream.inc the way a real
+# start does; the upstream is resolved at run time, so the test needs no app
+# container and runs on a first deploy too.
+echo "[deploy] testing the nginx configuration"
+"${COMPOSE[@]}" run --rm --no-deps nginx nginx -t
 
-# The image the serving app runs, recorded before anything is rolled, so a new
-# image whose containers never turn healthy can be swapped back out. The image
-# id, not the tag: BUILD=1 rebuilds the same tag, which would then name the new
-# image. Empty on the first deploy, when there is nothing to go back to.
+# The image the serving app runs, recorded before anything is rolled, so the
+# whole stack can go back to it when the worker or the scheduler never turns
+# healthy. The image id, not the tag: BUILD=1 rebuilds the same tag, which would
+# then name the new image. Empty on the first deploy, when there is nothing to
+# go back to.
 PREVIOUS_IMAGE=""
+# The first line taken in the shell, not with `head`: head exits after one line,
+# and with two healthy containers left by an interrupted roll the writer's
+# SIGPIPE fails the pipeline under pipefail.
+RUNNING_APP="$(serving_app_ids)"
+RUNNING_APP="${RUNNING_APP%%$'\n'*}"
 if [ -n "$RUNNING_APP" ]; then
   PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' "$RUNNING_APP")"
 fi
@@ -85,26 +342,37 @@ echo "[deploy] starting data services"
 echo "[deploy] applying migrations before any new code serves traffic"
 "${COMPOSE[@]}" run --rm --no-deps app alembic upgrade head
 
-echo "[deploy] rolling the application containers"
-# --no-deps keeps app-builder out of the CD path: with BUILD=0 the image comes
-# from the registry and there is nothing to build.
-#
-# Containers that never turn healthy would otherwise stay in place with the
-# service down, so the previous image is rolled back in. The migrations stay
-# applied: the previous code runs against the new schema.
-if ! "${COMPOSE[@]}" up -d --no-deps --wait app worker scheduler; then
+# Before the roll, which relies on the running nginx reading app_upstream.inc.
+# Starts nginx on the first deploy; later a no-op unless the nginx service
+# itself changed in infra/docker-compose.yml (its image, its mounts, its
+# environment), which recreates it and drops the connections it holds.
+"${COMPOSE[@]}" up -d --no-deps nginx
+
+echo "[deploy] rolling the app"
+if ! roll_app "$APP_IMAGE"; then
+  echo "[deploy] rolling the app failed; the previous one keeps serving and the deploy failed"
+  exit 1
+fi
+
+# The worker and the scheduler are recreated in place: nothing waits on them
+# synchronously, tasks queue in Redis while they restart, and taskiq has no
+# duplicate-fire protection, so two schedulers side by side would fire every
+# cron twice. When they never turn healthy the whole stack goes back to the
+# previous image, the app through the same zero-downtime roll, so no two
+# versions of the code keep running together. The migrations stay applied:
+# the previous code runs against the new schema.
+echo "[deploy] rolling the worker and the scheduler"
+if ! "${COMPOSE[@]}" up -d --no-deps --wait worker scheduler; then
   if [ -z "$PREVIOUS_IMAGE" ]; then
-    echo "[deploy] the application did not become healthy and there is no previous image to roll back to"
+    echo "[deploy] the worker or the scheduler did not become healthy and there is no previous image to roll back to"
     exit 1
   fi
-  echo "[deploy] the application did not become healthy; rolling back to ${PREVIOUS_IMAGE}"
-  APP_IMAGE="$PREVIOUS_IMAGE" "${COMPOSE[@]}" up -d --no-deps --wait app worker scheduler
-  reload_nginx
+  echo "[deploy] the worker or the scheduler did not become healthy; rolling back to ${PREVIOUS_IMAGE}"
+  APP_IMAGE="$PREVIOUS_IMAGE" "${COMPOSE[@]}" up -d --no-deps --wait worker scheduler
+  roll_app "$PREVIOUS_IMAGE"
   echo "[deploy] rolled back; the deploy failed"
   exit 1
 fi
-"${COMPOSE[@]}" up -d --no-deps nginx
-reload_nginx
 
 # Every BUILD=0 deploy leaves a tagged sha- image behind, and plain
 # `image prune` only touches dangling ones, so the disk grows until a pull

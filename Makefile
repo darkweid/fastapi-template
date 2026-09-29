@@ -42,8 +42,6 @@ run: ## Build and start the prod-like stack
 .PHONY: run-dev
 run-dev: ## Build and start the dev stack with autoreload
 	$(DOCKER_COMPOSE_DEV) up --build -d
-# nginx resolves the app upstream once per configuration load, so a rebuilt app container leaves it serving 502 until nginx reloads
-	$(DOCKER_COMPOSE_DEV) exec -T nginx nginx -s reload
 
 .PHONY: down
 down: ## Stop and remove the containers
