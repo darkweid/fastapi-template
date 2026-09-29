@@ -668,3 +668,23 @@ async def test_get_logout_identity_ignores_a_token_of_an_ended_session(
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_accepts_a_session_whose_refresh_key_lapsed_first(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Nothing forces the refresh lifetime past the access one; a session still
+    holding a usable access token must stay revocable."""
+    await fake_redis.set(USER_AUTH_REALM.keys.access("user-1", "session-1"), "jti")
+    token = encode_access_payload(
+        build_access_payload("user-1", session_id="session-1")
+    )
+
+    identity = await dependencies.get_logout_identity(
+        redis_client=fake_redis, token=token
+    )
+
+    assert identity == dependencies.SessionIdentity(
+        subject_id="user-1", session_id="session-1"
+    )

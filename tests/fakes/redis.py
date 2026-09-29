@@ -160,11 +160,15 @@ class InMemoryRedis:
                 deleted += 1
         return deleted
 
-    async def exists(self, key: str | bytes) -> int:
+    async def exists(self, *keys: str | bytes) -> int:
+        """How many of the keys exist, a repeated key counted each time - as Redis does."""
         await _round_trip()
-        key_norm = _normalize_key(key)
-        self._purge_expired(key_norm)
-        return int(key_norm in self._store or key_norm in self._zsets)
+        present = 0
+        for key in keys:
+            key_norm = _normalize_key(key)
+            self._purge_expired(key_norm)
+            present += int(key_norm in self._store or key_norm in self._zsets)
+        return present
 
     async def expire(self, key: str | bytes, seconds: int, *, nx: bool = False) -> bool:
         await _round_trip()

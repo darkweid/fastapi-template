@@ -56,7 +56,7 @@ identify a session. Every other endpoint rejects an expired token, but logout ca
 afford to: the refresh cookie is scoped to the refresh route and never reaches
 `/logout`, and a browser cannot drop an httponly cookie on its own — so a rejected
 logout would leave the client holding a session it can neither use nor clear. The
-session the token names must still be live (its refresh key exists): a signature
+session the token names must still be live (its refresh or access key exists): a signature
 outlives its session, and an old token must not be able to order a wipe of the
 sessions its subject opened since. A request whose token is missing, forged or names
 an ended session still gets its cookies expired; it simply revokes nothing

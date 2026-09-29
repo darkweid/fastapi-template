@@ -137,7 +137,9 @@ async def decode_logout_identity(
     session it can neither use nor clear. The signature is still verified -
     only the `exp` claim is relaxed - so a forged token identifies nothing.
 
-    The named session must still be live, which its refresh key proves.
+    The named session must still be live: its refresh key or its access key
+    still exists. Either alone is enough, since no setting forces the refresh
+    token to outlive the access token.
     Without that, any access token ever signed for the subject - one leaked
     long ago, one from a session a password change already ended - could
     order a wipe of every session the subject holds today.
@@ -174,7 +176,10 @@ async def decode_logout_identity(
     if mode != "access_token":
         return None
 
-    if not await redis_client.exists(realm.keys.refresh(subject_id, session_id)):
+    if not await redis_client.exists(
+        realm.keys.refresh(subject_id, session_id),
+        realm.keys.access(subject_id, session_id),
+    ):
         return None
 
     return SessionIdentity(subject_id=subject_id, session_id=session_id)
