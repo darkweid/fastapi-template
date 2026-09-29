@@ -1,6 +1,7 @@
 import asyncio
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
+import pytest
 from taskiq import InMemoryBroker, TaskiqMessage
 from taskiq.receiver import Receiver
 from taskiq.result import TaskiqResult
@@ -10,6 +11,7 @@ from taskiq_worker.receiver import (
     IDEMPOTENCY_MARKER_TTL_SECONDS,
     RELEASE_CLAIM_SCRIPT,
     RUNNING_CLAIM_TTL_SECONDS,
+    TASK_TIMEOUT_SECONDS,
     IdempotencyReceiver,
     build_idempotency_marker_key,
     build_running_claim_key,
@@ -193,10 +195,36 @@ async def test_a_redelivery_after_a_failed_run_executes_again() -> None:
     assert super_run.await_count == 2
 
 
-def test_the_running_claim_expires_before_the_stream_reclaims() -> None:
-    """A message reclaimed from a crashed worker that still found the claim would
-    be skipped and acked - the task lost rather than duplicated."""
+def test_a_run_ends_before_its_claim_and_the_claim_before_the_reclaim() -> None:
+    """A run outliving its claim lets a second delivery run beside it; a claim
+    outliving the reclaim timeout makes a crashed worker's message be skipped and
+    acked - the task lost rather than duplicated."""
+    assert TASK_TIMEOUT_SECONDS < RUNNING_CLAIM_TTL_SECONDS
     assert RUNNING_CLAIM_TTL_SECONDS < STREAM_IDLE_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [
+        (None, TASK_TIMEOUT_SECONDS),
+        (TASK_TIMEOUT_SECONDS * 2, TASK_TIMEOUT_SECONDS),
+        ("30", "30"),
+    ],
+)
+async def test_every_run_is_cut_off_before_its_claim_expires(
+    declared: object, expected: object
+) -> None:
+    message = make_message()
+    if declared is not None:
+        message.labels["timeout"] = declared
+    receiver = make_receiver(InMemoryRedis())  # type: ignore[arg-type]
+
+    with patch.object(
+        Receiver, "run_task", new=AsyncMock(return_value=success_result())
+    ) as super_run:
+        await receiver.run_task(MagicMock(), message)
+
+    assert super_run.await_args.args[1].labels["timeout"] == expected
 
 
 async def test_a_run_that_outlived_its_claim_leaves_the_successor_claim() -> None:

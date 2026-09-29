@@ -26,9 +26,13 @@ IDEMPOTENCY_MARKER_TTL_SECONDS = 3600
 
 # A run holds its claim at most this long. It stays below the stream's reclaim
 # timeout: a message reclaimed from a crashed worker must find the claim gone,
-# or it is skipped, acked and lost. A task running past the reclaim timeout is
-# redelivered anyway, so a longer claim would buy nothing.
+# or it is skipped, acked and lost.
 RUNNING_CLAIM_TTL_SECONDS = STREAM_IDLE_TIMEOUT_SECONDS - 60
+
+# Every run is cut off before its claim expires, or a second delivery could take
+# the expired claim and run beside it. A task that needs longer raises this,
+# RUNNING_CLAIM_TTL_SECONDS and STREAM_IDLE_TIMEOUT_SECONDS together.
+TASK_TIMEOUT_SECONDS = RUNNING_CLAIM_TTL_SECONDS - 60
 
 
 RELEASE_CLAIM_SCRIPT = """
@@ -90,6 +94,7 @@ class IdempotencyReceiver(Receiver):
             await self._release_claim(message.task_id, claim_token)
             return _skipped()
 
+        _cap_timeout(message)
         try:
             result = await super().run_task(target, message, ack_controller)
             if not result.is_err:
@@ -155,6 +160,14 @@ class IdempotencyReceiver(Receiver):
             # The claim still expires on its own; a retry arriving before that
             # is skipped, which is why this is logged as a warning.
             logger.warning("Failed to release running claim for task %s", task_id)
+
+
+def _cap_timeout(message: TaskiqMessage) -> None:
+    """Bound the run by TASK_TIMEOUT_SECONDS through taskiq's own `timeout`
+    label, keeping a shorter one a task declared for itself."""
+    declared = message.labels.get("timeout")
+    if declared is None or float(declared) > TASK_TIMEOUT_SECONDS:
+        message.labels["timeout"] = TASK_TIMEOUT_SECONDS
 
 
 def _skipped() -> TaskiqResult[Any]:
