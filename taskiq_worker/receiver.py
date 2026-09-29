@@ -6,6 +6,7 @@ caught by `Receiver.callback`, so the message would never be acked and the
 broker would redeliver it forever.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from uuid import uuid4
@@ -18,26 +19,29 @@ from taskiq.result import TaskiqResult
 from loggers import get_logger
 from src.core.redis.core import create_redis_client
 from src.main.config import config
-from taskiq_worker.broker import STREAM_IDLE_TIMEOUT_SECONDS
 
 logger = get_logger(__name__)
 
 IDEMPOTENCY_MARKER_TTL_SECONDS = 3600
 
-# A run holds its claim at most this long. It stays below the stream's reclaim
-# timeout: a message reclaimed from a crashed worker must find the claim gone,
-# or it is skipped, acked and lost.
-RUNNING_CLAIM_TTL_SECONDS = STREAM_IDLE_TIMEOUT_SECONDS - 60
-
-# Every run is cut off before its claim expires, or a second delivery could take
-# the expired claim and run beside it. A task that needs longer raises this,
-# RUNNING_CLAIM_TTL_SECONDS and STREAM_IDLE_TIMEOUT_SECONDS together.
-TASK_TIMEOUT_SECONDS = RUNNING_CLAIM_TTL_SECONDS - 60
-
+# The claim is short-lived and renewed every CLAIM_RENEW_INTERVAL_SECONDS while
+# its run is alive, so a task of any length keeps it and a crashed worker's claim
+# lapses within one TTL. It stays well below the stream's reclaim timeout: a
+# message reclaimed from a crashed worker must find the claim gone, or it is
+# skipped, acked and lost.
+RUNNING_CLAIM_TTL_SECONDS = 60
+CLAIM_RENEW_INTERVAL_SECONDS = 20
 
 RELEASE_CLAIM_SCRIPT = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+RENEW_CLAIM_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('EXPIRE', KEYS[1], ARGV[2])
 end
 return 0
 """
@@ -59,8 +63,8 @@ class IdempotencyReceiver(Receiver):
     effect and XACK no longer causes a duplicate execution on reclaim. The
     running claim covers the other duplicate: two deliveries of one task id in
     flight at once, as when the outbox sweeper republishes a row whose
-    after-commit publish already went out. A failed run releases its claim so a
-    retry can take it. Dedup is best-effort: on any Redis error the receiver
+    after-commit publish already went out. The claim is renewed while the run
+    lasts, and a failed run releases it so a retry can take it. Dedup is best-effort: on any Redis error the receiver
     fails open and executes - the baseline semantics stay at-least-once.
     """
 
@@ -94,16 +98,39 @@ class IdempotencyReceiver(Receiver):
             await self._release_claim(message.task_id, claim_token)
             return _skipped()
 
-        _cap_timeout(message)
+        heartbeat = asyncio.create_task(self._keep_claim(message.task_id, claim_token))
         try:
             result = await super().run_task(target, message, ack_controller)
             if not result.is_err:
                 await self._mark_done(message.task_id)
         finally:
+            heartbeat.cancel()
             # After the marker, never before: in between, a duplicate would
             # find neither and run.
             await self._release_claim(message.task_id, claim_token)
         return result
+
+    async def _keep_claim(self, task_id: str, token: str) -> None:
+        """Renew the claim for as long as the run lasts; cancelled when it ends.
+
+        A renewal that fails is logged and the next one tried: the claim lapses
+        only if renewals keep failing for a whole TTL.
+        """
+        while True:
+            await asyncio.sleep(CLAIM_RENEW_INTERVAL_SECONDS)
+            try:
+                await cast(
+                    Awaitable[int],
+                    self._marker_client.eval(
+                        RENEW_CLAIM_SCRIPT,
+                        1,
+                        build_running_claim_key(task_id),
+                        token,
+                        str(RUNNING_CLAIM_TTL_SECONDS),
+                    ),
+                )
+            except Exception:
+                logger.warning("Failed to renew running claim for task %s", task_id)
 
     async def _is_done(self, task_id: str) -> bool:
         try:
@@ -160,14 +187,6 @@ class IdempotencyReceiver(Receiver):
             # The claim still expires on its own; a retry arriving before that
             # is skipped, which is why this is logged as a warning.
             logger.warning("Failed to release running claim for task %s", task_id)
-
-
-def _cap_timeout(message: TaskiqMessage) -> None:
-    """Bound the run by TASK_TIMEOUT_SECONDS through taskiq's own `timeout`
-    label, keeping a shorter one a task declared for itself."""
-    declared = message.labels.get("timeout")
-    if declared is None or float(declared) > TASK_TIMEOUT_SECONDS:
-        message.labels["timeout"] = TASK_TIMEOUT_SECONDS
 
 
 def _skipped() -> TaskiqResult[Any]:

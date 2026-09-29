@@ -6,12 +6,13 @@ from taskiq import InMemoryBroker, TaskiqMessage
 from taskiq.receiver import Receiver
 from taskiq.result import TaskiqResult
 
+from taskiq_worker import receiver as receiver_module
 from taskiq_worker.broker import STREAM_IDLE_TIMEOUT_SECONDS
 from taskiq_worker.receiver import (
+    CLAIM_RENEW_INTERVAL_SECONDS,
     IDEMPOTENCY_MARKER_TTL_SECONDS,
     RELEASE_CLAIM_SCRIPT,
     RUNNING_CLAIM_TTL_SECONDS,
-    TASK_TIMEOUT_SECONDS,
     IdempotencyReceiver,
     build_idempotency_marker_key,
     build_running_claim_key,
@@ -195,50 +196,53 @@ async def test_a_redelivery_after_a_failed_run_executes_again() -> None:
     assert super_run.await_count == 2
 
 
-def test_a_run_ends_before_its_claim_and_the_claim_before_the_reclaim() -> None:
-    """A run outliving its claim lets a second delivery run beside it; a claim
-    outliving the reclaim timeout makes a crashed worker's message be skipped and
-    acked - the task lost rather than duplicated."""
-    assert TASK_TIMEOUT_SECONDS < RUNNING_CLAIM_TTL_SECONDS
+def test_the_claim_is_renewed_in_time_and_lapses_before_the_reclaim() -> None:
+    """A renewal slower than the TTL lets a second delivery run beside a live one;
+    a claim outliving the reclaim timeout makes a crashed worker's message be
+    skipped and acked - the task lost rather than duplicated."""
+    assert CLAIM_RENEW_INTERVAL_SECONDS * 2 < RUNNING_CLAIM_TTL_SECONDS
     assert RUNNING_CLAIM_TTL_SECONDS < STREAM_IDLE_TIMEOUT_SECONDS
 
 
-@pytest.mark.parametrize(
-    ("declared", "expected"),
-    [
-        (None, TASK_TIMEOUT_SECONDS),
-        (TASK_TIMEOUT_SECONDS * 2, TASK_TIMEOUT_SECONDS),
-        ("30", "30"),
-    ],
-)
-async def test_every_run_is_cut_off_before_its_claim_expires(
-    declared: object, expected: object
+async def test_a_long_run_keeps_renewing_its_claim(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    message = make_message()
-    if declared is not None:
-        message.labels["timeout"] = declared
-    receiver = make_receiver(InMemoryRedis())  # type: ignore[arg-type]
+    """A task may run for longer than one TTL; without renewal its claim would
+    lapse mid-run and let a duplicate delivery start beside it."""
+    monkeypatch.setattr(receiver_module, "CLAIM_RENEW_INTERVAL_SECONDS", 0.01)
+    client = InMemoryRedis()
+    receiver = make_receiver(client)  # type: ignore[arg-type]
+    claim_key = build_running_claim_key("row-uuid")
+    renewals: list[int] = []
 
-    with patch.object(
-        Receiver, "run_task", new=AsyncMock(return_value=success_result())
-    ) as super_run:
-        await receiver.run_task(MagicMock(), message)
+    async def long_run(*_args: object, **_kwargs: object) -> TaskiqResult:
+        await client.expire(claim_key, 1)
+        await asyncio.sleep(0.05)
+        renewals.append(await client.ttl(claim_key))
+        return success_result()
 
-    assert super_run.await_args.args[1].labels["timeout"] == expected
+    with patch.object(Receiver, "run_task", new=long_run):
+        await receiver.run_task(MagicMock(), make_message())
+
+    assert renewals == [RUNNING_CLAIM_TTL_SECONDS]
+    assert await client.exists(claim_key) == 0
 
 
-async def test_a_run_that_outlived_its_claim_leaves_the_successor_claim() -> None:
-    """Past the claim TTL a reclaimed delivery may hold a claim of its own; the
-    late original must not free it for a third delivery to run alongside."""
+async def test_a_late_renewal_does_not_extend_a_successor_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(receiver_module, "CLAIM_RENEW_INTERVAL_SECONDS", 0.01)
     client = InMemoryRedis()
     receiver = make_receiver(client)  # type: ignore[arg-type]
     claim_key = build_running_claim_key("row-uuid")
 
-    async def expire_and_reclaim(*_args: object, **_kwargs: object) -> TaskiqResult:
-        await client.set(claim_key, "successor-token")
+    async def lose_the_claim(*_args: object, **_kwargs: object) -> TaskiqResult:
+        await client.set(claim_key, "successor-token", ex=5)
+        await asyncio.sleep(0.05)
         return error_result()
 
-    with patch.object(Receiver, "run_task", new=expire_and_reclaim):
+    with patch.object(Receiver, "run_task", new=lose_the_claim):
         await receiver.run_task(MagicMock(), make_message())
 
     assert await client.get(claim_key) == "successor-token"
+    assert await client.ttl(claim_key) == 5

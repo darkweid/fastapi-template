@@ -19,7 +19,7 @@ from src.core.cache.redis_scripts import (
     CACHE_INVALIDATE_SCRIPT,
     CACHE_SET_SCRIPT,
 )
-from taskiq_worker.receiver import RELEASE_CLAIM_SCRIPT
+from taskiq_worker.receiver import RELEASE_CLAIM_SCRIPT, RENEW_CLAIM_SCRIPT
 
 
 def _normalize_key(key: str | bytes) -> str:
@@ -326,6 +326,12 @@ class InMemoryRedis:
             if self._read(key) != _normalize_value(keys_and_args[1]):
                 return 0
             return self._drop(key)
+        if normalized == RENEW_CLAIM_SCRIPT.strip():
+            key = _normalize_key(keys_and_args[0])
+            if self._read(key) != _normalize_value(keys_and_args[1]):
+                return 0
+            self._expire(key, int(keys_and_args[2]))
+            return 1
 
         # The cache scripts take a variable number of key arguments - one version
         # counter for the namespace plus one per tag - so the split follows numkeys
