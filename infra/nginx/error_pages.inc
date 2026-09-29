@@ -7,7 +7,8 @@
 # nginx cannot parse (400, and 494 for oversized headers), a method outside the
 # API's set (405, TRACE included), an overlong URI (414), an oversized body
 # (413), a Host that differs from the TLS name the connection was opened for
-# (421) and an app that is down or too slow (502/504). A malformed request line
+# (421), an app that is down or too slow (502/504), and a probe asked for from
+# outside the private networks (403, answered as 404). A malformed request line
 # (`/%00`) is refused before the Host header is read, by whichever server is the
 # default one, which is why that server carries these pages too.
 #
@@ -18,6 +19,7 @@
 # `internal`, since an internal one answers a direct request with nginx's HTML
 # 404; asked for directly, each just returns its fixed JSON.
 error_page 400 494 /__nginx_error/bad_request;
+error_page 403 = @error_not_found;
 error_page 405 = @error_method_not_allowed;
 error_page 413 = @error_payload_too_large;
 error_page 414 /__nginx_error/uri_too_long;
@@ -39,6 +41,19 @@ location = /__nginx_error/bad_request {
     add_header Vary Origin always;
     add_header X-Request-ID $request_id always;
     return 400 '{"code":"bad_request","message":"The request is malformed"}';
+}
+
+# nginx raises 403 only from the access rules on the probes (proxy.inc). A
+# caller outside them gets the body the app answers for a route that does not
+# exist, so the probes' existence is not advertised.
+location @error_not_found {
+    default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
+    add_header Access-Control-Allow-Origin $http_origin always;
+    add_header Access-Control-Allow-Credentials true always;
+    add_header Vary Origin always;
+    add_header X-Request-ID $request_id always;
+    return 404 '{"code":"not_found","message":"Not Found"}';
 }
 
 location @error_method_not_allowed {

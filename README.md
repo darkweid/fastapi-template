@@ -242,9 +242,12 @@ for `app.conf` once the certificate is in place.
   32-character minimum as the other secrets, must be ASCII, and the three routes are
   rate limited — Basic auth has no lockout of its own.
 - Probes: http://localhost:8000/live/ (liveness, no dependencies — what the container
-  healthcheck polls), http://localhost:8000/ready/ (readiness, 503 while Postgres is
-  unreachable), http://localhost:8000/health/ (detailed per-dependency report; always
-  200, with `"status": "degraded"` and a per-dependency breakdown while something is down)
+  healthcheck polls), http://localhost:8001/ready/ (readiness, 503 while Postgres is
+  unreachable), http://localhost:8001/health/ (detailed per-dependency report; always
+  200, with `"status": "degraded"` and a per-dependency breakdown while something is down).
+  nginx answers `/ready/` and `/health/` only to loopback and private networks, and a
+  404 to everyone else, so outside the dev stack they are read from a private network
+  or from inside the app container.
 
 ## Useful Make Targets
 - `make` (or `make help`) — list every target with its description

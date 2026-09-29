@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+import yaml
+
 from src.core.errors.codes import ErrorCode
 from src.core.middleware import BASE_SECURITY_HEADERS
 
@@ -177,3 +179,50 @@ def test_compose_mounts_every_file_the_configs_include() -> None:
 
     for included in ("proxy.inc", "error_pages.inc", "security_headers.inc"):
         assert f"./nginx/{included}:/etc/nginx/conf.d/{included}:ro" in compose
+
+
+def _probe_location() -> str:
+    proxy_inc = _read("proxy.inc")
+    match = re.search(r"^location ~ \^/\(health\|ready\)/\$ \{", proxy_inc, re.M)
+    assert match is not None
+    return _blocks(proxy_inc[match.start() :], r"^location [^{]*\{")[0]
+
+
+def _access_rules(location: str) -> list[str]:
+    return re.findall(r"^\s*((?:allow|deny) \S+);$", location, re.M)
+
+
+def test_only_the_liveness_probe_is_public() -> None:
+    """/ready/ and /health/ each run a Postgres query and a Redis ping and log
+    a warning per call in an outage; open to the internet they are an
+    unthrottled way to load both and flood the log."""
+    rules = _access_rules(_probe_location())
+
+    assert rules[-1] == "deny all"
+    assert {"allow 127.0.0.1", "allow ::1", "allow 10.0.0.0/8"} <= set(rules)
+    assert "live" not in _probe_location()
+
+
+def test_probe_rules_deny_the_app_network_gateway_before_private_ranges() -> None:
+    """Docker forwards published-port connections it proxies, every IPv6
+    client included, from the app-network gateway - a private address that an
+    `allow 172.16.0.0/12` would otherwise let in, internet clients and all."""
+    compose = yaml.safe_load(
+        (PROJECT_ROOT / "infra/docker-compose.yml").read_text(encoding="utf-8")
+    )
+    gateway = compose["networks"]["app-network"]["ipam"]["config"][0]["gateway"]
+    rules = _access_rules(_probe_location())
+
+    assert rules.index(f"deny {gateway}") < rules.index("allow 172.16.0.0/12")
+
+
+def test_a_denied_probe_answers_the_json_404_of_a_missing_route() -> None:
+    error_pages = _read("error_pages.inc")
+
+    assert "error_page 403 = @error_not_found;" in error_pages
+    not_found = next(
+        location
+        for location in _location_blocks(error_pages)
+        if "return 404" in location
+    )
+    assert '{"code":"not_found","message":"Not Found"}' in not_found

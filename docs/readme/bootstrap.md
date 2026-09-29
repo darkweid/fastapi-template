@@ -77,9 +77,11 @@ docker volume rm template-postgres-data template-redis-data
 ```
 
 **The Docker network is deliberately not renamed by the command above.**
-`app-network` (`infra/docker-compose.yml:191-194`) is a generic name shared by
-every fork on the host. Rename it too if more than one of them will ever run on
-the same machine.
+`app-network` (`infra/docker-compose.yml`) is a generic name shared by every
+fork on the host, and so is its pinned subnet, `172.30.0.0/24`. If more than one
+fork will ever run on the same machine, rename it and move its subnet too, along
+with the two values that name it: the range in `TRUST_PROXY_HOSTS` and the
+gateway denied in `infra/nginx/proxy.inc`.
 
 The rest of this template's identity lives outside compose:
 
@@ -206,9 +208,15 @@ Check it is alive:
 
 ```bash
 curl -s localhost:8000/live/     # no dependencies; what the healthcheck polls
-curl -s localhost:8000/ready/    # 503 while Postgres is unreachable
-curl -s localhost:8000/health/   # always 200, per-dependency breakdown
+curl -s localhost:8001/ready/    # 503 while Postgres is unreachable
+curl -s localhost:8001/health/   # always 200, per-dependency breakdown
 ```
+
+nginx serves `/ready/` and `/health/` only to loopback and private networks, and
+never to Docker's own gateway, which is where a host-side `curl` through a
+published port arrives from on Linux; port 8001 is the app itself, which the dev
+stack publishes on loopback. On a server, where the app has no published port:
+`docker compose -f infra/docker-compose.yml exec app wget -qO- http://127.0.0.1:8001/ready/`.
 
 Then open http://localhost:8000/docs — open while `DEBUG=true`, behind HTTP
 Basic otherwise.
@@ -360,7 +368,7 @@ hardening in [security.md](security.md).
 
 ```
 [ ] Renamed compose project, containers, images, volumes, test project prefix
-[ ] Renamed app-network (only if several forks share a host)
+[ ] Renamed app-network and moved its subnet (only if several forks share a host)
 [ ] PROJECT_NAME, VERSION, README badges, LICENSE
 [ ] venv + make req-sync-dev + pre-commit install
 [ ] .env copied and every -not-real placeholder replaced

@@ -207,7 +207,8 @@ networks:
     # `compose run` ones included, take addresses from ip_range only; the
     # gateway sits outside it, and Docker forwards published-port connections it
     # proxies (every IPv6 client among them) from the gateway. TRUST_PROXY_HOSTS
-    # trusts ip_range: change the two together. No static address for nginx:
+    # trusts ip_range and infra/nginx/proxy.inc denies the gateway on the
+    # probes: change the three together. No static address for nginx:
     # `compose run nginx nginx -t` in deploy.sh would collide with the running
     # container's.
     ipam:

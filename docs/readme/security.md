@@ -259,6 +259,7 @@ public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 - Unknown hosts are dropped: a `default_server` answers every Host that is not a configured `server_name` with 444 (no response at all), and under TLS refuses the handshake for an unknown SNI name. A forged Host never reaches the app, and nothing nginx builds — the http-to-https redirect uses `$server_name` — reflects one. The app itself never redirects to its slash-twin path (`redirect_slashes=False`), the one place it used to build a URL from the Host header.
 - Only GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS reach the app; TRACE and every other method answer a JSON 405 from nginx.
 - The errors nginx answers itself (400, 405, 413, 414, 421, 502, 504) carry the same JSON body as the app's, never nginx's HTML page.
+- `/ready/` and `/health/` answer only loopback and private networks, the `app-network` gateway excepted (Docker forwards published-port connections it proxies from there, every IPv6 client included); anyone else gets the app's JSON 404. `/live/` stays public.
 - `client_max_body_size 20m` — prevents oversized request abuse; kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`.
 - Proper proxy headers (`X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`).
 - WebSocket upgrade support with secure defaults.
