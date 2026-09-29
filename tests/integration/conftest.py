@@ -4,12 +4,15 @@ import os
 os.environ.setdefault("TESTING", "true")
 
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from src.main.config import get_settings
@@ -35,19 +38,30 @@ def pytest_itemcollected(item: pytest.Item) -> None:
         item.add_marker(pytest.mark.integration)
 
 
-@pytest.fixture(scope="session")
-def alembic_env() -> dict[str, str]:
-    """Environment for an Alembic subprocess: the test database the fixtures use.
+def _alembic_environment(**overrides: str) -> dict[str, str]:
+    """Environment for an Alembic subprocess.
 
     `TESTING=true` selects `.env.test`, while POSTGRES_HOST/POSTGRES_PORT inherited
     from the caller (`make test-integration` or the CI job) override the file's values
-    — the throwaway container's host port is only known at run time.
+    — the throwaway container's host port is only known at run time. A variable in
+    `overrides` wins the same way, which is how a scratch database is named.
     """
-    return {**os.environ, "TESTING": "true"}
+    return {**os.environ, "TESTING": "true", **overrides}
 
 
 @pytest.fixture(scope="session")
-def migrated_database(alembic_env: dict[str, str]) -> None:
+def alembic_env() -> dict[str, str]:
+    """Alembic against the session's test database.
+
+    `migrated_database` does not take it: a module running on a scratch database
+    overrides this fixture at function scope, and a session fixture depending on it
+    would then fail with ScopeMismatch.
+    """
+    return _alembic_environment()
+
+
+@pytest.fixture(scope="session")
+def migrated_database() -> None:
     """Apply the whole Alembic chain to a clean database once per session.
 
     The database is empty when a run starts — a throwaway container without a volume
@@ -59,13 +73,79 @@ def migrated_database(alembic_env: dict[str, str]) -> None:
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         check=True,
         cwd=REPO_ROOT,
-        env=alembic_env,
+        env=_alembic_environment(),
     )
+
+
+async def _run_on_server(statement: str) -> None:
+    """CREATE/DROP DATABASE cannot run inside a transaction, nor from a connection to
+    the database it copies or drops, so it goes through the server's maintenance
+    database with autocommit."""
+    url = make_url(get_settings().postgres.dsn_async).set(database="postgres")
+    engine = create_async_engine(url, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text(statement))
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def database_template(migrated_database: None) -> str:
+    """A copy of the test database as the migrations leave it, before any test writes
+    a row: what `scratch_database` clones.
+
+    Taken here, ahead of `integration_engine`, because PostgreSQL refuses to copy a
+    database anyone is connected to. Dropped first in case a reused server still holds
+    one from an earlier run.
+    """
+    source = get_settings().postgres.POSTGRES_DB
+    name = f"{source}_template"
+    await _run_on_server(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    await _run_on_server(f'CREATE DATABASE "{name}" TEMPLATE "{source}"')
+    return name
+
+
+@dataclass(frozen=True)
+class ScratchDatabase:
+    engine: AsyncEngine
+    alembic_env: dict[str, str]
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def scratch_database(
+    database_template: str,
+) -> AsyncGenerator[ScratchDatabase]:
+    """A database of the test's own, freshly migrated and holding no test's rows,
+    dropped afterwards.
+
+    For the few tests that cannot share the session database: a migration run
+    backwards and forwards over whatever the other tests left behind, or a data
+    migration asserting what an untouched database ends up with. Every other test
+    cleans up after itself instead - this is not a way around that. A test takes it
+    directly, or its module overrides `integration_engine` (and `alembic_env`, when
+    it runs Alembic) with this fixture's fields, so `db_session` and every fixture
+    built on the engine follow it there.
+    """
+    name = f"scratch_{uuid4().hex}"
+    await _run_on_server(f'CREATE DATABASE "{name}" TEMPLATE "{database_template}"')
+    engine = create_async_engine(
+        make_url(get_settings().postgres.dsn_async).set(database=name),
+        connect_args={"statement_cache_size": 0},
+    )
+    try:
+        yield ScratchDatabase(
+            engine=engine,
+            alembic_env=_alembic_environment(POSTGRES_DB=name),
+        )
+    finally:
+        await engine.dispose()
+        await _run_on_server(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def integration_engine(
-    migrated_database: None,
+    database_template: str,
 ) -> AsyncGenerator[AsyncEngine]:
     """Real engine against the test database, shared by the whole session.
 

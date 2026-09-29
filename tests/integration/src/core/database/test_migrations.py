@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from tests.integration.conftest import REPO_ROOT
+from tests.integration.conftest import REPO_ROOT, ScratchDatabase
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -71,3 +71,43 @@ async def test_models_and_migrations_do_not_drift(
         "Models and migrations have drifted apart; run `make migration`.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+async def test_the_chain_reverses_and_reapplies(
+    scratch_database: ScratchDatabase,
+) -> None:
+    """Nothing in this repository ever runs a downgrade, so a wrong reverse direction -
+    a DROP ordered against a foreign key, an enum type left behind - reaches a release
+    unnoticed.
+
+    Runs on a database of its own: a downgrade fails over rows other tests left
+    behind, and taking the schema away would pull it out from under whatever test the
+    random order runs next.
+    """
+    for command in (["downgrade", "base"], ["upgrade", "head"]):
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "alembic", *command],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            env=scratch_database.alembic_env,
+        )
+
+        assert result.returncode == 0, (
+            f"`alembic {' '.join(command)}` failed.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+    async with scratch_database.engine.connect() as connection:
+        tables = (
+            (
+                await connection.execute(
+                    text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert EXPECTED_TABLES <= set(tables)
