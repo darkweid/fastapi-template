@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from unittest.mock import AsyncMock
 
 import pytest
@@ -76,7 +77,9 @@ async def test_try_advisory_xact_lock_returns_false_on_failure() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("seconds", [0, -1, float("nan"), float("inf"), True, 2**31])
+@pytest.mark.parametrize(
+    "seconds", [0, -1, float("nan"), float("inf"), True, 2**31, sys.float_info.max]
+)
 async def test_set_local_statement_timeout_rejects_invalid_values(
     seconds: float,
 ) -> None:

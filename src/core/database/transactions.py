@@ -67,11 +67,14 @@ async def set_local_statement_timeout(session: AsyncSession, seconds: float) -> 
         raise ValueError(
             f"statement timeout must be a positive number of seconds, got {seconds!r}"
         )
-    milliseconds = math.ceil(seconds * 1000)
-    if milliseconds > _STATEMENT_TIMEOUT_MAX_MS:
+    # Compared before `ceil`: a huge finite float multiplies to inf, and `ceil(inf)`
+    # raises OverflowError instead of the ValueError callers handle.
+    exact_milliseconds = seconds * 1000
+    if exact_milliseconds > _STATEMENT_TIMEOUT_MAX_MS:
         raise ValueError(
-            f"statement timeout must not exceed {_STATEMENT_TIMEOUT_MAX_MS} ms, got {milliseconds} ms"
+            f"statement timeout must not exceed {_STATEMENT_TIMEOUT_MAX_MS} ms, got {seconds!r} s"
         )
+    milliseconds = math.ceil(exact_milliseconds)
     if not session.in_transaction():
         raise RuntimeError("set_local_statement_timeout requires an active transaction")
     await session.execute(
