@@ -32,6 +32,11 @@ def init_sentry() -> None:
         dsn=config.sentry.SENTRY_DSN,
         environment=config.sentry.SENTRY_ENV,
         release=config.app.VERSION,
+        # Frame locals and request bodies carry phone numbers, OTP codes and
+        # passwords, and the default scrubber only matches exact key names at
+        # the top level. send_default_pii does not cover either of them.
+        include_local_variables=False,
+        max_request_body_size="never",
         integrations=[
             LoggingIntegration(
                 level=logging.INFO,  # breadcrumbs from INFO and up

@@ -70,3 +70,23 @@ def test_init_sentry_initializes_once(monkeypatch: pytest.MonkeyPatch) -> None:
 
     init_mock.assert_called_once()
     assert sentry_module._sentry_initialized is True
+
+
+def test_init_sentry_sends_no_frame_locals_or_request_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locals and bodies of a failing request hold OTP codes and passwords that
+    the key-name scrubber misses, and send_default_pii=False does not drop them."""
+    init_mock = MagicMock()
+    monkeypatch.setattr(sentry_module.sentry_sdk, "init", init_mock)
+    monkeypatch.setattr(config.app, "DEBUG", False)
+    monkeypatch.setattr(config.app, "TESTING", False)
+    monkeypatch.setattr(config.sentry, "SENTRY_ENABLED", True)
+    monkeypatch.setattr(config.sentry, "SENTRY_DSN", "http://example.com")
+
+    sentry_module.init_sentry()
+
+    kwargs = init_mock.call_args.kwargs
+    assert kwargs["include_local_variables"] is False
+    assert kwargs["max_request_body_size"] == "never"
+    assert kwargs.get("send_default_pii", False) is False
