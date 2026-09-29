@@ -146,7 +146,8 @@ async def decode_logout_identity(
 
     Answers None for every unusable case alike: no token, a forged or malformed
     one, one that is not an access token, one that is no longer its session's
-    newest, or one whose session has ended.
+    newest, or one whose session has ended. A live session that predates the
+    `latest_access` key is identified by liveness alone until its next refresh.
     """
     if not token:
         return None
@@ -181,7 +182,17 @@ async def decode_logout_identity(
     latest_jti = await redis_client.get(
         realm.keys.latest_access(subject_id, session_id)
     )
-    if latest_jti is None or latest_jti != jti:
+    if latest_jti is None:
+        # A session issued before `latest_access` existed has none until its
+        # next refresh writes one. It is still revocable while it is live:
+        # every wipe deletes the refresh and access keys along with this one,
+        # so the key is missing with those two present only for such a session.
+        if not await redis_client.exists(
+            realm.keys.refresh(subject_id, session_id),
+            realm.keys.access(subject_id, session_id),
+        ):
+            return None
+    elif latest_jti != jti:
         return None
 
     return SessionIdentity(subject_id=subject_id, session_id=session_id)

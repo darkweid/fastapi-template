@@ -93,7 +93,7 @@ another realm's session invalidation.
 - Each login creates a unique `session_id` (UUID4), enabling multi-device support.
 - `invalidate_session()` — single device logout.
 - `invalidate_all_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
-- Logout endpoint supports both modes via `terminate_all_sessions` flag. It accepts an expired access token, but only the newest one of a live session: its JTI must match the session's `latest-access` key, which lives as long as either token and goes with every wipe. An access token a refresh has replaced, or one from an ended session, identifies nothing, so a leaked copy cannot log its subject out everywhere.
+- Logout endpoint supports both modes via `terminate_all_sessions` flag. It accepts an expired access token, but only the newest one of a live session: its JTI must match the session's `latest-access` key, which lives as long as either token and goes with every wipe. An access token a refresh has replaced, or one from an ended session, identifies nothing, so a leaked copy cannot log its subject out everywhere. A live session issued before the key existed has none until its next refresh and is identified by liveness alone until then.
 
 **Why it matters:** Stateless JWT alone cannot be revoked. Redis-backed JTI tracking adds revocation capability while preserving JWT's stateless verification for normal requests.
 

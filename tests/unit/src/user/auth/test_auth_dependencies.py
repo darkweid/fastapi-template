@@ -700,3 +700,23 @@ async def test_get_logout_identity_ignores_an_access_token_rotated_out_of_a_live
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_still_ends_a_session_issued_before_latest_access(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Sessions live when the key was introduced have none until their next
+    refresh; logout must still revoke them rather than only clear cookies."""
+    await fake_redis.set(USER_AUTH_REALM.keys.refresh("user-1", "session-1"), "jti")
+    token = encode_access_payload(
+        build_access_payload("user-1", session_id="session-1", jti="any-jti")
+    )
+
+    identity = await dependencies.get_logout_identity(
+        redis_client=fake_redis, token=token
+    )
+
+    assert identity == dependencies.SessionIdentity(
+        subject_id="user-1", session_id="session-1"
+    )
