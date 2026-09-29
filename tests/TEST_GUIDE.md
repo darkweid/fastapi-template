@@ -197,7 +197,7 @@ async def test_get_resource_returns_200(async_client_with_fakes):
 - At least one error path is covered.
 - Key side effects are verified.
 - No unnecessary mocks or bloated setup.
-- Tests are independent.
+- Tests are independent: both suites run in random order (`pytest-randomly`), so a test that relies on a neighbour's leftovers fails on some seed. Fix the leak in the test or fixture; never pin the order or turn randomization off for one test.
 - No dependency on local machine state or secrets.
 - Style and naming are consistent.
 - Relevant test scope was executed locally.
@@ -211,6 +211,7 @@ async def test_get_resource_returns_200(async_client_with_fakes):
 - Run one test: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py::test_<scenario> -v`
 - Stop on first failure: `TESTING=true python -m pytest tests/unit/src/<module> -x`
 - Re-run only failed tests: `TESTING=true python -m pytest tests/unit/src/<module> --lf`
+- Reproduce an order: the run header prints `Using --randomly-seed=<N>`; pass it back with `TESTING=true python -m pytest --randomly-seed=<N>` or `PYTEST_ADDOPTS="--randomly-seed=<N>" make test` (also `make test-integration`). `-p no:randomly` runs in file order.
 
 ## 11) Anti-patterns (do not do this)
 

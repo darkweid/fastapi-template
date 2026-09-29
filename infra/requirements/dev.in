@@ -11,6 +11,7 @@ httpx2
 pytest
 pytest-asyncio
 pytest-cov
+pytest-randomly
 taskiq[reload]
 
 # Type stubs

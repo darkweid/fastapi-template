@@ -212,6 +212,7 @@ fresh empty volumes.
 - Shared test infrastructure lives in `tests/conftest.py`, `tests/helpers/`, `tests/fakes/`, and `tests/factories/`.
 - `tests/integration/src/` holds the tests that need a live PostgreSQL — migrations, transaction and UoW semantics, advisory locks, the SQL behind `ListQuery`, the transactional outbox. They carry the `integration` marker, which `pytest.ini` deselects by default, so `make test` stays runnable without Docker. `make test-integration` starts a throwaway database (`infra/docker-compose.test.yml`) and runs them; see `tests/TEST_GUIDE.md` for what belongs there.
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
+- Both suites run in random order (`pytest-randomly`), and the run header prints the seed: `Using --randomly-seed=1234`. Reproduce a failing order with `TESTING=true pytest --randomly-seed=1234`, or through `make` with `PYTEST_ADDOPTS="--randomly-seed=1234" make test` (the same works for `make test-integration`). `-p no:randomly` restores file order while bisecting; a test that passes only in one order is a bug in the test or its fixtures, not something to pin.
 
 ## Ports
 Only Nginx is published on a public address. Postgres and Redis are published on
