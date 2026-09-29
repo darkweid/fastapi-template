@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 from taskiq import InMemoryBroker, TaskiqMessage
 from taskiq.receiver import Receiver
@@ -8,6 +8,7 @@ from taskiq.result import TaskiqResult
 from taskiq_worker.broker import STREAM_IDLE_TIMEOUT_SECONDS
 from taskiq_worker.receiver import (
     IDEMPOTENCY_MARKER_TTL_SECONDS,
+    RELEASE_CLAIM_SCRIPT,
     RUNNING_CLAIM_TTL_SECONDS,
     IdempotencyReceiver,
     build_idempotency_marker_key,
@@ -89,7 +90,7 @@ async def test_success_sets_marker_with_ttl() -> None:
         [
             call(
                 build_running_claim_key("abc"),
-                "1",
+                ANY,
                 ex=RUNNING_CLAIM_TTL_SECONDS,
                 nx=True,
             ),
@@ -100,7 +101,10 @@ async def test_success_sets_marker_with_ttl() -> None:
             ),
         ]
     )
-    client.delete.assert_awaited_once_with(build_running_claim_key("abc"))
+    token = client.set.await_args_list[0].args[1]
+    client.eval.assert_awaited_once_with(
+        RELEASE_CLAIM_SCRIPT, 1, build_running_claim_key("abc"), token
+    )
 
 
 async def test_error_result_sets_no_marker() -> None:
@@ -115,7 +119,10 @@ async def test_error_result_sets_no_marker() -> None:
     marker_key = build_idempotency_marker_key("abc")
     assert all(awaited.args[0] != marker_key for awaited in client.set.await_args_list)
     # Released, so a retry of the failed run is not taken for a duplicate.
-    client.delete.assert_awaited_once_with(build_running_claim_key("abc"))
+    token = client.set.await_args_list[0].args[1]
+    client.eval.assert_awaited_once_with(
+        RELEASE_CLAIM_SCRIPT, 1, build_running_claim_key("abc"), token
+    )
 
 
 async def test_redis_get_failure_fails_open() -> None:
@@ -190,3 +197,20 @@ def test_the_running_claim_expires_before_the_stream_reclaims() -> None:
     """A message reclaimed from a crashed worker that still found the claim would
     be skipped and acked - the task lost rather than duplicated."""
     assert RUNNING_CLAIM_TTL_SECONDS < STREAM_IDLE_TIMEOUT_SECONDS
+
+
+async def test_a_run_that_outlived_its_claim_leaves_the_successor_claim() -> None:
+    """Past the claim TTL a reclaimed delivery may hold a claim of its own; the
+    late original must not free it for a third delivery to run alongside."""
+    client = InMemoryRedis()
+    receiver = make_receiver(client)  # type: ignore[arg-type]
+    claim_key = build_running_claim_key("row-uuid")
+
+    async def expire_and_reclaim(*_args: object, **_kwargs: object) -> TaskiqResult:
+        await client.set(claim_key, "successor-token")
+        return error_result()
+
+    with patch.object(Receiver, "run_task", new=expire_and_reclaim):
+        await receiver.run_task(MagicMock(), make_message())
+
+    assert await client.get(claim_key) == "successor-token"

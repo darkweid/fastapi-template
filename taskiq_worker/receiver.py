@@ -6,8 +6,9 @@ caught by `Receiver.callback`, so the message would never be acked and the
 broker would redeliver it forever.
 """
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
+from uuid import uuid4
 
 from taskiq.acks import AckController
 from taskiq.message import TaskiqMessage
@@ -28,6 +29,14 @@ IDEMPOTENCY_MARKER_TTL_SECONDS = 3600
 # or it is skipped, acked and lost. A task running past the reclaim timeout is
 # redelivered anyway, so a longer claim would buy nothing.
 RUNNING_CLAIM_TTL_SECONDS = STREAM_IDLE_TIMEOUT_SECONDS - 60
+
+
+RELEASE_CLAIM_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
 
 
 def build_idempotency_marker_key(task_id: str) -> str:
@@ -66,7 +75,8 @@ class IdempotencyReceiver(Receiver):
         # delivery would take the free claim and run again. A run releases only
         # after its marker is written, so a claim that is free is one whose
         # marker, if any, is already readable.
-        if not await self._claim(message.task_id):
+        claim_token = await self._claim(message.task_id)
+        if claim_token is None:
             logger.debug(
                 "Task %s is running elsewhere, skipping duplicate delivery",
                 message.task_id,
@@ -77,7 +87,7 @@ class IdempotencyReceiver(Receiver):
                 "Task %s already completed, skipping duplicate delivery",
                 message.task_id,
             )
-            await self._release_claim(message.task_id)
+            await self._release_claim(message.task_id, claim_token)
             return _skipped()
 
         try:
@@ -87,7 +97,7 @@ class IdempotencyReceiver(Receiver):
         finally:
             # After the marker, never before: in between, a duplicate would
             # find neither and run.
-            await self._release_claim(message.task_id)
+            await self._release_claim(message.task_id, claim_token)
         return result
 
     async def _is_done(self, task_id: str) -> bool:
@@ -103,21 +113,23 @@ class IdempotencyReceiver(Receiver):
             return False
         return marker is not None
 
-    async def _claim(self, task_id: str) -> bool:
+    async def _claim(self, task_id: str) -> str | None:
+        """Answer the token this run holds the claim under, or None when another
+        delivery holds it. A Redis error fails open with a token nobody stored."""
+        token = str(uuid4())
         try:
-            return bool(
-                await self._marker_client.set(
-                    build_running_claim_key(task_id),
-                    "1",
-                    ex=RUNNING_CLAIM_TTL_SECONDS,
-                    nx=True,
-                )
+            acquired = await self._marker_client.set(
+                build_running_claim_key(task_id),
+                token,
+                ex=RUNNING_CLAIM_TTL_SECONDS,
+                nx=True,
             )
         except Exception:
             logger.warning(
                 "Running claim failed for task %s; executing anyway", task_id
             )
-            return True
+            return token
+        return token if acquired else None
 
     async def _mark_done(self, task_id: str) -> None:
         try:
@@ -129,9 +141,16 @@ class IdempotencyReceiver(Receiver):
         except Exception:
             logger.warning("Failed to set idempotency marker for task %s", task_id)
 
-    async def _release_claim(self, task_id: str) -> None:
+    async def _release_claim(self, task_id: str, token: str) -> None:
+        # Compare and delete in one step: a run that outlived its claim must not
+        # delete the claim a reclaimed delivery took after it expired.
         try:
-            await self._marker_client.delete(build_running_claim_key(task_id))
+            await cast(
+                Awaitable[int],
+                self._marker_client.eval(
+                    RELEASE_CLAIM_SCRIPT, 1, build_running_claim_key(task_id), token
+                ),
+            )
         except Exception:
             # The claim still expires on its own; a retry arriving before that
             # is skipped, which is why this is logged as a warning.
