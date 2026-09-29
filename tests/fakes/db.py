@@ -62,6 +62,8 @@ class FakeAsyncSession:
         # plain method would not record those calls.
         self.add = MagicMock(side_effect=self.added.append)
         self.delete = AsyncMock()
+        # The auth dependency detaches the principal it loads.
+        self.expunge = MagicMock()
         # When set, the next `begin_nested()` block raises this on a clean exit -
         # the only way to exercise the event log's swallow-and-report path on a
         # fake session.

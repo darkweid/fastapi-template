@@ -68,6 +68,34 @@ class RealmAuth(Generic[PrincipalT]):
     principal_id_from_access_token: Callable[..., Coroutine[Any, Any, str]]
 
 
+async def load_principal(
+    session: AsyncSession,
+    repository: BaseRepository[PrincipalT],
+    subject_id: str,
+) -> PrincipalT | None:
+    """Load a principal as a detached snapshot and give the connection back.
+
+    The SELECT autobegins a transaction on the request session, and nothing
+    else would end it before the response: a handler that then waits on
+    something slow outside a unit of work (an upload, a third-party call) keeps
+    a pooled connection checked out and idle in transaction all that time. So
+    the read transaction ends here, when this call is what opened it.
+
+    It ends in a rollback, which expires every instance the session holds, so
+    the principal is expunged first: its loaded columns stay readable for the
+    rest of the request, whatever a later unit of work commits or rolls back.
+    A detached principal is not tracked, so a write re-reads the row inside its
+    own unit of work instead of mutating this object.
+    """
+    owns_transaction = not session.in_transaction()
+    principal = await repository.get_single(session, id=subject_id)
+    if principal is not None:
+        session.expunge(principal)
+    if owns_transaction:
+        await session.rollback()
+    return principal
+
+
 def build_realm_auth(
     *,
     realm: AuthRealm,
@@ -157,7 +185,7 @@ def build_realm_auth(
         if mode != "access_token":
             raise UnauthorizedException(credentials_error)
 
-        principal = await repository_factory().get_single(session, id=subject_id)
+        principal = await load_principal(session, repository_factory(), subject_id)
         if not principal:
             raise UnauthorizedException(credentials_error)
 
@@ -221,7 +249,7 @@ def build_realm_auth(
         if mode != "refresh_token":
             raise UnauthorizedException(credentials_error)
 
-        principal = await repository_factory().get_single(session, id=subject_id)
+        principal = await load_principal(session, repository_factory(), subject_id)
         if not principal:
             raise UnauthorizedException(credentials_error)
 

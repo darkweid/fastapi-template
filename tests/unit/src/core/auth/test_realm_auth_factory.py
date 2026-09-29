@@ -2,10 +2,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.core.auth.dependencies import build_realm_auth
+from src.core.auth.dependencies import build_realm_auth, load_principal
 from src.core.auth.realm import AuthRealm
 from src.core.auth.tokens import create_access_token
 from src.core.errors.exceptions import UnauthorizedException
+from tests.fakes.db import FakeAsyncSession
 
 
 @dataclass
@@ -52,7 +53,7 @@ async def test_a_token_minted_for_one_realm_is_rejected_by_another(
 
     with pytest.raises(UnauthorizedException):
         await second_auth.authenticate(
-            token=token, session=None, redis_client=fake_redis
+            token=token, session=FakeAsyncSession(), redis_client=fake_redis
         )
 
 
@@ -79,8 +80,42 @@ async def test_a_token_minted_for_one_realm_is_accepted_by_that_same_realm(
     )
 
     authenticated = await first_auth.authenticate(
-        token=token, session=None, redis_client=fake_redis
+        token=token, session=FakeAsyncSession(), redis_client=fake_redis
     )
 
     assert authenticated.principal is principal
     assert authenticated.session_id == "s1"
+
+
+async def test_load_principal_ends_the_read_transaction_it_opened() -> None:
+    """Left open, that transaction pins a pooled connection idle in transaction
+    for the rest of the request, however long the handler then waits."""
+    principal = FakePrincipal(id="42")
+    session = FakeAsyncSession()
+
+    loaded = await load_principal(session, FakePrincipalRepository(principal), "42")
+
+    assert loaded is principal
+    session.expunge.assert_called_once_with(principal)
+    session.rollback.assert_awaited_once()
+
+
+async def test_load_principal_leaves_a_transaction_it_did_not_open() -> None:
+    """Rolling back someone else's transaction would discard their work."""
+    principal = FakePrincipal(id="42")
+    session = FakeAsyncSession(in_transaction=True)
+
+    await load_principal(session, FakePrincipalRepository(principal), "42")
+
+    session.expunge.assert_called_once_with(principal)
+    session.rollback.assert_not_awaited()
+
+
+async def test_load_principal_releases_the_connection_for_an_unknown_subject() -> None:
+    session = FakeAsyncSession()
+
+    loaded = await load_principal(session, FakePrincipalRepository(None), "42")
+
+    assert loaded is None
+    session.expunge.assert_not_called()
+    session.rollback.assert_awaited_once()
