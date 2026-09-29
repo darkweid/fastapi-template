@@ -166,7 +166,12 @@ applies to them — see [auth-realms.md](auth-realms.md).
 - `CORS_ALLOWED_ORIGINS` — JSON list.
 - `COOKIE_DOMAIN`, `COOKIE_SAMESITE`, `COOKIE_SECURE` — see the README
   *Auth Cookie & CSRF Configuration* section for the cross-origin SPA case.
-- `TRUST_PROXY_HOSTS` — the real proxy hops. `*` is rejected at startup.
+- `TRUST_PROXY_HOSTS` — the real proxy hops. `*` is rejected at startup. The
+  default trusts loopback and `172.30.0.128/25`, the range compose assigns on
+  `app-network` (pinned in `infra/docker-compose.yml`), where nginx sits. The
+  network's gateway, `172.30.0.1`, stays outside it: Docker forwards
+  published-port connections it proxies, every IPv6 client included, from
+  there. Moving the subnet means moving this value with it.
 - `DEBUG=false`, `VALIDATE_CERTS=true`, `COOKIE_SECURE=true` outside local
   development; `check_env.py` hard-blocks the other way round in a deploy.
 - `S3_ENABLED` is `false` by default. Turn it on and fill `S3_BUCKET_NAME`,

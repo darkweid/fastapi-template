@@ -203,3 +203,15 @@ networks:
   app-network:
     name: app-network
     driver: bridge
+    # Pinned so the app can trust exactly its own proxy. Containers, one-off
+    # `compose run` ones included, take addresses from ip_range only; the
+    # gateway sits outside it, and Docker forwards published-port connections it
+    # proxies (every IPv6 client among them) from the gateway. TRUST_PROXY_HOSTS
+    # trusts ip_range: change the two together. No static address for nginx:
+    # `compose run nginx nginx -t` in deploy.sh would collide with the running
+    # container's.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+          ip_range: 172.30.0.128/25
