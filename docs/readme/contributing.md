@@ -9,6 +9,7 @@
 ## CI/CD Pipelines (GitHub Actions)
 
 ### CI (`.github/workflows/_ci.yml`)
+- Every third-party action is pinned to a full commit SHA with the release it is in a trailing comment (`uses: actions/checkout@<sha> # v7.0.1`): a tag can be moved to other code, a commit cannot. Dependabot's `github-actions` updates bump the SHA and the comment together; pin a new action the same way.
 - All the jobs live in `_ci.yml`, a `workflow_call` workflow. Two thin callers bind it to a branch and a name: `prod_ci.yml` (*CI (prod)*, push and pull request on `main`, moving tag `latest`) and `stage_ci.yml` (*CI (stage)*, push and pull request on `stage`, moving tag `stage`). Edit the pipeline in `_ci.yml`; the callers only carry the trigger, the `push_image` / `moving_tag` inputs and the concurrency group. The `stage` branch does not exist in the template, so *CI (stage)* stays dormant until a fork creates it.
 - CD subscribes to a caller's workflow **name** (`workflows: ["CI (prod)"]`), so renaming a caller silently stops its deploys.
 - The `changes` gate classifies the diff through `.github/actions/docs-only-change` and switches off every job but `lint` and `gitleaks` when each changed path is documentation (`*.md`, `docs/`, `LICENSE`). The rule lives in `scripts/ops/docs_only_change.py`, is deny-by-default, and is widened there together with a case in `tests/unit/scripts/ops/test_docs_only_change.py` — a wrong `true` reads as a green PR with nothing run.
@@ -37,10 +38,10 @@
 - Notifications: Telegram with status, duration, pipeline link.
 
 ### Release (`.github/workflows/release.yml`)
-- Pushing a `vX.Y.Z` tag publishes the image under that tag and opens a GitHub Release with generated notes, the image digest and where the image came from.
+- Pushing a `vX.Y.Z` tag publishes the image under that tag and opens a GitHub Release with generated notes and the image digest.
 - Build once, promote many: the release does **not** rebuild. `docker buildx imagetools create` copies the `sha-<12>` image CI already built for that commit onto the `vX.Y.Z` tag, by digest and inside the registry, so `vX.Y.Z` is bit-for-bit the artifact CI tested and CD deployed. A rebuild would run the same code on whatever base layers exist today.
 - Because the digest is preserved, the version lives in the tag and the release, not in an image label — rewriting a label would change the config blob and therefore the digest.
-- Tag a commit on `main` that passed CI. A tag off a branch (or predating the build job) has no `sha-` image; the workflow then falls back to building from source and says so in the release notes. It never re-pushes `sha-<12>`, which CI owns.
+- Tag a commit on `main` that passed CI. A tag off a branch (or predating the build job) has no `sha-` image, and the workflow fails with an error rather than build one: an image built there would publish code no check ran on. It never pushes `sha-<12>`, which CI owns.
 - Releases publish images only. Deployment still follows `main`; to run a release image, deploy it explicitly with `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:vX.Y.Z`.
 
 ### Pre-commit Autoupdate (`.github/workflows/pre-commit-autoupdate.yml`)
