@@ -89,6 +89,7 @@ class IdempotencyReceiver(Receiver):
                 "Task %s is running elsewhere, skipping duplicate delivery",
                 message.task_id,
             )
+            _withhold_ack(ack_controller)
             return _skipped()
         if await self._is_done(message.task_id):
             logger.debug(
@@ -187,6 +188,20 @@ class IdempotencyReceiver(Receiver):
             # The claim still expires on its own; a retry arriving before that
             # is skipped, which is why this is logged as a warning.
             logger.warning("Failed to release running claim for task %s", task_id)
+
+
+def _withhold_ack(ack_controller: AckController | None) -> None:
+    """Leave a delivery that found a live claim pending in the stream.
+
+    It may be the stream reclaiming the very entry the claim holder is still
+    running; acked here, the entry would be gone if that worker then crashed.
+    Left pending, it is reclaimed again later and then finds either the done
+    marker or a lapsed claim. The holder's own ack settles the entry, since
+    XACK is per group, not per consumer. Marking the controller acked is the
+    only way to stop `Receiver.callback` from acking it after this returns.
+    """
+    if ack_controller is not None:
+        ack_controller.is_acked = True
 
 
 def _skipped() -> TaskiqResult[Any]:

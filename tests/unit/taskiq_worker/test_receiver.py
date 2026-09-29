@@ -3,6 +3,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 from taskiq import InMemoryBroker, TaskiqMessage
+from taskiq.acks import AckController
 from taskiq.receiver import Receiver
 from taskiq.result import TaskiqResult
 
@@ -246,3 +247,33 @@ async def test_a_late_renewal_does_not_extend_a_successor_claim(
 
     assert await client.get(claim_key) == "successor-token"
     assert await client.ttl(claim_key) == 5
+
+
+async def test_a_delivery_that_finds_a_live_claim_is_left_unacked() -> None:
+    """It may be the stream reclaiming the entry the claim holder still runs;
+    acked, the entry would be lost if that worker then crashed."""
+    client = InMemoryRedis()
+    await client.set(build_running_claim_key("row-uuid"), "holder-token", ex=60)
+    receiver = make_receiver(client)  # type: ignore[arg-type]
+    ack = AsyncMock()
+    ack_controller = AckController(ack)
+
+    with patch.object(Receiver, "run_task", new=AsyncMock()) as super_run:
+        await receiver.run_task(MagicMock(), make_message(), ack_controller)
+    await ack_controller.ack()
+
+    super_run.assert_not_awaited()
+    ack.assert_not_awaited()
+
+
+async def test_a_delivery_of_a_completed_task_is_acked() -> None:
+    client = InMemoryRedis()
+    await client.set(build_idempotency_marker_key("row-uuid"), "1")
+    receiver = make_receiver(client)  # type: ignore[arg-type]
+    ack = AsyncMock()
+    ack_controller = AckController(ack)
+
+    await receiver.run_task(MagicMock(), make_message(), ack_controller)
+    await ack_controller.ack()
+
+    ack.assert_awaited_once()
