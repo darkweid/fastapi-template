@@ -132,9 +132,9 @@ Three-tier model:
 
 ## Security Headers
 
-`src/core/middleware.py`, `infra/nginx/app.conf`
+`src/core/middleware.py`, `infra/nginx/security_headers.inc`, `infra/nginx/proxy.inc`
 
-The five base headers are applied at both the application and Nginx levels (defense in depth); `Content-Security-Policy` is applied at the application layer only (it is path-aware — relaxed for Swagger/Redoc):
+The application sets all six headers below. Behind Nginx, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and `Permissions-Policy` come from Nginx instead, which also sends them on its own error pages; `proxy.inc` hides the application's copies so each reaches the client once. `Strict-Transport-Security` and `Content-Security-Policy` come from the application only (the CSP is path-aware, relaxed for Swagger/Redoc):
 
 | Header | Value | Purpose |
 |---|---|---|
@@ -147,7 +147,7 @@ The five base headers are applied at both the application and Nginx levels (defe
 
 Nginx additionally sets `server_tokens off` (hides version) and `client_max_body_size 20m` (kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`).
 
-**Why it matters:** Headers are a zero-cost defense layer. HSTS prevents SSL stripping, CSP mitigates XSS, X-Frame-Options blocks clickjacking. Duplicating at Nginx and app level ensures coverage even if one layer is bypassed.
+**Why it matters:** Headers are a zero-cost defense layer. HSTS prevents SSL stripping, CSP mitigates XSS, X-Frame-Options blocks clickjacking. Setting them in both layers keeps them on a request that reaches the app directly and on an error Nginx answers itself.
 
 ## Error Handling and Information Leakage Prevention
 
@@ -263,7 +263,7 @@ public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 - `client_max_body_size 20m` — prevents oversized request abuse; kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`.
 - Proper proxy headers (`X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`).
 - WebSocket upgrade support with secure defaults.
-- Security headers duplicated from application layer, in `security_headers.inc`, which every server and every error location includes. nginx drops the enclosing level's `add_header` directives in any location that declares its own, and the JSON error pages add CORS headers, so a server-level copy alone never reached them.
+- Security headers in `security_headers.inc`, which every server and every error location includes; `proxy.inc` hides the application's copies of the same headers (`proxy_hide_header`), so a proxied response carries each once. nginx drops the enclosing level's `add_header` directives in any location that declares its own, and the JSON error pages add CORS headers, so a server-level copy alone never reached them.
 - `proxy.inc` holds the proxy body shared by the plain-http server and the TLS
   server in `tls.conf.example`, so the two cannot drift apart.
 - `Strict-Transport-Security` is sent by the application only, never by Nginx. Two

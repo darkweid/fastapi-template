@@ -4,6 +4,12 @@
 # would otherwise answer without these. Not named *.conf on purpose: nginx
 # auto-loads /etc/nginx/conf.d/*.conf, and this file belongs inside a block.
 #
+# nginx is the one source of these four behind the proxy: the application's
+# security middleware sets them too, so it stays covered without nginx (dev
+# servers, tests), and proxy.inc hides the app's copies with proxy_hide_header.
+# A header added here must be hidden there as well, or proxied responses carry
+# it twice.
+#
 # No Strict-Transport-Security here: the application's security middleware
 # already sends one, and a second header with a different max-age or preload
 # flag is a contradiction the browser resolves by taking whichever came first.
