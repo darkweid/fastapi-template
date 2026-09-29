@@ -199,9 +199,12 @@ pytest==9.1.1
     #   -r dev.in
     #   pytest-asyncio
     #   pytest-cov
+    #   pytest-randomly
 pytest-asyncio==1.4.0
     # via -r dev.in
 pytest-cov==7.1.0
+    # via -r dev.in
+pytest-randomly==5.0.0
     # via -r dev.in
 python-dateutil==2.9.0.post0
     # via
