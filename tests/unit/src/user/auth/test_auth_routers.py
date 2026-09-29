@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock
 from fastapi.routing import APIRoute
 import pytest
 
-from src.core.auth.credentials import SessionIdentity
+from src.core.auth.credentials import SessionIdentity, verify_jti
 from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.session_issuance import issue_session_pair
 from src.core.database.session import get_unit_of_work
+from src.core.errors.exceptions import UnauthorizedException
 from src.core.limiter.depends import RateLimiter
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse, TokenModel
@@ -507,12 +509,15 @@ def test_reset_password_confirm_route_has_rate_limit() -> None:
 async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
     async_client,
     dependency_overrides: DependencyOverrides,
+    fake_redis: InMemoryRedis,
 ) -> None:
     # The identity dependency is deliberately not overridden here: the expired token
     # has to survive the real dependency, or a cookie-transport client that lets its
     # access token lapse can never log out and cannot drop the httponly cookie itself.
     logout_use_case = FakeUseCase(SuccessResponse(success=True))
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
+    dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
+    await fake_redis.set(USER_AUTH_REALM.keys.refresh("user-1", "session-1"), "jti")
     token = encode_access_payload(
         build_access_payload("user-1", session_id="session-1", expires_in_minutes=-10)
     )
@@ -541,9 +546,11 @@ async def test_logout_with_an_expired_access_token_still_clears_the_cookies(
 async def test_logout_without_credentials_clears_cookies_and_revokes_nothing(
     async_client,
     dependency_overrides: DependencyOverrides,
+    fake_redis: InMemoryRedis,
 ) -> None:
     logout_use_case = FakeUseCase(SuccessResponse(success=True))
     dependency_overrides.set(get_logout_use_case, ProvideValue(logout_use_case))
+    dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
 
     response = await async_client.post("/v1/users/auth/logout")
 
@@ -551,3 +558,73 @@ async def test_logout_without_credentials_clears_cookies_and_revokes_nothing(
     logout_use_case.execute.assert_not_awaited()
     set_cookie = response.headers.get_list("set-cookie")
     assert any(h.startswith(f"{REFRESH_COOKIE_NAME}=") for h in set_cookie)
+
+
+@pytest.mark.asyncio
+async def test_logout_everywhere_with_a_token_of_an_ended_session_wipes_nothing(
+    async_client_with_fakes,
+    fake_redis: InMemoryRedis,
+) -> None:
+    """An access token outlives its session as a signature; it must not be able to
+    end the sessions its subject opened since, least of all after a password change."""
+    subject_id = str(build_user().id)
+    live = await issue_session_pair(
+        realm=USER_AUTH_REALM,
+        subject_id=subject_id,
+        claims={},
+        redis_client=fake_redis,
+        session_id="session-live",
+    )
+    ended_token = encode_access_payload(
+        build_access_payload(subject_id, session_id="session-ended")
+    )
+
+    response = await async_client_with_fakes.post(
+        "/v1/users/auth/logout",
+        headers={"Authorization": f"Bearer {ended_token}"},
+        json={"terminate_all_sessions": True},
+    )
+
+    assert response.status_code == 200
+    set_cookie = response.headers.get_list("set-cookie")
+    assert any(h.startswith(f"{REFRESH_COOKIE_NAME}=") for h in set_cookie)
+    await verify_jti(live.refresh_token, fake_redis, realm=USER_AUTH_REALM)
+    await verify_jti(live.access_token, fake_redis, realm=USER_AUTH_REALM)
+
+
+@pytest.mark.asyncio
+async def test_logout_everywhere_with_an_expired_token_of_a_live_session_wipes_all(
+    async_client_with_fakes,
+    fake_redis: InMemoryRedis,
+) -> None:
+    subject_id = str(build_user().id)
+    current = await issue_session_pair(
+        realm=USER_AUTH_REALM,
+        subject_id=subject_id,
+        claims={},
+        redis_client=fake_redis,
+        session_id="session-current",
+    )
+    other = await issue_session_pair(
+        realm=USER_AUTH_REALM,
+        subject_id=subject_id,
+        claims={},
+        redis_client=fake_redis,
+        session_id="session-other",
+    )
+    expired_token = encode_access_payload(
+        build_access_payload(
+            subject_id, session_id="session-current", expires_in_minutes=-10
+        )
+    )
+
+    response = await async_client_with_fakes.post(
+        "/v1/users/auth/logout",
+        headers={"Authorization": f"Bearer {expired_token}"},
+        json={"terminate_all_sessions": True},
+    )
+
+    assert response.status_code == 200
+    for token in (current.refresh_token, other.refresh_token):
+        with pytest.raises(UnauthorizedException):
+            await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)

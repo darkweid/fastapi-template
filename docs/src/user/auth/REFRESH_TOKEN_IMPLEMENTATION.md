@@ -55,9 +55,12 @@ signature but not its `exp`, and answers `None` rather than raising when it cann
 identify a session. Every other endpoint rejects an expired token, but logout cannot
 afford to: the refresh cookie is scoped to the refresh route and never reaches
 `/logout`, and a browser cannot drop an httponly cookie on its own — so a rejected
-logout would leave the client holding a session it can neither use nor clear. A
-request whose token is missing or forged still gets its cookies expired; it simply
-revokes nothing server-side, because it names no session.
+logout would leave the client holding a session it can neither use nor clear. The
+session the token names must still be live (its refresh key exists): a signature
+outlives its session, and an old token must not be able to order a wipe of the
+sessions its subject opened since. A request whose token is missing, forged or names
+an ended session still gets its cookies expired; it simply revokes nothing
+server-side.
 
 ## CSRF: stateless signed double submit
 
