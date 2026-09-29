@@ -306,7 +306,7 @@ markdown: gating it would let a documentation PR merge a violation that then
 fails the next code PR, on a commit that did not cause it. The `changes` job in `_ci.yml`
 calls `.github/actions/docs-only-change`, which asks
 `scripts/ops/docs_only_change.py` whether every changed path is documentation;
-`_deploy.yml` asks the same question about the commit it is about to deploy. On
+`_deploy.yml` deploys only when that run's image build succeeded. On
 a private fork this is the difference between roughly three billed Actions minutes
 and roughly twenty-five.
 
