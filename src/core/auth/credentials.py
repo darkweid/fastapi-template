@@ -124,7 +124,7 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
 
 
 async def decode_logout_identity(
-    token: str | None, realm: AuthRealm
+    token: str | None, redis_client: Redis, realm: AuthRealm
 ) -> SessionIdentity | None:
     """
     Identify the session a logout request asks to terminate.
@@ -137,8 +137,15 @@ async def decode_logout_identity(
     session it can neither use nor clear. The signature is still verified -
     only the `exp` claim is relaxed - so a forged token identifies nothing.
 
+    The named session must still be live: its refresh key or its access key
+    still exists. Either alone is enough, since no setting forces the refresh
+    token to outlive the access token.
+    Without that, any access token ever signed for the subject - one leaked
+    long ago, one from a session a password change already ended - could
+    order a wipe of every session the subject holds today.
+
     Answers None for every unusable case alike: no token, a forged or malformed
-    one, or one that is not an access token.
+    one, one that is not an access token, or one whose session has ended.
     """
     if not token:
         return None
@@ -167,6 +174,12 @@ async def decode_logout_identity(
         return None
 
     if mode != "access_token":
+        return None
+
+    if not await redis_client.exists(
+        realm.keys.refresh(subject_id, session_id),
+        realm.keys.access(subject_id, session_id),
+    ):
         return None
 
     return SessionIdentity(subject_id=subject_id, session_id=session_id)

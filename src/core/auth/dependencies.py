@@ -189,6 +189,7 @@ def build_realm_auth(
         return authenticated.principal
 
     async def logout_identity(
+        redis_client: Annotated[Redis, Depends(get_redis_client)],
         token: Annotated[str | None, Security(logout_header)] = None,
     ) -> SessionIdentity | None:
         """Identify the session a logout request asks to terminate.
@@ -199,9 +200,10 @@ def build_realm_auth(
         refresh route and never reaches this endpoint, and a browser cannot drop
         an httponly cookie itself, so a rejected logout would leave the client
         holding a session it can neither use nor clear. The signature is still
-        verified, so a forged token identifies nothing.
+        verified, so a forged token identifies nothing, and a session that has
+        already ended identifies nothing either.
         """
-        return await decode_logout_identity(token, realm)
+        return await decode_logout_identity(token, redis_client, realm)
 
     async def access_by_refresh(
         credentials: Annotated[RefreshCredentials, Depends(refresh_credentials)],

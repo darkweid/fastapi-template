@@ -7,12 +7,13 @@ and the commit are actually tied together.
 """
 
 from collections.abc import AsyncGenerator
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from taskiq import InMemoryBroker
 
@@ -21,6 +22,7 @@ from src.core.outbox.dispatcher import TaskDispatcher
 from src.core.outbox.enums import OutboxMessageStatus
 from src.core.outbox.models import OutboxMessage
 from src.core.outbox.repositories import OutboxRepository
+from src.core.outbox.tasks import SWEEPER_GRACE
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -90,6 +92,16 @@ async def enqueued_id(uow: ApplicationUnitOfWork) -> UUID:
     return rows[0].id
 
 
+async def backdate(engine: AsyncEngine, message_id: UUID) -> None:
+    """Move a row's creation past the sweeper grace on the database clock."""
+    async with AsyncSession(engine) as session, session.begin():
+        await session.execute(
+            update(OutboxMessage)
+            .where(OutboxMessage.id == message_id)
+            .values(created_at=func.now() - SWEEPER_GRACE - timedelta(seconds=1))
+        )
+
+
 async def test_commit_persists_the_row_and_publishes_it(
     integration_engine: AsyncEngine,
     dispatcher: TaskDispatcher,
@@ -156,11 +168,69 @@ async def test_pending_row_is_the_sweeper_batch_after_a_failed_publish(
             committed_message_ids.append(message_id)
             await uow.commit()
 
+    await backdate(integration_engine, message_id)
     async with AsyncSession(integration_engine) as session, session.begin():
-        batch = await OutboxRepository().get_batch_for_publish(session, limit=10)
+        batch = await OutboxRepository().get_batch_for_publish(
+            session, limit=10, min_age=SWEEPER_GRACE
+        )
         pending_ids = {message.id for message in batch}
 
     assert message_id in pending_ids
     persisted = await read_message(integration_engine, message_id)
     assert persisted is not None
     assert persisted.status is OutboxMessageStatus.PENDING
+
+
+async def test_the_sweeper_leaves_a_row_younger_than_the_grace_to_its_publish(
+    integration_engine: AsyncEngine,
+    dispatcher: TaskDispatcher,
+    publish_spy: AsyncMock,
+    committed_message_ids: list[UUID],
+) -> None:
+    """The after-commit publish kiqs first and marks the row published after; a
+    sweep in between would take the row still PENDING and publish it twice."""
+    publish_spy.side_effect = RuntimeError("broker unreachable")
+
+    async with AsyncSession(integration_engine, expire_on_commit=False) as session:
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
+        async with uow:
+            await dispatcher.enqueue_transactional(uow, probe_task, "fresh")
+            message_id = await enqueued_id(uow)
+            committed_message_ids.append(message_id)
+            await uow.commit()
+
+    async with AsyncSession(integration_engine) as session, session.begin():
+        batch = await OutboxRepository().get_batch_for_publish(
+            session, limit=100, min_age=SWEEPER_GRACE
+        )
+
+    assert message_id not in {message.id for message in batch}
+
+
+async def test_a_row_from_a_long_transaction_is_aged_from_its_insert(
+    integration_engine: AsyncEngine,
+    dispatcher: TaskDispatcher,
+    publish_spy: AsyncMock,
+    committed_message_ids: list[UUID],
+) -> None:
+    """now() is frozen at the start of the enqueuing transaction; aged by it, a
+    row from a transaction that stayed open past the grace is fair game for the
+    sweeper the moment it commits, while its own publish is still running."""
+    publish_spy.side_effect = RuntimeError("broker unreachable")
+    grace = timedelta(seconds=2)
+
+    async with AsyncSession(integration_engine, expire_on_commit=False) as session:
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
+        async with uow:
+            await uow.session.execute(select(func.pg_sleep(3)))
+            await dispatcher.enqueue_transactional(uow, probe_task, "late")
+            message_id = await enqueued_id(uow)
+            committed_message_ids.append(message_id)
+            await uow.commit()
+
+    async with AsyncSession(integration_engine) as session, session.begin():
+        batch = await OutboxRepository().get_batch_for_publish(
+            session, limit=100, min_age=grace
+        )
+
+    assert message_id not in {message.id for message in batch}

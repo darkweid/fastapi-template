@@ -118,9 +118,15 @@ async def execute_token_rotation(
     redis_client: Redis,
     *,
     keys: AuthRedisKeyBuilder,
+    new_refresh_jti: str,
+    new_access_jti: str,
 ) -> str:
     """
     Run the rotation script and translate its verdict.
+
+    On 'OK' the script has already registered `new_refresh_jti` and
+    `new_access_jti` as the session's live pair and refreshed its index entry,
+    in the same unit as the check, so the caller writes nothing more.
 
     Answers 'OK' or raises; there is no other return. GRACE is a double-submit
     inside the reuse window and leaves the session family intact; every other
@@ -135,19 +141,23 @@ async def execute_token_rotation(
     # is no separate knob because no other value is correct.
     used_ttl_seconds = refresh_ttl_seconds
 
-    old_refresh_key = keys.refresh(subject_id, session_id)
-    used_refresh_key = keys.used(subject_id, jti)
-
     result: str = await cast(
         Awaitable[str],
         redis_client.eval(
             ROTATE_REFRESH_TOKEN_SCRIPT,
-            2,  # Number of keys
-            old_refresh_key,
-            used_refresh_key,
+            4,  # Number of keys
+            keys.refresh(subject_id, session_id),
+            keys.used(subject_id, jti),
+            keys.access(subject_id, session_id),
+            keys.sessions(subject_id),
             jti,
             str(used_ttl_seconds),
             str(config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS),
+            session_id,
+            new_refresh_jti,
+            str(refresh_ttl_seconds),
+            new_access_jti,
+            str(config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES * 60),
         ),
     )
 

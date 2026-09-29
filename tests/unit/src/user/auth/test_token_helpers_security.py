@@ -358,7 +358,13 @@ async def test_execute_token_rotation_reused(
 
     with pytest.raises(UnauthorizedException):
         await token_helpers.execute_token_rotation(
-            "u1", "s1", "j1", fake_redis, keys=AUTH_KEYS
+            "u1",
+            "s1",
+            "j1",
+            fake_redis,
+            keys=AUTH_KEYS,
+            new_refresh_jti="j2",
+            new_access_jti="a2",
         )
 
     invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
@@ -379,7 +385,13 @@ async def test_execute_token_rotation_invalid(
 
     with pytest.raises(UnauthorizedException):
         await token_helpers.execute_token_rotation(
-            "u1", "s1", "j1", fake_redis, keys=AUTH_KEYS
+            "u1",
+            "s1",
+            "j1",
+            fake_redis,
+            keys=AUTH_KEYS,
+            new_refresh_jti="j2",
+            new_access_jti="a2",
         )
 
     invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
@@ -398,7 +410,13 @@ async def test_execute_token_rotation_treats_an_unknown_verdict_as_reuse(
 
     with pytest.raises(UnauthorizedException):
         await token_helpers.execute_token_rotation(
-            "u1", "s1", "j1", fake_redis, keys=AUTH_KEYS
+            "u1",
+            "s1",
+            "j1",
+            fake_redis,
+            keys=AUTH_KEYS,
+            new_refresh_jti="j2",
+            new_access_jti="a2",
         )
 
     invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
@@ -413,12 +431,20 @@ async def test_execute_token_rotation_ok(fake_redis: InMemoryRedis) -> None:
     """
     await fake_redis.set(refresh_jti_key("u1", "s1"), "j1", ex=600)
     result = await token_helpers.execute_token_rotation(
-        "u1", "s1", "j1", fake_redis, keys=AUTH_KEYS
+        "u1",
+        "s1",
+        "j1",
+        fake_redis,
+        keys=AUTH_KEYS,
+        new_refresh_jti="j2",
+        new_access_jti="a2",
     )
 
     assert result == "OK"
     assert await fake_redis.exists(used_refresh_key("u1", "j1")) == 1
-    assert await fake_redis.exists(refresh_jti_key("u1", "s1")) == 0
+    assert await fake_redis.get(refresh_jti_key("u1", "s1")) == "j2"
+    assert await fake_redis.get(access_jti_key("u1", "s1")) == "a2"
+    assert await fake_redis.zrange(AUTH_KEYS.sessions("u1"), 0, -1) == ["s1"]
 
 
 @pytest.mark.asyncio
@@ -506,23 +532,12 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
         options={"verify_exp": False},
     )
 
-    rotated_refresh_token = await tokens.rotate_refresh_token(
+    rotated = await tokens.rotate_session_tokens(
         refresh_payload,
         fake_redis,
         realm=USER_AUTH_REALM,
     )
-    rotated_refresh_payload = jwt.decode(
-        rotated_refresh_token,
-        TEST_JWT_USER_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
-    )
-    access_token_after_refresh = await tokens.create_access_token(
-        {"sub": "user"},
-        redis_client=fake_redis,
-        session_id=rotated_refresh_payload["session_id"],
-        realm=USER_AUTH_REALM,
-    )
+    access_token_after_refresh = rotated.access_token
 
     with pytest.raises(UnauthorizedException, match="Token invalidated"):
         await verify_jti(access_token_before_refresh, fake_redis, realm=USER_AUTH_REALM)

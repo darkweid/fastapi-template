@@ -9,10 +9,12 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.query import ListQuery
-from src.core.database.repositories import SoftDeleteRepository
+from src.core.database.repositories import BaseRepository, SoftDeleteRepository
 from src.core.pagination import PaginationParams, make_paginated_response
 from src.core.utils.security import password_hasher
 from src.user.enums import UserRole
@@ -170,3 +172,68 @@ async def test_soft_deleted_rows_leave_the_default_listing(
 
     assert total == 1
     assert [user.id for user in items] == [kept.id]
+
+
+class HardDeleteUserRepository(BaseRepository[User]):
+    """The base repository's hard delete, which `UserRepository` overrides."""
+
+    model = User
+
+
+async def _two_rows_sharing_a_first_name(
+    db_session: AsyncSession,
+) -> tuple[str, list[User]]:
+    repository = UserRepository()
+    first_name = f"twin-{uuid4().hex[:8]}"
+    users = [
+        await repository.create(
+            db_session,
+            build_user_data(f"twin{index}-{uuid4().hex[:8]}", first_name=first_name),
+        )
+        for index in range(2)
+    ]
+    await db_session.flush()
+    return first_name, users
+
+
+async def _states(db_session: AsyncSession, users: list[User]) -> list[tuple]:
+    rows = await db_session.execute(
+        select(User.last_name, User.is_deleted)
+        .where(User.id.in_([user.id for user in users]))
+        .order_by(User.id)
+        .execution_options(populate_existing=True)
+    )
+    return [tuple(row) for row in rows]
+
+
+async def test_an_ambiguous_update_raises_and_writes_nothing(
+    db_session: AsyncSession,
+) -> None:
+    """With no ORDER BY, taking the first match would write to whichever row the
+    planner returned - a filter that names two rows is a caller bug, not a choice."""
+    first_name, users = await _two_rows_sharing_a_first_name(db_session)
+    before = await _states(db_session, users)
+
+    with pytest.raises(MultipleResultsFound):
+        await UserRepository().update(
+            db_session, {"last_name": "Changed"}, first_name=first_name
+        )
+    await db_session.flush()
+
+    assert await _states(db_session, users) == before
+
+
+@pytest.mark.parametrize(
+    "repository", [UserRepository(), HardDeleteUserRepository()], ids=["soft", "hard"]
+)
+async def test_an_ambiguous_delete_raises_and_deletes_nothing(
+    db_session: AsyncSession, repository: BaseRepository[User]
+) -> None:
+    first_name, users = await _two_rows_sharing_a_first_name(db_session)
+    before = await _states(db_session, users)
+
+    with pytest.raises(MultipleResultsFound):
+        await repository.delete(db_session, first_name=first_name)
+    await db_session.flush()
+
+    assert await _states(db_session, users) == before

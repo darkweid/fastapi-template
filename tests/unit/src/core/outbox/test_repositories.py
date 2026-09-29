@@ -20,12 +20,16 @@ async def test_get_batch_for_publish_locks_pending_fifo() -> None:
         scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
     )
 
-    await OutboxRepository().get_batch_for_publish(session, limit=100)
+    await OutboxRepository().get_batch_for_publish(
+        session, limit=100, min_age=timedelta(seconds=60)
+    )
 
     sql = _compiled_sql(session)
     assert "FOR UPDATE SKIP LOCKED" in sql
     assert "ORDER BY outbox_messages.created_at" in sql
     assert "LIMIT" in sql
+    # The database clock, not a timestamp computed on the app server.
+    assert "outbox_messages.created_at < now() -" in sql
 
 
 async def test_mark_publish_failure_final_flips_status() -> None:

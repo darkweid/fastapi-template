@@ -566,8 +566,14 @@ async def test_verify_csrf_ignores_a_declared_body_transport_for_a_cookie_borne_
         await verify_csrf(request, credentials, _refresh_responder())
 
 
+async def _live_logout_session(fake_redis: InMemoryRedis) -> None:
+    await fake_redis.set(USER_AUTH_REALM.keys.refresh("user-1", "session-1"), "jti")
+
+
 @pytest.mark.asyncio
-async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
+async def test_get_logout_identity_accepts_an_expired_access_token(
+    fake_redis: InMemoryRedis,
+) -> None:
     """
     The reason this dependency exists: with cookie transport the refresh cookie is
     scoped to the refresh route and never reaches logout, and the browser cannot drop
@@ -575,12 +581,15 @@ async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
     user who logs out after access expiry holding a session they can neither use nor
     clear.
     """
+    await _live_logout_session(fake_redis)
     payload = build_access_payload(
         "user-1", session_id="session-1", expires_in_minutes=-10
     )
     token = encode_access_payload(payload)
 
-    identity = await dependencies.get_logout_identity(token=token)
+    identity = await dependencies.get_logout_identity(
+        redis_client=fake_redis, token=token
+    )
 
     assert identity == dependencies.SessionIdentity(
         subject_id="user-1", session_id="session-1"
@@ -588,11 +597,16 @@ async def test_get_logout_identity_accepts_an_expired_access_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_logout_identity_reads_a_bearer_prefixed_token() -> None:
+async def test_get_logout_identity_reads_a_bearer_prefixed_token(
+    fake_redis: InMemoryRedis,
+) -> None:
+    await _live_logout_session(fake_redis)
     payload = build_access_payload("user-1", session_id="session-1")
     token = encode_access_payload(payload)
 
-    identity = await dependencies.get_logout_identity(token=f"Bearer {token}")
+    identity = await dependencies.get_logout_identity(
+        redis_client=fake_redis, token=f"Bearer {token}"
+    )
 
     assert identity == dependencies.SessionIdentity(
         subject_id="user-1", session_id="session-1"
@@ -600,22 +614,77 @@ async def test_get_logout_identity_reads_a_bearer_prefixed_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_logout_identity_returns_none_without_a_token() -> None:
-    assert await dependencies.get_logout_identity(token=None) is None
+async def test_get_logout_identity_returns_none_without_a_token(
+    fake_redis: InMemoryRedis,
+) -> None:
+    assert (
+        await dependencies.get_logout_identity(redis_client=fake_redis, token=None)
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_get_logout_identity_rejects_a_token_signed_with_another_key() -> None:
+async def test_get_logout_identity_rejects_a_token_signed_with_another_key(
+    fake_redis: InMemoryRedis,
+) -> None:
     """Relaxing `exp` must not relax the signature: a forged token names no session."""
+    await _live_logout_session(fake_redis)
     payload = build_access_payload("user-1", session_id="session-1")
     forged = jwt.encode(payload, "x" * 32, config.jwt.ALGORITHM)
 
-    assert await dependencies.get_logout_identity(token=forged) is None
+    assert (
+        await dependencies.get_logout_identity(redis_client=fake_redis, token=forged)
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_get_logout_identity_rejects_a_refresh_token() -> None:
+async def test_get_logout_identity_rejects_a_refresh_token(
+    fake_redis: InMemoryRedis,
+) -> None:
+    await _live_logout_session(fake_redis)
     payload = build_refresh_payload("user-1", session_id="session-1")
     token = jwt.encode(payload, config.jwt.JWT_USER_SECRET_KEY, config.jwt.ALGORITHM)
 
-    assert await dependencies.get_logout_identity(token=token) is None
+    assert (
+        await dependencies.get_logout_identity(redis_client=fake_redis, token=token)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_ignores_a_token_of_an_ended_session(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """The signature outlives the session: an old token of an ended session must
+    not be able to order a wipe of the sessions the subject holds now."""
+    payload = build_access_payload(
+        "user-1", session_id="session-1", expires_in_minutes=-10
+    )
+
+    assert (
+        await dependencies.get_logout_identity(
+            redis_client=fake_redis, token=encode_access_payload(payload)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_accepts_a_session_whose_refresh_key_lapsed_first(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Nothing forces the refresh lifetime past the access one; a session still
+    holding a usable access token must stay revocable."""
+    await fake_redis.set(USER_AUTH_REALM.keys.access("user-1", "session-1"), "jti")
+    token = encode_access_payload(
+        build_access_payload("user-1", session_id="session-1")
+    )
+
+    identity = await dependencies.get_logout_identity(
+        redis_client=fake_redis, token=token
+    )
+
+    assert identity == dependencies.SessionIdentity(
+        subject_id="user-1", session_id="session-1"
+    )

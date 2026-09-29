@@ -287,7 +287,13 @@ class BaseRepository(Generic[T]):
         commit: bool = False,
         **filters: Any,
     ) -> T | None:
-        """Update a record using the provided session."""
+        """
+        Update the one record the filters match.
+
+        Filters that match several rows raise MultipleResultsFound and change
+        nothing: with no ORDER BY, picking the first would write to whichever
+        row the planner returned.
+        """
         if commit:
             self._ensure_commit_allowed(session)
         # The guard runs on the caller's own filters: seeding the scope first
@@ -311,7 +317,7 @@ class BaseRepository(Generic[T]):
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
-            instance = result.scalars().first()
+            instance = result.scalar_one_or_none()
             if instance:
                 for key, value in data.items():
                     setattr(instance, key, value)
@@ -339,7 +345,8 @@ class BaseRepository(Generic[T]):
     async def delete(
         self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
-        """Delete a record using the provided session."""
+        """Delete the one record the filters match; several matches raise
+        MultipleResultsFound and delete nothing, as in update()."""
         if commit:
             self._ensure_commit_allowed(session)
         self._ensure_filters_present(filters)
@@ -347,7 +354,7 @@ class BaseRepository(Generic[T]):
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
-            instance = result.scalars().first()
+            instance = result.scalar_one_or_none()
             if instance:
                 await session.delete(instance)
                 if commit:
@@ -418,7 +425,8 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
     async def delete(
         self, session: AsyncSession, commit: bool = False, **filters: Any
     ) -> T | None:
-        """Soft delete a record, using the filters."""
+        """Soft delete the one record the filters match; several matches raise
+        MultipleResultsFound and delete nothing, as in update()."""
         self._ensure_filters_present(filters)
         if commit:
             self._ensure_commit_allowed(session)
@@ -429,7 +437,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         try:
             query = select(self.model).filter_by(**filters)
             result = await session.execute(query)
-            instance: T | None = result.scalars().first()
+            instance: T | None = result.scalar_one_or_none()
             if instance:
                 # cast, not plain attribute access: T is bound to the declarative
                 # base only, not to SoftDeleteMixin, so mypy cannot see these

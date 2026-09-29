@@ -16,6 +16,5 @@ def get_refresh_access_use_case(
     return RefreshAccessUseCase(
         redis_client,
         realm=USER_AUTH_REALM,
-        claims_builder=lambda user: {"sub": str(user.id)},
         admission=ensure_can_use_session,
     )

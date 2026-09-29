@@ -16,7 +16,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, load_only, mapped_column, relationship
 
@@ -93,6 +93,13 @@ class FakeResult:
 
     def scalars(self) -> FakeScalars:
         return FakeScalars(self._items)
+
+    def scalar_one_or_none(self) -> RepositoryModel | None:
+        if len(self._items) > 1:
+            raise MultipleResultsFound(
+                "Multiple rows were found when one or none was required"
+            )
+        return self._items[0] if self._items else None
 
     def scalar_one(self) -> int:
         if self._scalar is None:
@@ -1026,3 +1033,28 @@ def test_base_repository_rejects_relationship_sortable_field() -> None:
 
     with pytest.raises(TypeError):
         BrokenRepository()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repo", [RepositoryModelRepository(), RepositorySoftDeleteRepository()]
+)
+async def test_ambiguous_write_touches_no_row_and_rolls_back_a_commit(
+    repo: BaseRepository[RepositoryModel],
+) -> None:
+    """A filter matching two rows is a caller bug; writing to whichever one came
+    back first would change a row nobody named."""
+    session = RepositorySession()
+    rows = [RepositoryModel(name="alpha"), RepositoryModel(name="alpha")]
+    session.execute.return_value = FakeResult(items=rows)
+
+    with pytest.raises(MultipleResultsFound):
+        await repo.update(session, {"name": "beta"}, commit=True, name="alpha")
+    with pytest.raises(MultipleResultsFound):
+        await repo.delete(session, commit=True, name="alpha")
+
+    assert [row.name for row in rows] == ["alpha", "alpha"]
+    assert all(not row.is_deleted for row in rows)
+    session.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    assert session.rollback.await_count == 2

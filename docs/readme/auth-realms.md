@@ -75,9 +75,9 @@ Follow `src/user/auth/` as the worked example throughout.
    and `src/<module>/auth/usecases/logout.py`, mirroring
    `src/user/auth/usecases/refresh_access.py` / `logout.py`. Each file is a
    single `get_*_use_case(redis_client: Annotated[Redis, Depends(get_redis_client)])`
-   that builds the core UseCase with the realm, an admission callable and a
-   `claims_builder`; the router only imports the provider and depends on it,
-   the same way it depends on every other UseCase. Writing a new UseCase
+   that builds the core UseCase with the realm and an admission callable;
+   the router only imports the provider and depends on it, the same way it
+   depends on every other UseCase. Writing a new UseCase
    class here would be exactly the copy this factoring was meant to avoid.
 
 6. **Mount the router.** Add it to `src/main/presentation.py` under `/v1`,

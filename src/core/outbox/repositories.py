@@ -1,9 +1,9 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.repositories import BaseRepository
@@ -18,12 +18,23 @@ class OutboxRepository(BaseRepository[OutboxMessage]):
     model = OutboxMessage
 
     async def get_batch_for_publish(
-        self, session: AsyncSession, limit: int
+        self, session: AsyncSession, limit: int, *, min_age: timedelta
     ) -> Sequence[OutboxMessage]:
-        """Lock a FIFO batch of pending rows; SKIP LOCKED keeps concurrent sweeps disjoint."""
+        """
+        Lock a FIFO batch of pending rows older than `min_age`; SKIP LOCKED keeps
+        concurrent sweeps disjoint.
+
+        A younger row may still be in its after-commit publish, which kiqs and
+        marks the row published in two steps: taking it here would publish it a
+        second time. Age is measured on the database clock, the same one that
+        stamped `created_at`, so app-server skew cannot shrink the window.
+        """
         query = (
             select(self.model)
-            .where(self.model.status == OutboxMessageStatus.PENDING)
+            .where(
+                self.model.status == OutboxMessageStatus.PENDING,
+                self.model.created_at < func.now() - min_age,
+            )
             .order_by(self.model.created_at)
             .limit(limit)
             .with_for_update(skip_locked=True)

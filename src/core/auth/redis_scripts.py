@@ -1,8 +1,9 @@
 """
 Lua sources for the steps that must not interleave. Rotation reads the old
-refresh key, stamps the used marker and settles on a verdict as one operation;
-consuming a single-use challenge compares its value and deletes it as one.
-Spread over round-trips, two concurrent callers both come back valid.
+refresh key, stamps the used marker, settles on a verdict and registers the
+replacement pair as one operation; consuming a single-use challenge compares
+its value and deletes it as one. Spread over round-trips, two concurrent
+callers both come back valid, and a session wipe can slip between them.
 
 Importing this module only reads the files - Redis parses a script on its first
 EVAL, so a syntax error here surfaces on the first call, never at startup.
