@@ -195,7 +195,7 @@ class ListQuery:
         for primary_key_column in inspect(model).primary_key:
             if chosen_name is not None and primary_key_column.name == chosen_name:
                 continue
-            clauses.append(self._directed(primary_key_column, nulls_last=False))
+            clauses.append(self._directed(primary_key_column))
 
         return clauses
 
@@ -218,20 +218,24 @@ class ListQuery:
                 return column
         return None
 
-    def _directed(
-        self, column: Any, *, nulls_last: bool = True
-    ) -> UnaryExpression[Any]:
-        """Order one column in this query's direction.
+    def _directed(self, column: Any) -> UnaryExpression[Any]:
+        """Order one column in this query's direction, NULLs last.
 
-        `nulls_last=False` is for the primary-key tiebreaker: a primary key is
-        `NOT NULL`, so the modifier is a no-op for correctness there and only
-        costs a `Sort` node PostgreSQL would otherwise avoid via a plain btree
-        index scan.
+        `NULLS LAST` is added only where a NULL can occur. On a `NOT NULL`
+        column it changes no result, but `DESC NULLS LAST` does not match a
+        plain ascending btree scanned backwards (that yields `NULLS FIRST`), so
+        it would turn an index scan into a `Sort` over the whole table. An
+        expression whose nullability is unknown (a hybrid property) keeps it.
         """
         ordered = column.asc() if self.order == "asc" else column.desc()
-        if nulls_last:
+        if _may_be_null(column):
             ordered = ordered.nulls_last()
         # SQLAlchemy's operator mixins type `.asc()`/`.nulls_last()` as
         # `ColumnOperators`, the loosest common return type across all its
         # column-like inputs; the concrete runtime type is a `UnaryExpression`.
         return cast(UnaryExpression[Any], ordered)
+
+
+def _may_be_null(column: Any) -> bool:
+    expression = getattr(column, "expression", column)
+    return getattr(expression, "nullable", None) is not False

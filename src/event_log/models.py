@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum as SQLEnum, Index, String, func, text
+from sqlalchemy import DateTime, Enum as SQLEnum, Index, String, func
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,37 +23,16 @@ class EventLog(Base, UUID7IDMixin):
     """
 
     __tablename__ = "event_logs"
-    # Named by hand, unlike the plain column indexes elsewhere in the project:
-    # the naming convention derives no name for an expression index, and the
-    # direction has to be spelled out. `ListQuery` orders this table by
-    # `created_at DESC NULLS LAST, id DESC`; an index without that ordering
-    # makes the planner sort the whole table instead of reading fifty rows.
+    # Named by hand: the naming convention derives an index name from one
+    # column only. `ListQuery` orders this table by `created_at DESC, id DESC`
+    # (both NOT NULL, so no NULLS LAST); a plain index scanned backwards gives
+    # exactly that order, and forwards the ascending one. Without the trailing
+    # pair the planner sorts the whole table instead of reading fifty rows.
     __table_args__ = (
-        Index(
-            "ix_event_logs_actor",
-            "actor_type",
-            "actor_id",
-            text("created_at DESC NULLS LAST"),
-            text("id DESC"),
-        ),
-        Index(
-            "ix_event_logs_object",
-            "object_type",
-            "object_id",
-            text("created_at DESC NULLS LAST"),
-            text("id DESC"),
-        ),
-        Index(
-            "ix_event_logs_event_type",
-            "event_type",
-            text("created_at DESC NULLS LAST"),
-            text("id DESC"),
-        ),
-        Index(
-            "ix_event_logs_created_at",
-            text("created_at DESC NULLS LAST"),
-            text("id DESC"),
-        ),
+        Index("ix_event_logs_actor", "actor_type", "actor_id", "created_at", "id"),
+        Index("ix_event_logs_object", "object_type", "object_id", "created_at", "id"),
+        Index("ix_event_logs_event_type", "event_type", "created_at", "id"),
+        Index("ix_event_logs_created_at", "created_at", "id"),
     )
 
     actor_type: Mapped[ActorType] = mapped_column(SQLEnum(ActorType))

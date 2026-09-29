@@ -112,8 +112,10 @@ largest table in the database. `event_type` is a string rather than a database
 enum, because the catalog gains members with every feature and the value never
 comes from a request.
 
-Four expression indexes carry `created_at DESC NULLS LAST, id DESC` - the order
-`ListQuery` asks for - after the columns each one filters by. An index without
-that trailing order makes the planner sort the whole table to answer one page;
+Four indexes end in `created_at, id` after the columns each one filters by.
+Both are NOT NULL, so `ListQuery` asks for `created_at DESC, id DESC` without
+`NULLS LAST`, and a plain index scanned backwards returns exactly that order. An
+index without that trailing pair makes the planner sort the whole table to
+answer one page;
 `tests/integration/src/event_log/test_event_log.py` pins that the default page
 needs no sort node.
