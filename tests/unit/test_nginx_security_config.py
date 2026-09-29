@@ -73,6 +73,24 @@ def test_no_nginx_config_sets_strict_transport_security() -> None:
         ), f"{conf.name} sets HSTS, which the application already sends"
 
 
+def test_proxied_responses_carry_each_nginx_security_header_once() -> None:
+    """nginx adds these headers to every answer and the app sets them as well,
+    so a header nginx adds without hiding the upstream copy reaches the client
+    twice. HSTS and the per-path CSP come from the app alone and must pass."""
+    added = set(re.findall(r"^add_header (\S+) ", _read("security_headers.inc"), re.M))
+    proxy_inc = _read("proxy.inc")
+    hidden = set(re.findall(r"^proxy_hide_header (\S+);$", proxy_inc, re.M))
+
+    assert added
+    assert added <= set(BASE_SECURITY_HEADERS)
+    assert hidden == added
+    # A location declaring its own proxy_hide_header or add_header drops the
+    # server-level ones it would otherwise inherit.
+    for location in _location_blocks(proxy_inc):
+        assert "proxy_hide_header" not in location, location
+        assert "add_header" not in location, location
+
+
 def test_the_plain_http_and_tls_servers_share_one_proxy_body() -> None:
     """
     The proxy body lives in proxy.inc so the two servers cannot drift apart; a

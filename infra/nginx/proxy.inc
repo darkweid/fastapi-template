@@ -22,6 +22,15 @@ proxy_http_version 1.1;
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;
 
+# nginx adds these four itself (security_headers.inc), on its own error pages as
+# well as on proxied answers, so the app's copies are dropped here or every
+# proxied response would carry each one twice. Only these four: HSTS and the
+# Content-Security-Policy come from the app alone, the CSP differing per path.
+proxy_hide_header X-Content-Type-Options;
+proxy_hide_header X-Frame-Options;
+proxy_hide_header Referrer-Policy;
+proxy_hide_header Permissions-Policy;
+
 location / {
     proxy_pass http://app_service_upstream;
 }
