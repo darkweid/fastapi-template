@@ -23,7 +23,7 @@ network, so the Docker iptables/UFW bypass does not apply — see
 Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requirements).
 
 ## Containers
-- **Postgres:** `infra/postgres/Dockerfile`, stores data in volume.
+- **Postgres:** `infra/postgres/Dockerfile`, stores data in volume. The image carries `infra/postgres/postgresql.conf` and the server reads it at every start (`-c config_file=`), so a changed setting reaches an existing database on the next deploy, which rebuilds the image with `--pull` and recreates the container.
 - **App:** Uvicorn/Gunicorn serving FastAPI under a non-root runtime user.
 - **Worker:** Runs taskiq tasks consumed from Redis Streams, with `IdempotencyReceiver` for worker-side dedup (a running task holds a claim it renews every 20 seconds, so a second delivery of the same task id is skipped however long the first one runs) and `--max-async-tasks 20` concurrency (mirrored by the `tasks_engine` pool in `src/core/database/engine.py`).
 - **Scheduler:** Fires periodic tasks (`schedule=[{"cron": "..."}]` on the task decorator) into the stream, including the outbox sweeper (every minute, taking only rows older than `SWEEPER_GRACE` so it does not race a row's own after-commit publish) and purge (daily) tasks, and fires delayed retries written by `SmartRetryMiddleware`; exactly one instance runs.

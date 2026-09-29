@@ -42,7 +42,6 @@ services:
       PGDATA: /var/lib/postgresql/18/main
     volumes:
       - postgres-data:/var/lib/postgresql
-      - ./postgres/postgresql.conf:/custom-config/postgresql.conf:ro
     networks:
       - app-network
     deploy:

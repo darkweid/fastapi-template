@@ -267,3 +267,21 @@ def test_the_applied_pin_survives_a_recreated_nginx() -> None:
     assert "state=/etc/nginx/upstream" in entrypoint
     # A pin naming containers that no longer exist is dropped, not served.
     assert 'getent hosts "$host"' in entrypoint
+
+
+def test_postgres_reads_the_shipped_config_at_every_start() -> None:
+    """The config used to be copied into PGDATA by an initdb script, so a
+    changed setting never reached a database that already existed, while the
+    deploy rebuilt the image as if it would."""
+    dockerfile = (PROJECT_ROOT / "infra/postgres/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    volumes = _compose_service("postgres")["volumes"]
+
+    assert (
+        'CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]'
+        in dockerfile
+    )
+    assert "docker-entrypoint-initdb.d" not in dockerfile
+    assert not [volume for volume in volumes if "postgresql.conf" in volume]
+    assert '"${COMPOSE[@]}" build --pull postgres' in _script()

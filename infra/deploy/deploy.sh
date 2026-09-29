@@ -324,9 +324,12 @@ fi
 
 # The database image stays box-local in both modes - CD ships application code,
 # never the database. It is rebuilt every deploy because `up` reuses an existing
-# tag, so a change to infra/postgres/ would otherwise never reach the server.
+# tag: the image carries postgresql.conf, which the server reads at every start,
+# so a changed setting or a patch release of the base image (--pull) reaches the
+# server when `up` below recreates the container on the new image - a database
+# restart the serving app rides out through pool_pre_ping.
 echo "[deploy] building the postgres image"
-"${COMPOSE[@]}" build postgres
+"${COMPOSE[@]}" build --pull postgres
 
 if [ "$BUILD" = "1" ]; then
   echo "[deploy] building ${APP_IMAGE} on the box"
