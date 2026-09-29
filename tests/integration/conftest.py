@@ -78,10 +78,13 @@ def migrated_database() -> None:
 
 
 async def _run_on_server(statement: str) -> None:
-    """CREATE/DROP DATABASE cannot run inside a transaction, nor from a connection to
-    the database it copies or drops, so it goes through the server's maintenance
-    database with autocommit."""
-    url = make_url(get_settings().postgres.dsn_async).set(database="postgres")
+    """CREATE/DROP DATABASE cannot run inside a transaction, nor while anyone is
+    connected to the database it copies or drops, so it goes through a maintenance
+    database with autocommit: `postgres`, or `template1` when `postgres` is itself
+    the test database being copied."""
+    source = get_settings().postgres.POSTGRES_DB
+    maintenance = "template1" if source == "postgres" else "postgres"
+    url = make_url(get_settings().postgres.dsn_async).set(database=maintenance)
     engine = create_async_engine(url, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as connection:
@@ -91,19 +94,22 @@ async def _run_on_server(statement: str) -> None:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def database_template(migrated_database: None) -> str:
+async def database_template(migrated_database: None) -> AsyncGenerator[str]:
     """A copy of the test database as the migrations leave it, before any test writes
     a row: what `scratch_database` clones.
 
     Taken here, ahead of `integration_engine`, because PostgreSQL refuses to copy a
-    database anyone is connected to. Dropped first in case a reused server still holds
-    one from an earlier run.
+    database anyone is connected to. The name is generated rather than derived from
+    the source: a derived one past the 63-byte identifier limit is truncated, and
+    could come back as the source itself.
     """
     source = get_settings().postgres.POSTGRES_DB
-    name = f"{source}_template"
-    await _run_on_server(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    name = f"template_{uuid4().hex}"
     await _run_on_server(f'CREATE DATABASE "{name}" TEMPLATE "{source}"')
-    return name
+    try:
+        yield name
+    finally:
+        await _run_on_server(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 @dataclass(frozen=True)
