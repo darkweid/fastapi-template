@@ -69,3 +69,15 @@ async def test_purge_published_filters_status_and_cutoff() -> None:
     sql = _compiled_sql(session)
     assert "DELETE FROM outbox_messages" in sql
     assert "status" in sql and "published_at" in sql
+
+
+async def test_mark_publish_failure_can_leave_attempts_alone() -> None:
+    session = FakeAsyncSession()
+    session.execute.return_value = MagicMock()
+
+    await OutboxRepository().mark_publish_failure(
+        session, uuid4(), error="broker down", final=False, count_attempt=False
+    )
+
+    query = session.execute.await_args.args[0]
+    assert {c.key for c in query._values} == {"last_error"}  # noqa: SLF001
