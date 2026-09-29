@@ -421,20 +421,20 @@ class InMemoryRedis:
         numkeys: int,
         *keys_and_args: Any,
     ) -> str:
-        if numkeys != 4:
-            raise ValueError("ROTATE_REFRESH_TOKEN_SCRIPT expects 4 keys.")
+        if numkeys != 5:
+            raise ValueError("ROTATE_REFRESH_TOKEN_SCRIPT expects 5 keys.")
 
-        refresh_key, used_key, access_key, sessions_key = (
-            _normalize_key(key) for key in keys_and_args[:4]
+        refresh_key, used_key, access_key, sessions_key, latest_access_key = (
+            _normalize_key(key) for key in keys_and_args[:5]
         )
-        expected_jti = _normalize_value(keys_and_args[4])
-        used_ttl_seconds = int(keys_and_args[5])
-        grace_seconds = int(keys_and_args[6])
-        session_id = _normalize_value(keys_and_args[7])
-        new_refresh_jti = _normalize_value(keys_and_args[8])
-        refresh_ttl_seconds = int(keys_and_args[9])
-        new_access_jti = _normalize_value(keys_and_args[10])
-        access_ttl_seconds = int(keys_and_args[11])
+        expected_jti = _normalize_value(keys_and_args[5])
+        used_ttl_seconds = int(keys_and_args[6])
+        grace_seconds = int(keys_and_args[7])
+        session_id = _normalize_value(keys_and_args[8])
+        new_refresh_jti = _normalize_value(keys_and_args[9])
+        refresh_ttl_seconds = int(keys_and_args[10])
+        new_access_jti = _normalize_value(keys_and_args[11])
+        access_ttl_seconds = int(keys_and_args[12])
 
         now = int(self.wall_clock())
 
@@ -458,6 +458,11 @@ class InMemoryRedis:
         self._write(used_key, str(now), ttl_seconds=used_ttl_seconds)
         self._write(refresh_key, new_refresh_jti, ttl_seconds=refresh_ttl_seconds)
         self._write(access_key, new_access_jti, ttl_seconds=access_ttl_seconds)
+        self._write(
+            latest_access_key,
+            new_access_jti,
+            ttl_seconds=max(refresh_ttl_seconds, access_ttl_seconds),
+        )
 
         self._purge_expired(sessions_key)
         index = self._zsets.setdefault(sessions_key, {})

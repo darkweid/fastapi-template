@@ -17,6 +17,12 @@ class AuthRedisKeyBuilder:
     def refresh(self, subject_id: str, session_id: str) -> str:
         return f"{self._prefix}:refresh:{subject_id}:{session_id}"
 
+    def latest_access(self, subject_id: str, session_id: str) -> str:
+        """The jti of the session's newest access token, kept as long as either
+        token of the session can live: logout accepts that token even after it
+        expires, and no other token of the session."""
+        return f"{self._prefix}:latest-access:{subject_id}:{session_id}"
+
     def used(self, subject_id: str, jti: str) -> str:
         return f"{self._prefix}:used:{subject_id}:{jti}"
 

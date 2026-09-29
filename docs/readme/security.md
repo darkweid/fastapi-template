@@ -23,7 +23,7 @@ Every refresh request atomically (via Lua script):
 1. Checks if the presented JTI was already consumed - within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` of the rotation that consumed it the replay is treated as a benign double-submit (`GRACE`, plain 401, no wipe); later it is `REUSED`.
 2. Validates the JTI matches the stored active token (`INVALID`).
 3. Marks the old JTI as used, stamped with the rotation instant, with a TTL equal to the refresh token lifetime.
-4. Stores the new refresh and access JTIs in place of the old pair and refreshes the session's entry in the per-subject index, so a concurrent wipe of every session (password change, logout everywhere) cannot miss the new pair.
+4. Stores the new refresh and access JTIs in place of the old pair, records the access JTI as the session's `latest-access` (the one token logout accepts), and refreshes the session's entry in the per-subject index, so a concurrent wipe of every session (password change, logout everywhere) cannot miss the new pair.
 
 If a consumed token is presented again past the grace window, **all user sessions are invalidated immediately**. This detects stolen refresh tokens: an attacker replaying a token that the legitimate client already rotated triggers a full session wipe.
 
@@ -93,7 +93,7 @@ another realm's session invalidation.
 - Each login creates a unique `session_id` (UUID4), enabling multi-device support.
 - `invalidate_session()` — single device logout.
 - `invalidate_all_sessions()` — full account logout by walking the `sessions:{user_id}` index (a ZSET scored by refresh expiry), no keyspace `SCAN`.
-- Logout endpoint supports both modes via `terminate_all_sessions` flag.
+- Logout endpoint supports both modes via `terminate_all_sessions` flag. It accepts an expired access token, but only the newest one of a live session: its JTI must match the session's `latest-access` key, which lives as long as either token and goes with every wipe. An access token a refresh has replaced, or one from an ended session, identifies nothing, so a leaked copy cannot log its subject out everywhere.
 
 **Why it matters:** Stateless JWT alone cannot be revoked. Redis-backed JTI tracking adds revocation capability while preserving JWT's stateless verification for normal requests.
 

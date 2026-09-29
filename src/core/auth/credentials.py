@@ -137,15 +137,16 @@ async def decode_logout_identity(
     session it can neither use nor clear. The signature is still verified -
     only the `exp` claim is relaxed - so a forged token identifies nothing.
 
-    The named session must still be live: its refresh key or its access key
-    still exists. Either alone is enough, since no setting forces the refresh
-    token to outlive the access token.
+    The token must be the newest access token of a live session: its jti has
+    to match the session's `latest_access` key, which rotation rewrites and
+    every session wipe deletes, and which lives as long as either token.
     Without that, any access token ever signed for the subject - one leaked
-    long ago, one from a session a password change already ended - could
-    order a wipe of every session the subject holds today.
+    long ago, one a refresh already rotated out, one from a session a password
+    change ended - could order a wipe of every session the subject holds today.
 
     Answers None for every unusable case alike: no token, a forged or malformed
-    one, one that is not an access token, or one whose session has ended.
+    one, one that is not an access token, one that is no longer its session's
+    newest, or one whose session has ended.
     """
     if not token:
         return None
@@ -170,16 +171,17 @@ async def decode_logout_identity(
         subject_id = payload["sub"]
         session_id = payload["session_id"]
         mode = payload["mode"]
+        jti = payload["jti"]
     except KeyError:
         return None
 
     if mode != "access_token":
         return None
 
-    if not await redis_client.exists(
-        realm.keys.refresh(subject_id, session_id),
-        realm.keys.access(subject_id, session_id),
-    ):
+    latest_jti = await redis_client.get(
+        realm.keys.latest_access(subject_id, session_id)
+    )
+    if latest_jti is None or latest_jti != jti:
         return None
 
     return SessionIdentity(subject_id=subject_id, session_id=session_id)
