@@ -9,7 +9,8 @@
 #           instead of halfway through a production deploy.
 #
 # Order matters: data services first, then migrations, then the application.
-# A failed migration aborts the deploy with the previous app still serving.
+# A failed migration aborts the deploy with the previous app still serving; an
+# application that does not turn healthy is rolled back to the previous image.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -28,6 +29,14 @@ fi
 
 COMPOSE=(docker compose --env-file .env -f infra/docker-compose.yml)
 
+# nginx resolves the app upstream once, when it loads its configuration, so a
+# recreated app container at a new address leaves it answering 502. A reload
+# resolves it again without dropping the connections in flight, which a restart
+# would.
+reload_nginx() {
+  "${COMPOSE[@]}" exec -T nginx nginx -s reload
+}
+
 test -f .env || {
   echo "[deploy] .env is missing on the box - copy .env.example and fill it in"
   exit 1
@@ -41,9 +50,19 @@ python3 scripts/ops/check_env.py
 # running nginx cannot follow. The test resolves the app upstream, so it needs
 # an app container on the network; on the first deploy there is none, nothing
 # is serving yet either, and nginx's own start below reports the error.
-if [ -n "$("${COMPOSE[@]}" ps -q app)" ]; then
+RUNNING_APP="$("${COMPOSE[@]}" ps -q app)"
+if [ -n "$RUNNING_APP" ]; then
   echo "[deploy] testing the nginx configuration"
   "${COMPOSE[@]}" run --rm --no-deps --entrypoint nginx nginx -t
+fi
+
+# The image the serving app runs, recorded before anything is rolled, so a new
+# image whose containers never turn healthy can be swapped back out. The image
+# id, not the tag: BUILD=1 rebuilds the same tag, which would then name the new
+# image. Empty on the first deploy, when there is nothing to go back to.
+PREVIOUS_IMAGE=""
+if [ -n "$RUNNING_APP" ]; then
+  PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' "$RUNNING_APP")"
 fi
 
 # The database image stays box-local in both modes - CD ships application code,
@@ -69,11 +88,23 @@ echo "[deploy] applying migrations before any new code serves traffic"
 echo "[deploy] rolling the application containers"
 # --no-deps keeps app-builder out of the CD path: with BUILD=0 the image comes
 # from the registry and there is nothing to build.
-"${COMPOSE[@]}" up -d --no-deps --wait app worker scheduler
+#
+# Containers that never turn healthy would otherwise stay in place with the
+# service down, so the previous image is rolled back in. The migrations stay
+# applied: the previous code runs against the new schema.
+if ! "${COMPOSE[@]}" up -d --no-deps --wait app worker scheduler; then
+  if [ -z "$PREVIOUS_IMAGE" ]; then
+    echo "[deploy] the application did not become healthy and there is no previous image to roll back to"
+    exit 1
+  fi
+  echo "[deploy] the application did not become healthy; rolling back to ${PREVIOUS_IMAGE}"
+  APP_IMAGE="$PREVIOUS_IMAGE" "${COMPOSE[@]}" up -d --no-deps --wait app worker scheduler
+  reload_nginx
+  echo "[deploy] rolled back; the deploy failed"
+  exit 1
+fi
 "${COMPOSE[@]}" up -d --no-deps nginx
-# nginx resolves the app upstream once at startup, so a recreated app container
-# leaves it serving 502 until it restarts.
-"${COMPOSE[@]}" restart nginx
+reload_nginx
 
 # Every BUILD=0 deploy leaves a tagged sha- image behind, and plain
 # `image prune` only touches dangling ones, so the disk grows until a pull
