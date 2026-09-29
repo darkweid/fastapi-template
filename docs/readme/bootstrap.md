@@ -30,12 +30,12 @@ Pick a slug — lowercase, no spaces — and replace:
 | What | Where | Becomes |
 | --- | --- | --- |
 | Compose project name `fastapi-template` | `infra/docker-compose.yml:4` | `myapp` |
-| Container names `template-app`, `-worker`, `-scheduler`, `-nginx`, `-postgres`, `-redis`, `-app-builder` | `infra/docker-compose.yml`, `infra/docker-compose.override.yml` | `myapp-*` |
-| Prod image tag `template-app-image:latest` | `infra/docker-compose.yml` (the `APP_IMAGE` fallback, 4 services), `infra/deploy/deploy.sh:21` | `myapp-app-image:latest` |
+| Container names `template-worker`, `-scheduler`, `-nginx`, `-postgres`, `-redis`, `-app-builder` (the app has none: a deploy runs two of it side by side, named after the compose project) | `infra/docker-compose.yml` | `myapp-*` |
+| Prod image tag `template-app-image:latest` | `infra/docker-compose.yml` (the `APP_IMAGE` fallback, 4 services), `infra/deploy/deploy.sh:24` | `myapp-app-image:latest` |
 | Dev image tag `template-app-dev-image:latest` | `infra/docker-compose.override.yml` | `myapp-app-dev-image:latest` |
 | Postgres image tag `template-postgres:18` | `infra/docker-compose.yml:23` | `myapp-postgres:18` |
 | Test Postgres tag `template-postgres-test:18` | `infra/docker-compose.test.yml:26` | `myapp-postgres-test:18` |
-| Volume names `template-postgres-data`, `template-redis-data` | `infra/docker-compose.yml:187,189` | `myapp-postgres-data`, `myapp-redis-data` |
+| Volume names `template-postgres-data`, `template-redis-data` | `infra/docker-compose.yml:219,221` | `myapp-postgres-data`, `myapp-redis-data` |
 | Integration-suite project prefix `template-test-$$` | `Makefile:145` | `myapp-test-$$` |
 
 If the stack has already run once, tear it down **before** renaming. `make down`
@@ -357,7 +357,8 @@ and the production box never compiles.
 `infra/deploy/deploy.sh` validates `.env` before anything starts, brings up
 Postgres and Redis, applies migrations, and only then rolls `app`, `worker` and
 `scheduler`. A failed migration aborts the deploy with the previous containers
-still serving.
+still serving. The app rolls without downtime: the new container starts beside
+the serving one and takes the traffic only once healthy.
 
 Operational detail lives in [infra.md](infra.md); the threat model and the host
 hardening in [security.md](security.md).

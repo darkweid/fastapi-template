@@ -31,6 +31,15 @@ proxy_hide_header X-Frame-Options;
 proxy_hide_header Referrer-Policy;
 proxy_hide_header Permissions-Policy;
 
+# A connection the app refuses or does not accept in time is retried on the
+# next server of the upstream. Never `non_idempotent`: a POST or PATCH that
+# reached the app is not sent twice. The connect timeout is short because the
+# app sits on the same bridge network, where a connect takes well under a
+# millisecond; the 60s default would hold a request that long on a vanished
+# container.
+proxy_next_upstream error timeout;
+proxy_connect_timeout 5s;
+
 location / {
     proxy_pass http://app_service_upstream;
 }

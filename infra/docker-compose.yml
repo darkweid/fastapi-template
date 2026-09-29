@@ -51,11 +51,17 @@ services:
           cpus: '1'
           memory: 1G
 
+  # No container_name and no published port: infra/deploy/deploy.sh rolls the
+  # app by starting a second container of this service beside the serving one
+  # (`up --scale app=2`), and a fixed name or host port would collide.
   app:
-    container_name: template-app
     image: ${APP_IMAGE:-template-app-image:latest}
     env_file: ../.env
-    command: gunicorn -k uvicorn_worker.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 src.main.web:app
+    # SIGTERM makes gunicorn stop accepting and finish the requests in flight
+    # within --graceful-timeout; stop_grace_period must stay longer, or docker
+    # kills the requests the deploy lets drain. --keep-alive stays longer than
+    # the upstream keepalive_timeout in infra/nginx/main.conf.
+    command: gunicorn -k uvicorn_worker.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 --graceful-timeout 30 src.main.web:app
     restart: unless-stopped
     stop_grace_period: 35s
     healthcheck:
@@ -65,6 +71,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      # Probed every 2s while starting, so a deploy hands traffic to a new
+      # container seconds after it boots instead of at the first 10s tick.
+      start_period: 30s
+      start_interval: 2s
     depends_on:
       postgres:
         condition: service_healthy
@@ -149,6 +159,13 @@ services:
       - ./nginx/proxy.inc:/etc/nginx/conf.d/proxy.inc:ro
       - ./nginx/error_pages.inc:/etc/nginx/conf.d/error_pages.inc:ro
       - ./nginx/security_headers.inc:/etc/nginx/conf.d/security_headers.inc:ro
+      # Rendered to /etc/nginx/app_upstream.inc by the image's entrypoint at
+      # every start; infra/deploy/deploy.sh rewrites the rendered copy while it
+      # rolls the app (infra/nginx/main.conf).
+      - ./nginx/app_upstream.inc.template:/etc/nginx/templates/app_upstream.inc.template:ro
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      APP_BACKEND_PORT: ${APP_BACKEND_PORT}
     # 443 is published although app.conf serves plain http: TLS terminates here
     # once the host has a certificate (see nginx/tls.conf.example), and the host
     # firewall opens exactly these two ports.
