@@ -160,12 +160,12 @@ services:
       # those, and the mount also hides the image's own default.conf, which
       # would otherwise serve the stock page to Host "localhost".
       - ./nginx:/etc/nginx/conf.d:ro
+    # Writes the app upstream's servers before the image's own entrypoint runs
+    # (infra/nginx/entrypoint.sh). Overriding the entrypoint drops the image's
+    # command, so it is repeated here.
+    entrypoint: ["sh", "/etc/nginx/conf.d/entrypoint.sh"]
+    command: ["nginx", "-g", "daemon off;"]
     environment:
-      # The entrypoint renders conf.d/app_upstream.inc.template to
-      # /etc/nginx/app_upstream.inc at every start; infra/deploy/deploy.sh
-      # rewrites the rendered copy while it rolls the app (infra/nginx/main.conf).
-      NGINX_ENVSUBST_TEMPLATE_DIR: /etc/nginx/conf.d
-      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
       APP_BACKEND_PORT: ${APP_BACKEND_PORT}
     # 443 is published although app.conf serves plain http: TLS terminates here
     # once the host has a certificate (see nginx/tls.conf.example), and the host

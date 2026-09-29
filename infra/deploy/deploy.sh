@@ -46,12 +46,16 @@ nginx_is_running() {
 
 # nginx routes to whatever /etc/nginx/app_upstream.inc names (the upstream in
 # infra/nginx/main.conf). It is written inside the nginx container, not in the
-# checkout: the file changes on every deploy, and a restarted nginx renders it
-# again from app_upstream.inc.template, which names the `app` service. Naming
-# single containers instead keeps nginx off a new one until it is healthy and
-# off an old one before it stops, which Docker's service name cannot do - it
-# resolves to every container of the service, started or stopping.
-# A reload finishes the requests in flight; a restart would drop them.
+# checkout: it changes on every deploy. Naming single containers keeps nginx off
+# a new one until it is healthy and off an old one before it stops, which
+# Docker's service name cannot do - it resolves to every container of the
+# service, started or stopping. A reload finishes the requests in flight; a
+# restart would drop them.
+#
+# app_upstream.applied records the pin only once the reload has been sent, so it
+# always names what the running nginx routes to: pinned_app_names reads it after
+# an interrupted deploy, and infra/nginx/entrypoint.sh restores it when nginx
+# restarts.
 route_app_to() {
   nginx_is_running || return 0
   # shellcheck disable=SC2016  # expanded by the shell inside the nginx container
@@ -62,6 +66,10 @@ route_app_to() {
     mv /etc/nginx/app_upstream.inc.next /etc/nginx/app_upstream.inc
   ' sh "$@" || return 1
   "${COMPOSE[@]}" exec -T nginx nginx -s reload || return 1
+  "${COMPOSE[@]}" exec -T nginx sh -c '
+    cp /etc/nginx/app_upstream.inc /etc/nginx/app_upstream.applied.next
+    mv /etc/nginx/app_upstream.applied.next /etc/nginx/app_upstream.applied
+  ' || return 1
 }
 
 # The workers a reload retires keep the requests they already accepted, a body
@@ -127,11 +135,12 @@ healthy_app_ids() {
   done
 }
 
-# The containers nginx is pinned to by name, one per line; nothing while it
-# routes to the service name. Left behind by a deploy interrupted mid-roll.
+# The containers the running nginx is pinned to by name, one per line; nothing
+# while it routes to the service name. Left behind by a deploy interrupted
+# mid-roll.
 pinned_app_names() {
   nginx_is_running || return 0
-  "${COMPOSE[@]}" exec -T nginx cat /etc/nginx/app_upstream.inc \
+  "${COMPOSE[@]}" exec -T nginx sh -c 'cat /etc/nginx/app_upstream.applied 2>/dev/null' \
     | sed -n 's/^server \([^: ]*\):.*/\1/p' | grep -vx app || true
 }
 
@@ -260,10 +269,10 @@ python3 scripts/ops/check_env.py
 
 # The nginx configuration this checkout ships is tested in a fresh container
 # with the new mounts before anything is rolled: a broken vhost or a missing
-# certificate aborts the deploy with the previous stack still serving. The
-# image's own entrypoint runs first, so app_upstream.inc is rendered from its
-# template the way a real start renders it; the upstream is resolved at run
-# time, so the test needs no app container and runs on a first deploy too.
+# certificate aborts the deploy with the previous stack still serving. It goes
+# through the service's entrypoint, which writes app_upstream.inc the way a real
+# start does; the upstream is resolved at run time, so the test needs no app
+# container and runs on a first deploy too.
 echo "[deploy] testing the nginx configuration"
 "${COMPOSE[@]}" run --rm --no-deps nginx nginx -t
 

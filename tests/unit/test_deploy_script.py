@@ -71,13 +71,13 @@ def test_nginx_is_reloaded_never_restarted() -> None:
         assert "restart nginx" not in path.read_text(encoding="utf-8"), path.name
 
 
-def test_the_nginx_test_renders_the_upstream_template_first() -> None:
-    """With --entrypoint the image's template step is skipped, and nginx -t
-    fails on the missing app_upstream.inc instead of testing the config."""
+def test_the_nginx_test_goes_through_the_service_entrypoint() -> None:
+    """With --entrypoint the step writing app_upstream.inc is skipped, and
+    nginx -t fails on the missing file instead of testing the config."""
     script = _script()
 
     assert '"${COMPOSE[@]}" run --rm --no-deps nginx nginx -t' in script
-    assert "--entrypoint nginx" not in script
+    assert "--entrypoint" not in script
 
 
 def test_the_app_service_can_run_two_containers() -> None:
@@ -110,18 +110,33 @@ def test_nginx_routes_to_the_upstream_file_the_deploy_rewrites() -> None:
     """deploy.sh writes the container names into /etc/nginx/app_upstream.inc;
     an upstream declared anywhere else would ignore them."""
     main_conf = (NGINX_DIR / "main.conf").read_text(encoding="utf-8")
-    template = (NGINX_DIR / "app_upstream.inc.template").read_text(encoding="utf-8")
+    entrypoint = (NGINX_DIR / "entrypoint.sh").read_text(encoding="utf-8")
     nginx = _compose_service("nginx")
 
     assert "include /etc/nginx/app_upstream.inc;" in main_conf
     assert "resolver 127.0.0.11" in main_conf
     assert "/etc/nginx/app_upstream.inc" in _script()
-    assert template.strip() == "server app:${APP_BACKEND_PORT} resolve;"
-    assert nginx["environment"]["NGINX_ENVSUBST_TEMPLATE_DIR"] == "/etc/nginx/conf.d"
-    assert nginx["environment"]["NGINX_ENVSUBST_OUTPUT_DIR"] == "/etc/nginx"
+    assert "upstream=/etc/nginx/app_upstream.inc" in entrypoint
+    assert "server app:%s resolve;" in entrypoint
+    assert nginx["entrypoint"] == ["sh", "/etc/nginx/conf.d/entrypoint.sh"]
+    assert nginx["command"] == ["nginx", "-g", "daemon off;"]
     for name in ("app.conf", "tls.conf.example"):
         conf = (NGINX_DIR / name).read_text(encoding="utf-8")
         assert not re.search(r"^\s*upstream ", conf, re.M), name
+
+
+def test_a_restarted_nginx_keeps_the_pin_it_was_routing_by() -> None:
+    """Back on the service name after a restart mid-roll, nginx would route to
+    a replica still booting or one already retired."""
+    entrypoint = (NGINX_DIR / "entrypoint.sh").read_text(encoding="utf-8")
+    script = _script()
+
+    assert 'cp "$applied" "$upstream"' in entrypoint
+    assert entrypoint.rstrip().endswith('exec /docker-entrypoint.sh "$@"')
+    # The pin is recorded as applied only after the reload that applies it.
+    reload = script.index('"${COMPOSE[@]}" exec -T nginx nginx -s reload')
+    assert reload < script.index("/etc/nginx/app_upstream.applied.next")
+    assert "cat /etc/nginx/app_upstream.applied" in script
 
 
 def test_a_request_that_reached_the_app_is_never_sent_twice() -> None:
