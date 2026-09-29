@@ -400,9 +400,10 @@ jobs:
             -r infra/requirements/dev.txt \
             -r infra/requirements/prod.txt
 
-  # Never skipped by the tree gate: it scans history, and a push that adds a
-  # secret and removes it again can end on a tree that already passed while the
-  # secret stays reachable in its commits.
+  # Never skipped by the tree gate: it scans commits, not the tree - the pushed
+  # range on a push, the pull request's commits on a pull request - and a push
+  # that adds a secret and removes it again can end on a tree that already
+  # passed while the secret stays reachable in its commits.
   gitleaks:
     name: Gitleaks
     runs-on: ubuntu-latest
@@ -423,12 +424,15 @@ jobs:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   # The artifact's name is the whole record: `changes` only asks whether one
-  # with this tree exists. Every check has to have passed or been skipped by a
-  # gate; one failure or cancellation and nothing is recorded.
+  # with this tree exists, and a hit skips every check. So every check has to
+  # have run and passed: a documentation-only change skips them, and recording
+  # its tree would let a later push of that same tree - arriving as code, say
+  # a branch fast-forwarded past it - skip checks that never ran on it. One
+  # failure or cancellation and nothing is recorded either.
   record-pass:
     name: Record passing tree
     needs: [changes, lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.changes.outputs.verified != 'true' }}
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.changes.outputs.verified != 'true' && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
