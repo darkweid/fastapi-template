@@ -136,6 +136,7 @@ escape hatch for roles that may reach another user's object.
 │   │   ├── main.conf                    # Top-level nginx settings
 │   │   ├── error_pages.inc              # JSON bodies for the errors nginx answers itself
 │   │   ├── proxy.inc                    # Shared proxy settings and allowed methods
+│   │   ├── security_headers.inc         # Security headers every server and error page sends
 │   │   └── tls.conf.example             # TLS drop-in replacement for app.conf
 │   ├── postgres/                        # PostgreSQL configuration
 │   │   ├── Dockerfile                   # Dockerfile for PostgreSQL

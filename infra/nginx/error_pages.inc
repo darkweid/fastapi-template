@@ -33,6 +33,7 @@ error_page 504 = @error_gateway_timeout;
 # middleware, which answers every non-error request.
 location = /__nginx_error/bad_request {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
@@ -42,6 +43,7 @@ location = /__nginx_error/bad_request {
 
 location @error_method_not_allowed {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
@@ -52,6 +54,7 @@ location @error_method_not_allowed {
 
 location @error_payload_too_large {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
@@ -61,6 +64,7 @@ location @error_payload_too_large {
 
 location = /__nginx_error/uri_too_long {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
@@ -70,6 +74,7 @@ location = /__nginx_error/uri_too_long {
 
 location @error_misdirected_request {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
@@ -79,6 +84,7 @@ location @error_misdirected_request {
 
 location @error_bad_gateway {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;
@@ -88,6 +94,7 @@ location @error_bad_gateway {
 
 location @error_gateway_timeout {
     default_type application/json;
+    include /etc/nginx/conf.d/security_headers.inc;
     add_header Access-Control-Allow-Origin $http_origin always;
     add_header Access-Control-Allow-Credentials true always;
     add_header Vary Origin always;

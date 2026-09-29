@@ -27,6 +27,7 @@ server {
     server_name _;
     server_tokens off;
 
+    include /etc/nginx/conf.d/security_headers.inc;
     include /etc/nginx/conf.d/error_pages.inc;
 
     location / {
@@ -42,6 +43,7 @@ server {
     server_name _;
     ssl_reject_handshake on;
 
+    include /etc/nginx/conf.d/security_headers.inc;
     include /etc/nginx/conf.d/error_pages.inc;
 }
 
@@ -49,6 +51,7 @@ server {
     listen 80;
     server_name api.example.com;
     server_tokens off;
+    include /etc/nginx/conf.d/security_headers.inc;
 
     # ACME http-01 challenges must stay reachable over plain http.
     location /.well-known/acme-challenge/ {
@@ -76,13 +79,6 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
 
-    # No Strict-Transport-Security here: the application's security middleware
-    # already sends one, and a second header with a different max-age or preload
-    # flag is a contradiction the browser resolves by taking whichever came first.
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
-
+    include /etc/nginx/conf.d/security_headers.inc;
     include /etc/nginx/conf.d/proxy.inc;
 }
