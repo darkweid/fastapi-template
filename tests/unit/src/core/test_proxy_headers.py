@@ -114,6 +114,40 @@ async def test_malformed_hop_keeps_direct_peer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_written_garbage_left_of_the_chain_is_not_read() -> None:
+    """
+    nginx appends the peer to whatever the client sent, so a client could void
+    the whole chain - and be rate-limited as the proxy - by prepending junk.
+    """
+    scope = await call_middleware(
+        client=("10.0.0.5", 40000),
+        headers={"X-Forwarded-For": "garbage, 203.0.113.7"},
+    )
+
+    assert scope["client"] == ("203.0.113.7", 0)
+
+
+@pytest.mark.asyncio
+async def test_unparseable_hop_reached_by_the_walk_keeps_direct_peer() -> None:
+    scope = await call_middleware(
+        client=("10.0.0.5", 40000),
+        headers={"X-Forwarded-For": "203.0.113.7, garbage, 10.0.0.2"},
+    )
+
+    assert scope["client"] == ("10.0.0.5", 40000)
+
+
+@pytest.mark.asyncio
+async def test_unknown_hop_keeps_direct_peer() -> None:
+    scope = await call_middleware(
+        client=("10.0.0.5", 40000),
+        headers={"X-Forwarded-For": "unknown"},
+    )
+
+    assert scope["client"] == ("10.0.0.5", 40000)
+
+
+@pytest.mark.asyncio
 async def test_trusted_peer_without_forwarded_for_keeps_client() -> None:
     scope = await call_middleware(
         client=("10.0.0.5", 40000),

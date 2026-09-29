@@ -162,25 +162,20 @@ class TrustedProxyHeadersMiddleware:
 
         The rightmost entry is the one our own proxy appended, so it is the only
         end of the chain a client cannot write. Anything left of the first
-        untrusted hop is attacker-controlled and must never be read. Returns
-        None when the chain yields no usable address, which leaves the direct
-        peer in place — a shared bucket is a safe failure, a forged one is not.
+        untrusted hop is attacker-controlled and is never parsed, so garbage the
+        client prepends cannot void the chain. Returns None when a hop the walk
+        does reach is unparseable or the chain is empty, which leaves the direct
+        peer in place - a shared bucket is a safe failure, a forged one is not.
         """
-        hops: list[str] = []
-        for raw_hop in forwarded_for.split(","):
-            if not raw_hop.strip():
-                continue
+        raw_hops = [hop for hop in forwarded_for.split(",") if hop.strip()]
+        leftmost: str | None = None
+        for raw_hop in reversed(raw_hops):
             hop = parse_forwarded_hop(raw_hop)
             if hop is None:
                 return None
-            hops.append(hop)
-
-        if not hops:
-            return None
-
-        for hop in reversed(hops):
             if not self._is_trusted(hop):
                 return hop
+            leftmost = hop
 
         # Every hop is trusted: the client itself sits inside the trusted range.
-        return hops[0]
+        return leftmost
