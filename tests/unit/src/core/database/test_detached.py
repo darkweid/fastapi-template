@@ -47,3 +47,15 @@ async def test_an_instance_never_attached_is_not_expunged() -> None:
         read.detach(build_user())
 
     session.expunge.assert_not_called()
+
+
+async def test_ends_the_transaction_when_detaching_fails() -> None:
+    """A failure while walking the detached graph must not also leave the
+    connection held idle in transaction until the error response."""
+    session = FakeAsyncSession()
+
+    with pytest.raises(AttributeError):
+        async with detached_read(session) as read:
+            read.detach(object())
+
+    session.rollback.assert_awaited_once()

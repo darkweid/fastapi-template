@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
+    attribute_keyed_dict,
     mapped_column,
     relationship,
     selectinload,
@@ -42,6 +43,9 @@ class Shelf(GraphBase):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50))
     books: Mapped[list["Book"]] = relationship(lazy="raise", order_by="Book.id")
+    books_by_title: Mapped[dict[str, "Book"]] = relationship(
+        collection_class=attribute_keyed_dict("title"), lazy="raise", viewonly=True
+    )
 
 
 class Book(GraphBase):
@@ -78,7 +82,10 @@ async def _load_shelf(session: AsyncSession) -> Shelf:
         await session.execute(
             select(Shelf)
             .where(Shelf.id == 1)
-            .options(selectinload(Shelf.books).selectinload(Book.author))
+            .options(
+                selectinload(Shelf.books).selectinload(Book.author),
+                selectinload(Shelf.books_by_title).selectinload(Book.author),
+            )
         )
     ).scalar_one()
 
@@ -103,6 +110,9 @@ async def test_detached_graph_stays_readable_after_a_top_level_rollback(
             ("First", "Author"),
             ("Second", "Author"),
         ]
+        assert {
+            title: book.author.name for title, book in shelf.books_by_title.items()
+        } == {"First": "Author", "Second": "Author"}
 
 
 async def test_leaves_a_transaction_it_did_not_open(engine: AsyncEngine) -> None:

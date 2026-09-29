@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import instance_state
+from sqlalchemy.orm.collections import collection_adapter
 
 
 class DetachedRead:
@@ -37,7 +38,9 @@ def _loaded_graph(roots: Iterable[object]) -> Iterator[object]:
             if value is None:
                 continue
             if relationship.uselist:
-                stack.extend(value)
+                # Through the adapter, since iterating a dict-shaped collection
+                # (`attribute_keyed_dict`) yields its keys, not its members.
+                stack.extend(collection_adapter(value) or ())
             else:
                 stack.append(value)
 
@@ -67,8 +70,10 @@ async def detached_read(session: AsyncSession) -> AsyncIterator[DetachedRead]:
     try:
         yield read
     finally:
-        for instance in _loaded_graph(read.instances):
-            if instance_state(instance).persistent:
-                session.expunge(instance)
-        if owns_transaction:
-            await session.rollback()
+        try:
+            for instance in _loaded_graph(read.instances):
+                if instance_state(instance).persistent:
+                    session.expunge(instance)
+        finally:
+            if owns_transaction:
+                await session.rollback()
