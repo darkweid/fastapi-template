@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
@@ -50,7 +50,7 @@ jobs:
 
       - name: Create or update pull request
         id: create_pr
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.PRECOMMIT_BOT_TOKEN || github.token }}
           add-paths: .pre-commit-config.yaml
@@ -68,7 +68,7 @@ jobs:
 
       - name: Close superseded pull requests
         if: steps.create_pr.outputs.pull-request-operation == 'created'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.PRECOMMIT_BOT_TOKEN || github.token }}
           script: |

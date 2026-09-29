@@ -42,8 +42,8 @@ run: ## Build and start the prod-like stack
 .PHONY: run-dev
 run-dev: ## Build and start the dev stack with autoreload
 	$(DOCKER_COMPOSE_DEV) up --build -d
-# nginx resolves the app upstream once at startup, so a rebuilt app container leaves it serving 502 until nginx restarts
-	$(DOCKER_COMPOSE_DEV) restart nginx
+# nginx resolves the app upstream once per configuration load, so a rebuilt app container leaves it serving 502 until nginx reloads
+	$(DOCKER_COMPOSE_DEV) exec -T nginx nginx -s reload
 
 .PHONY: down
 down: ## Stop and remove the containers
@@ -111,7 +111,7 @@ psql: ## Open psql inside the postgres container
 
 .PHONY: redis-cli
 redis-cli: ## Open redis-cli inside the redis container
-	$(DOCKER_COMPOSE_EXEC) redis sh -c 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning'
+	$(DOCKER_COMPOSE_EXEC) redis redis-cli
 
 .PHONY: create-admin
 create-admin: ## Bootstrap the first admin (env: ADMIN_EMAIL, ADMIN_PASSWORD)

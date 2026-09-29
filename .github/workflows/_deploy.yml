@@ -21,11 +21,13 @@ on:
         default: ""
 
 # The job reaches the box over SSH and authenticates to GHCR with its own PAT,
-# both from secrets - the workflow token is used by nothing but actions/checkout.
-# Without this block the job would inherit whatever the repository grants by
-# default, which on a job holding deploy credentials is more than it needs.
+# both from secrets - the workflow token only checks the code out and reads the
+# triggering CI run's jobs. Without this block the job would inherit whatever
+# the repository grants by default, which on a job holding deploy credentials
+# is more than it needs.
 permissions:
   contents: read
+  actions: read
 
 jobs:
   deploy:
@@ -62,7 +64,7 @@ jobs:
       # history to resolve an older, explicitly pinned commit against, should the
       # dispatch ask for one.
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -103,25 +105,32 @@ jobs:
           fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
-      # CI builds no image for a commit made up entirely of documentation, so
-      # there is no sha- tag to pull: deploying anyway would fail on the box.
-      #
-      # `sha^` is the previous commit, which is the range CI classified only
-      # because main takes squash merges - one commit per merge. A direct push
-      # carrying several commits breaks that: CI would see the whole push, build
-      # an image, and CD would judge the last commit alone. A push whose last
-      # commit is documentation and whose earlier ones are code would therefore
-      # skip a deploy that was due, silently, until the next code push. Keep the
-      # squash-only rule, or replace this step with an image-existence check.
+      # CI skips the image build for a push made up entirely of documentation,
+      # so there is not always a sha- tag to pull. The triggering run itself
+      # says whether it built one: CI classifies the whole push, and a commit
+      # range judged again here could disagree - a push whose last commit is
+      # documentation and whose earlier ones are code would skip a deploy that
+      # was due. The attempt, not the run: a re-run of a failed build is what
+      # triggered this job.
       #
       # A manual dispatch is explicit intent and is never gated.
-      - name: Classify the commit being deployed
-        id: docs
+      - name: Check that CI built the image
+        id: built
         if: github.event_name != 'workflow_dispatch'
-        uses: ./.github/actions/docs-only-change
-        with:
-          base: ${{ steps.ref.outputs.sha }}^
-          head: ${{ steps.ref.outputs.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          conclusion="$(gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | endswith("Build & push image")) | .conclusion')"
+          if [ "$conclusion" = "success" ]; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CI run ${RUN_ID} built no image (build job: ${conclusion:-absent}); nothing to deploy."
+            echo "image=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Compute image and tag
         id: meta
@@ -135,7 +144,7 @@ jobs:
       # keyscanning inside the job would trust whatever answers, which is the
       # same hole as StrictHostKeyChecking=no.
       - name: Set up SSH
-        if: steps.docs.outputs.docs_only != 'true'
+        if: steps.built.outputs.image != 'false'
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
@@ -164,7 +173,7 @@ jobs:
 
       - name: Deploy over SSH
         id: deploy
-        if: steps.docs.outputs.docs_only != 'true'
+        if: steps.built.outputs.image != 'false'
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -199,7 +208,7 @@ jobs:
         # `skipped`, which the body below would render as FAILED for a deploy
         # that never ran. `always()` still has to stay, so a genuine failure in
         # an earlier step is announced.
-        if: always() && steps.docs.outputs.docs_only != 'true'
+        if: always() && steps.built.outputs.image != 'false'
         run: |
           # `if: always()` above is what keeps this step alive after a failed
           # deploy - the case the alert exists for. The step's own shell is still

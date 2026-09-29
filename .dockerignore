@@ -3,15 +3,17 @@
 **/*.pyo
 **/*.pyd
 .Python
-.env
+# Every env file, whatever its suffix: the image runs `COPY . .`, so a local
+# .env.prod or .env.backup would otherwise ship its secrets in a layer. The app
+# reads its settings from the container environment, never from a file here.
+.env*
 .venv
 **/*.log
 logs/
 .git
 
 # Runtime code only: tests run on the host, so keep dev tooling, tests, docs,
-# caches and the test env file out of the image.
-.env.test
+# and caches out of the image.
 .idea/
 .vscode/
 .claude/

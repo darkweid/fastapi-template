@@ -304,15 +304,13 @@ class AppConfig(BaseSettings):
     CORS_EXPOSE_HEADERS: Annotated[list[str], NoDecode] = Field(["*"])
 
     TRUST_PROXY_HEADERS: bool
+    # Loopback plus the address range compose hands out on app-network
+    # (infra/docker-compose.yml), which nginx always sits in. The range leaves
+    # out the network's gateway on purpose: Docker forwards every published-port
+    # connection it proxies, each IPv6 client included, from the gateway, so a
+    # trusted gateway lets any such client forge X-Forwarded-For.
     TRUST_PROXY_HOSTS: Annotated[list[str], NoDecode] = Field(
-        [
-            "127.0.0.1",
-            "::1",
-            "10.0.0.0/8",
-            "172.16.0.0/12",
-            "192.168.0.0/16",
-            "fc00::/7",
-        ]
+        ["127.0.0.1", "::1", "172.30.0.128/25"]
     )
 
     PROJECT_NAME: str

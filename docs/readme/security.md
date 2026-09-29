@@ -253,16 +253,17 @@ public port via `DOCKER-USER`/`ufw-docker` closes that gap.
 
 ## Nginx Hardening
 
-`infra/nginx/app.conf`, `infra/nginx/main.conf`, `infra/nginx/proxy.inc`, `infra/nginx/error_pages.inc`
+`infra/nginx/app.conf`, `infra/nginx/main.conf`, `infra/nginx/proxy.inc`, `infra/nginx/error_pages.inc`, `infra/nginx/security_headers.inc`
 
 - `server_tokens off` — no version disclosure, set once for the whole http context.
 - Unknown hosts are dropped: a `default_server` answers every Host that is not a configured `server_name` with 444 (no response at all), and under TLS refuses the handshake for an unknown SNI name. A forged Host never reaches the app, and nothing nginx builds — the http-to-https redirect uses `$server_name` — reflects one. The app itself never redirects to its slash-twin path (`redirect_slashes=False`), the one place it used to build a URL from the Host header.
 - Only GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS reach the app; TRACE and every other method answer a JSON 405 from nginx.
 - The errors nginx answers itself (400, 405, 413, 414, 421, 502, 504) carry the same JSON body as the app's, never nginx's HTML page.
+- `/ready/` and `/health/` answer only loopback and private networks, the `app-network` gateway excepted (Docker forwards published-port connections it proxies from there, every IPv6 client included); anyone else gets the app's JSON 404. `/live/` stays public.
 - `client_max_body_size 20m` — prevents oversized request abuse; kept in sync with `S3_MAX_UPLOAD_SIZE_BYTES`.
 - Proper proxy headers (`X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`).
 - WebSocket upgrade support with secure defaults.
-- Security headers duplicated from application layer.
+- Security headers duplicated from application layer, in `security_headers.inc`, which every server and every error location includes. nginx drops the enclosing level's `add_header` directives in any location that declares its own, and the JSON error pages add CORS headers, so a server-level copy alone never reached them.
 - `proxy.inc` holds the proxy body shared by the plain-http server and the TLS
   server in `tls.conf.example`, so the two cannot drift apart.
 - `Strict-Transport-Security` is sent by the application only, never by Nginx. Two
