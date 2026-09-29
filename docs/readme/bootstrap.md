@@ -335,9 +335,11 @@ On the target box:
 5. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
    the exact steps, and swapping the config file is only the first of them: the
    server block reads `/etc/nginx/certs/fullchain.pem`, and the `nginx` service
-   currently mounts configuration files only. Put the certificate and key under
-   `infra/nginx/certs/`, mount `tls.conf.example` **over** the `app.conf` mount,
-   and add the mounts those paths need:
+   currently mounts the configuration directory only. Put the certificate and
+   key under `infra/nginx/certs/`, replace the content of `app.conf` with
+   `tls.conf.example` (the whole `infra/nginx` directory is nginx's `conf.d`, so
+   a second server file beside `app.conf` would clash with it), and add the
+   mounts those paths need:
 
    ```yaml
    - ./nginx/certs:/etc/nginx/certs:ro

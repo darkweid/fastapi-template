@@ -1,11 +1,12 @@
 # Drop-in replacement for app.conf once the host has a certificate.
 #
 # 1. Put the certificate and key under infra/nginx/certs/ (git-ignored).
-# 2. In infra/docker-compose.yml, mount this file OVER the app.conf mount - the
-#    same /etc/nginx/conf.d/default.conf target app.conf uses, otherwise the
-#    plain-http app.conf stays active alongside it - and add the certs plus the
-#    ACME webroot (a volume shared with certbot so it can write challenges):
-#      - ./nginx/tls.conf.example:/etc/nginx/conf.d/default.conf:ro
+# 2. Replace the content of app.conf with this file and commit it: the whole
+#    infra/nginx directory is mounted as /etc/nginx/conf.d and every *.conf in
+#    it is loaded, so a second server file beside app.conf would clash on the
+#    default servers. In infra/docker-compose.yml, add the certs and the ACME
+#    webroot (a volume shared with certbot so it can write challenges) to the
+#    nginx volumes:
 #      - ./nginx/certs:/etc/nginx/certs:ro
 #      - certbot-webroot:/var/www/certbot:ro
 # 3. Replace api.example.com below with the real hostname.

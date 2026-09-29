@@ -117,10 +117,7 @@ def test_nginx_routes_to_the_upstream_file_the_deploy_rewrites() -> None:
     assert "resolver 127.0.0.11" in main_conf
     assert "/etc/nginx/app_upstream.inc" in _script()
     assert template.strip() == "server app:${APP_BACKEND_PORT} resolve;"
-    assert (
-        "./nginx/app_upstream.inc.template:"
-        "/etc/nginx/templates/app_upstream.inc.template:ro"
-    ) in nginx["volumes"]
+    assert nginx["environment"]["NGINX_ENVSUBST_TEMPLATE_DIR"] == "/etc/nginx/conf.d"
     assert nginx["environment"]["NGINX_ENVSUBST_OUTPUT_DIR"] == "/etc/nginx"
     for name in ("app.conf", "tls.conf.example"):
         conf = (NGINX_DIR / name).read_text(encoding="utf-8")
@@ -133,3 +130,13 @@ def test_a_request_that_reached_the_app_is_never_sent_twice() -> None:
     assert match is not None
 
     assert "non_idempotent" not in match.group(1)
+
+
+def test_nginx_mounts_its_configuration_as_a_directory() -> None:
+    """`git checkout` replaces a changed file with a new inode and a single-file
+    bind mount keeps the old one, so the deploy's reload served the previous
+    configuration while the nginx -t pre-check passed the new one."""
+    volumes = _compose_service("nginx")["volumes"]
+
+    assert "./nginx:/etc/nginx/conf.d:ro" in volumes
+    assert not [volume for volume in volumes if volume.startswith("./nginx/")]
