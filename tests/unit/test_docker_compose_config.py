@@ -53,3 +53,14 @@ def test_env_example_trusts_the_same_proxy_hosts_as_the_default() -> None:
         json.loads(example["TRUST_PROXY_HOSTS"])
         == AppConfig.model_fields["TRUST_PROXY_HOSTS"].default
     )
+
+
+def test_redis_gets_its_own_password_and_no_other_secret() -> None:
+    """The app's env_file carries every secret of the stack - JWT keys, SMTP,
+    S3 - and Redis needs one of them. A process holding the rest is one more
+    place for them to leak from."""
+    redis = _compose()["services"]["redis"]
+
+    assert "env_file" not in redis
+    assert redis["environment"] == {"REDISCLI_AUTH": "${REDIS_PASSWORD}"}
+    assert " -a " not in " ".join(redis["healthcheck"]["test"])

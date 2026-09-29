@@ -111,7 +111,7 @@ psql: ## Open psql inside the postgres container
 
 .PHONY: redis-cli
 redis-cli: ## Open redis-cli inside the redis container
-	$(DOCKER_COMPOSE_EXEC) redis sh -c 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning'
+	$(DOCKER_COMPOSE_EXEC) redis redis-cli
 
 .PHONY: create-admin
 create-admin: ## Bootstrap the first admin (env: ADMIN_EMAIL, ADMIN_PASSWORD)

@@ -173,11 +173,15 @@ services:
     # Loopback only, host port decoupled from REDIS_PORT, as for postgres above.
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
-    env_file: ../.env
+    # Not the app's env_file: that would hand Redis every secret of the stack.
+    # redis-cli authenticates from REDISCLI_AUTH on its own, for the healthcheck
+    # and `make redis-cli` alike, without the password in its argv.
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     healthcheck:
       # Plain `redis-cli ping` exits 0 even on NOAUTH under requirepass, so a
-      # broken instance reads as healthy; authenticate and assert the PONG.
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      # broken instance reads as healthy; assert the PONG.
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
