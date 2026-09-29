@@ -25,11 +25,14 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from src.core.database.detached import detached_read
 from src.core.database.session import get_session, get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.redis.dependencies import get_redis_client
 from src.core.utils.security import password_hasher
 from src.main.config import get_settings
+from src.note.models import Note
+from src.note.repositories import NoteRepository
 from src.user.auth.dependencies import get_current_user
 from src.user.enums import UserRole
 from src.user.models import User
@@ -52,6 +55,18 @@ class SlowWork:
 router = APIRouter()
 
 
+async def get_own_note(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Note | None:
+    """A dependency that reads after authentication, the way a resolver of the
+    object a path names does."""
+    async with detached_read(session) as read:
+        note = await NoteRepository().get_single(session, owner_id=user.id)
+        read.detach(note)
+    return note
+
+
 @router.get("/slow")
 async def wait_outside_any_unit_of_work(
     request: Request,
@@ -61,6 +76,17 @@ async def wait_outside_any_unit_of_work(
     work.entered.set()
     await work.release.wait()
     return {"email": user.email}
+
+
+@router.get("/slow-note")
+async def wait_after_a_dependency_read(
+    request: Request,
+    note: Annotated[Note | None, Depends(get_own_note)],
+) -> dict[str, str | None]:
+    work: SlowWork = request.app.state.slow_work
+    work.entered.set()
+    await work.release.wait()
+    return {"title": note.title if note else None}
 
 
 @router.get("/after-rollback")
@@ -129,6 +155,17 @@ async def stored_user(integration_engine: AsyncEngine) -> AsyncGenerator[User]:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
+async def stored_note(integration_engine: AsyncEngine, stored_user: User) -> Note:
+    """Removed with its owner by the foreign key's cascade."""
+    async with AsyncSession(integration_engine, expire_on_commit=False) as session:
+        return await NoteRepository().create(
+            session,
+            {"title": "Held", "content": "", "owner_id": stored_user.id},
+            commit=True,
+        )
+
+
+@pytest_asyncio.fixture(loop_scope="session")
 async def client(
     request_engine: AsyncEngine,
 ) -> AsyncGenerator[tuple[httpx2.AsyncClient, InMemoryRedis, SlowWork]]:
@@ -158,21 +195,28 @@ async def _connection_states(engine: AsyncEngine, application_name: str) -> list
         return [row.state for row in rows]
 
 
-async def test_slow_handler_after_authentication_holds_no_connection(
+@dataclass(frozen=True)
+class HeldWhileWaiting:
+    """What the request held while its handler waited, and its answer."""
+
+    states: list[str]
+    checked_out: int
+    response: httpx2.Response
+
+
+async def _wait_in_handler(
     client: tuple[httpx2.AsyncClient, InMemoryRedis, SlowWork],
-    stored_user: User,
+    path: str,
+    user: User,
     request_engine: AsyncEngine,
     integration_engine: AsyncEngine,
     application_name: str,
-) -> None:
-    """The auth dependency's SELECT used to autobegin a transaction on the
-    request session that lived until the response: the whole wait below ran
-    with a checked-out connection sitting idle in transaction."""
+) -> HeldWhileWaiting:
     http_client, redis, work = client
-    token = await build_access_token({"sub": str(stored_user.id)}, redis)
+    token = await build_access_token({"sub": str(user.id)}, redis)
 
     request = asyncio.create_task(
-        http_client.get("/slow", headers={"Authorization": token})
+        http_client.get(path, headers={"Authorization": token})
     )
     entered = asyncio.create_task(work.entered.wait())
     try:
@@ -191,11 +235,58 @@ async def test_slow_handler_after_authentication_holds_no_connection(
         entered.cancel()
         work.release.set()
         response = await asyncio.wait_for(request, WAIT_SECONDS)
+    return HeldWhileWaiting(states=states, checked_out=checked_out, response=response)
 
-    assert "idle in transaction" not in states
-    assert checked_out == 0
-    assert response.status_code == 200
-    assert response.json() == {"email": stored_user.email}
+
+async def test_slow_handler_after_authentication_holds_no_connection(
+    client: tuple[httpx2.AsyncClient, InMemoryRedis, SlowWork],
+    stored_user: User,
+    request_engine: AsyncEngine,
+    integration_engine: AsyncEngine,
+    application_name: str,
+) -> None:
+    """The auth dependency's SELECT used to autobegin a transaction on the
+    request session that lived until the response: the whole wait below ran
+    with a checked-out connection sitting idle in transaction."""
+    held = await _wait_in_handler(
+        client,
+        "/slow",
+        stored_user,
+        request_engine,
+        integration_engine,
+        application_name,
+    )
+
+    assert "idle in transaction" not in held.states
+    assert held.checked_out == 0
+    assert held.response.status_code == 200
+    assert held.response.json() == {"email": stored_user.email}
+
+
+async def test_slow_handler_after_a_dependency_read_holds_no_connection(
+    client: tuple[httpx2.AsyncClient, InMemoryRedis, SlowWork],
+    stored_user: User,
+    stored_note: Note,
+    request_engine: AsyncEngine,
+    integration_engine: AsyncEngine,
+    application_name: str,
+) -> None:
+    """A dependency reading after authentication begins a transaction of its
+    own on the idle request session; without `detached_read` ending it, the
+    connection is held idle in transaction for the handler's whole wait."""
+    held = await _wait_in_handler(
+        client,
+        "/slow-note",
+        stored_user,
+        request_engine,
+        integration_engine,
+        application_name,
+    )
+
+    assert "idle in transaction" not in held.states
+    assert held.checked_out == 0
+    assert held.response.status_code == 200
+    assert held.response.json() == {"title": stored_note.title}
 
 
 async def test_principal_stays_readable_after_a_unit_of_work_rolls_back(
