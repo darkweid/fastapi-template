@@ -60,8 +60,8 @@ route_app_to() {
       printf "server %s:%s resolve;\n" "$host" "$APP_BACKEND_PORT"
     done > /etc/nginx/app_upstream.inc.next
     mv /etc/nginx/app_upstream.inc.next /etc/nginx/app_upstream.inc
-  ' sh "$@"
-  "${COMPOSE[@]}" exec -T nginx nginx -s reload
+  ' sh "$@" || return 1
+  "${COMPOSE[@]}" exec -T nginx nginx -s reload || return 1
 }
 
 # The workers a reload retires keep the requests they already accepted, a body
@@ -115,34 +115,67 @@ container_names() {
   done
 }
 
+# The app containers that are running and passing their own healthcheck - the
+# only ones nginx may be pinned to. A deploy interrupted mid-roll can leave a
+# second container behind that is still starting, unhealthy or crash-looping.
+healthy_app_ids() {
+  local id
+  for id in $("${COMPOSE[@]}" ps -a -q app); do
+    if [ "$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id")" = "running healthy" ]; then
+      echo "$id"
+    fi
+  done
+}
+
 # Rolls the app to the image given, with no request refused: pin nginx to the
-# serving containers, start one more beside them, wait for it to turn healthy,
-# move nginx onto it, let the retired nginx workers finish, then stop the old
-# containers - gunicorn drains what they still serve within its graceful
-# timeout, which the compose stop_grace_period covers. A new container that
-# never turns healthy is removed without having served anything, and nginx goes
-# back to the service name. Returns non-zero in that case.
+# healthy serving containers, start one more beside them, wait for it to turn
+# healthy, move nginx onto it, let the retired nginx workers finish, then stop
+# the old containers - gunicorn drains what they still serve within its graceful
+# timeout, which the compose stop_grace_period covers - and point nginx back at
+# the service name. A new container that never turns healthy is removed without
+# having served anything.
+#
+# Callers test it in an `if`, which switches errexit off for everything inside,
+# so every step that must not be skipped checks its own status.
 roll_app() {
   local image="$1"
-  local old_ids new_id new_name id count=1
+  local all_ids old_ids new_id new_name id count=1
 
   # A stopped container of the service would be started again by the scale-up
   # below and counted as one of its replicas. `ps -a` from here on: a container
   # the restart policy is bringing back up is not listed as running.
-  "${COMPOSE[@]}" rm -f app >/dev/null
+  "${COMPOSE[@]}" rm -f app >/dev/null || return 1
 
-  old_ids="$("${COMPOSE[@]}" ps -a -q app)"
+  all_ids="$("${COMPOSE[@]}" ps -a -q app)" || return 1
+  old_ids="$(healthy_app_ids)" || return 1
+  if [ -n "$old_ids" ]; then
+    for id in $all_ids; do
+      if ! printf '%s\n' "$old_ids" | grep -qxF "$id"; then
+        echo "[deploy] removing $(container_names "$id"), left behind unhealthy by an earlier deploy"
+        docker rm -f "$id" >/dev/null || return 1
+      fi
+    done
+    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
+    route_app_to $(container_names $old_ids) || return 1
+  else
+    # Nothing is verified to serve, so there is nothing to pin nginx to; the
+    # containers still count as old ones and stop once the new one is healthy.
+    old_ids="$all_ids"
+    if [ -n "$old_ids" ]; then
+      echo "[deploy] no app container is healthy; the new one takes over once it is"
+    fi
+  fi
   for id in $old_ids; do
     count=$((count + 1))
   done
-  if [ -n "$old_ids" ]; then
-    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
-    route_app_to $(container_names $old_ids)
-  fi
 
   # --no-recreate leaves the serving containers alone and adds one more from the
   # current configuration; --no-deps keeps app-builder out of the CD path.
-  APP_IMAGE="$image" "${COMPOSE[@]}" up -d --no-deps --no-recreate --scale "app=${count}" app
+  if ! APP_IMAGE="$image" "${COMPOSE[@]}" up -d --no-deps --no-recreate --scale "app=${count}" app; then
+    echo "[deploy] starting the new app container failed"
+    discard_new_app "$old_ids"
+    return 1
+  fi
 
   new_id=""
   for id in $("${COMPOSE[@]}" ps -a -q app); do
@@ -150,7 +183,7 @@ roll_app() {
   done
   if [ -z "$new_id" ]; then
     echo "[deploy] no new app container was started"
-    route_app_to app
+    route_app_to app || true
     return 1
   fi
   new_name="$(container_names "$new_id")"
@@ -159,21 +192,34 @@ roll_app() {
   if ! wait_until_healthy "$new_id" "$new_name"; then
     echo "[deploy] last log lines of ${new_name}:"
     docker logs --tail 50 "$new_id" 2>&1 || true
-    docker rm -f "$new_id" >/dev/null
-    route_app_to app
+    discard_new_app "$old_ids"
     return 1
   fi
 
-  route_app_to "$new_name"
+  if ! route_app_to "$new_name"; then
+    echo "[deploy] nginx could not be moved onto ${new_name}"
+    discard_new_app "$old_ids"
+    return 1
+  fi
   if [ -n "$old_ids" ]; then
     wait_for_retired_nginx_workers
     echo "[deploy] stopping the previous app container"
     # shellcheck disable=SC2086  # container ids, one word each
-    docker stop $old_ids >/dev/null
+    docker stop $old_ids >/dev/null || return 1
     # shellcheck disable=SC2086
-    docker rm $old_ids >/dev/null
+    docker rm $old_ids >/dev/null || return 1
   fi
-  route_app_to app
+  route_app_to app || return 1
+}
+
+# Removes every app container the roll started, the ones given excepted, and
+# pins nginx back to those. Best effort: it runs on a path that already failed.
+discard_new_app() {
+  local keep="$1" id
+  for id in $("${COMPOSE[@]}" ps -a -q app); do
+    printf '%s\n' "$keep" | grep -qxF "$id" || docker rm -f "$id" >/dev/null || true
+  done
+  route_app_to app || true
 }
 
 test -f .env || {
@@ -197,7 +243,7 @@ echo "[deploy] testing the nginx configuration"
 # then name the new image. Empty on the first deploy, when there is nothing to
 # go back to.
 PREVIOUS_IMAGE=""
-RUNNING_APP="$("${COMPOSE[@]}" ps -q app | head -n 1)"
+RUNNING_APP="$(healthy_app_ids | head -n 1)"
 if [ -n "$RUNNING_APP" ]; then
   PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' "$RUNNING_APP")"
 fi
@@ -224,7 +270,7 @@ echo "[deploy] applying migrations before any new code serves traffic"
 
 echo "[deploy] rolling the app"
 if ! roll_app "$APP_IMAGE"; then
-  echo "[deploy] the new app never turned healthy; the previous one keeps serving and the deploy failed"
+  echo "[deploy] rolling the app failed; the previous one keeps serving and the deploy failed"
   exit 1
 fi
 

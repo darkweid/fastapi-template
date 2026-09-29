@@ -140,3 +140,25 @@ def test_nginx_mounts_its_configuration_as_a_directory() -> None:
 
     assert "./nginx:/etc/nginx/conf.d:ro" in volumes
     assert not [volume for volume in volumes if volume.startswith("./nginx/")]
+
+
+def test_every_step_of_the_roll_checks_its_own_status() -> None:
+    """roll_app runs as an `if` condition, where errexit is off: an unchecked
+    failed reload would let it stop the old container nginx still routes to."""
+    script = _script()
+    body = script[
+        script.index("roll_app() {") : script.index(
+            "\n}\n", script.index("roll_app() {")
+        )
+    ]
+    critical = [
+        line.strip()
+        for line in body.splitlines()
+        if re.match(
+            r"\s*(route_app_to|docker stop|docker rm|\"\$\{COMPOSE\[@\]\}\")", line
+        )
+    ]
+
+    assert critical
+    for line in critical:
+        assert line.endswith(("|| return 1", "|| true")), line
