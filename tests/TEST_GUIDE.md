@@ -129,7 +129,8 @@ Current application test layout:
 boundary - behaviour that belongs to PostgreSQL rather than to the Python around it, and
 that a fake can therefore only pretend to have:
 
-- the Alembic chain applying to an empty database, and models not drifting from migrations;
+- the Alembic chain applying to an empty database and reversing to base, and models not
+  drifting from migrations;
 - transactional semantics: what a commit makes durable, what a rollback discards, and the
   UoW commit guard on a session where a stray COMMIT would be irreversible;
 - advisory locks, where a second connection contending for the key is the whole point;
@@ -151,6 +152,9 @@ Fixtures in `tests/integration/conftest.py`:
 - `migrated_database` - `alembic upgrade head`, once per session
 - `integration_engine` - session-scoped `AsyncEngine` against the test database
 - `db_session` - per-test session, rolled back afterwards
+- `scratch_database` - a database of the test's own, cloned from the freshly migrated
+  one (`database_template`) and dropped afterwards; its `engine` and `alembic_env`
+  replace the shared ones
 
 Rules specific to this suite:
 
@@ -159,6 +163,14 @@ Rules specific to this suite:
   `integration` marker itself is applied by location, so it cannot be forgotten.
 - Prefer `db_session` - its rollback is what keeps tests from seeing each other's rows. A
   test that has to commit deletes what it committed.
+- A test that cannot run on the shared database - a migration run backwards over the
+  tables other tests write, a data migration asserting what an untouched database ends up
+  with - runs on `scratch_database`: it takes the fixture directly
+  (`test_the_chain_reverses_and_reapplies` in
+  `tests/integration/src/core/database/test_migrations.py`), or its module overrides
+  `integration_engine` (and `alembic_env`, when it runs Alembic) with the fixture's
+  fields, and every fixture built on the engine follows. It is not a way around cleaning
+  up: a test that only commits cleans up.
 - Scope queries with a per-test unique marker (`uuid4().hex[:8]`); the database is shared
   by the whole session, and `users` carries partial unique indexes on email and username.
 
