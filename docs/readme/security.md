@@ -23,7 +23,7 @@ Every refresh request atomically (via Lua script):
 1. Checks if the presented JTI was already consumed - within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` of the rotation that consumed it the replay is treated as a benign double-submit (`GRACE`, plain 401, no wipe); later it is `REUSED`.
 2. Validates the JTI matches the stored active token (`INVALID`).
 3. Marks the old JTI as used, stamped with the rotation instant, with a TTL equal to the refresh token lifetime.
-4. Deletes the active refresh key.
+4. Stores the new refresh and access JTIs in place of the old pair and refreshes the session's entry in the per-subject index, so a concurrent wipe of every session (password change, logout everywhere) cannot miss the new pair.
 
 If a consumed token is presented again past the grace window, **all user sessions are invalidated immediately**. This detects stolen refresh tokens: an attacker replaying a token that the legitimate client already rotated triggers a full session wipe.
 

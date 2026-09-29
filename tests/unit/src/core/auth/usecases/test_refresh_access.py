@@ -4,9 +4,10 @@ from unittest.mock import Mock
 import jwt
 import pytest
 
+from src.core.auth.credentials import verify_jti
 from src.core.auth.session_issuance import issue_session_pair
 from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
-from src.core.errors.exceptions import AccessForbiddenException
+from src.core.errors.exceptions import AccessForbiddenException, UnauthorizedException
 from src.main.config import config
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.realm import build_test_realm
@@ -42,7 +43,6 @@ async def test_execute_rotates_the_refresh_token_and_keeps_the_session_id(
     use_case = RefreshAccessUseCase(
         fake_redis,
         realm=REALM,
-        claims_builder=lambda p: {"sub": p.id},
         admission=Mock(),
     )
 
@@ -60,29 +60,31 @@ async def test_execute_rotates_the_refresh_token_and_keeps_the_session_id(
 
 
 @pytest.mark.asyncio
-async def test_execute_builds_access_claims_from_the_principal(
+async def test_execute_hands_out_a_live_pair_and_retires_the_old_access_token(
     fake_redis: InMemoryRedis,
 ) -> None:
-    # A different subject id than the one the refresh token names proves the
-    # access token's "sub" really comes from claims_builder(principal), not
-    # from the old payload it was handed alongside.
-    old_payload = await _build_old_payload(fake_redis, session_id="s2")
-    principal = FakePrincipal(id="99")
-    claims_builder = Mock(return_value={"sub": "99"})
-    use_case = RefreshAccessUseCase(
-        fake_redis,
+    """The use case no longer registers the access token itself, so the pair the
+    rotation script stored must be the one that verifies."""
+    old_tokens = await issue_session_pair(
         realm=REALM,
-        claims_builder=claims_builder,
-        admission=Mock(),
+        subject_id=SUBJECT_ID,
+        claims={},
+        redis_client=fake_redis,
+        session_id="s2",
     )
-
-    result = await use_case.execute(principal, old_payload)
-
-    claims_builder.assert_called_once_with(principal)
-    new_access_payload = jwt.decode(
-        result.access_token, REALM.secret, algorithms=[config.jwt.ALGORITHM]
+    old_payload = jwt.decode(
+        old_tokens.refresh_token, REALM.secret, algorithms=[config.jwt.ALGORITHM]
     )
-    assert new_access_payload["sub"] == "99"
+    use_case = RefreshAccessUseCase(fake_redis, realm=REALM, admission=Mock())
+
+    result = await use_case.execute(FakePrincipal(id=SUBJECT_ID), old_payload)
+
+    access_payload = await verify_jti(result.access_token, fake_redis, realm=REALM)
+    refresh_payload = await verify_jti(result.refresh_token, fake_redis, realm=REALM)
+    assert access_payload["sub"] == SUBJECT_ID
+    assert refresh_payload["sub"] == SUBJECT_ID
+    with pytest.raises(UnauthorizedException):
+        await verify_jti(old_tokens.access_token, fake_redis, realm=REALM)
 
 
 @pytest.mark.asyncio
@@ -95,7 +97,6 @@ async def test_execute_runs_the_admission_gate_against_the_principal(
     use_case = RefreshAccessUseCase(
         fake_redis,
         realm=REALM,
-        claims_builder=lambda p: {"sub": p.id},
         admission=admission,
     )
 
@@ -117,7 +118,6 @@ async def test_execute_propagates_whatever_admission_raises_without_rotating(
     use_case = RefreshAccessUseCase(
         fake_redis,
         realm=REALM,
-        claims_builder=lambda p: {"sub": p.id},
         admission=admission,
     )
 

@@ -405,19 +405,24 @@ class InMemoryRedis:
         numkeys: int,
         *keys_and_args: Any,
     ) -> str:
-        if numkeys != 2:
-            raise ValueError("ROTATE_REFRESH_TOKEN_SCRIPT expects 2 keys.")
+        if numkeys != 4:
+            raise ValueError("ROTATE_REFRESH_TOKEN_SCRIPT expects 4 keys.")
 
-        refresh_key = _normalize_key(keys_and_args[0])
-        used_key = _normalize_key(keys_and_args[1])
-        expected_jti = _normalize_value(keys_and_args[2])
-        used_ttl_seconds = int(keys_and_args[3])
-        grace_seconds = int(keys_and_args[4])
+        refresh_key, used_key, access_key, sessions_key = (
+            _normalize_key(key) for key in keys_and_args[:4]
+        )
+        expected_jti = _normalize_value(keys_and_args[4])
+        used_ttl_seconds = int(keys_and_args[5])
+        grace_seconds = int(keys_and_args[6])
+        session_id = _normalize_value(keys_and_args[7])
+        new_refresh_jti = _normalize_value(keys_and_args[8])
+        refresh_ttl_seconds = int(keys_and_args[9])
+        new_access_jti = _normalize_value(keys_and_args[10])
+        access_ttl_seconds = int(keys_and_args[11])
 
         now = int(self.wall_clock())
 
-        self._purge_expired(used_key)
-        used_at = self._store.get(used_key)
+        used_at = self._read(used_key)
         if used_at is not None:
             try:
                 used_at_number: int | None = int(used_at)
@@ -431,14 +436,19 @@ class InMemoryRedis:
                 return "GRACE"
             return "REUSED"
 
-        self._purge_expired(refresh_key)
-        if self._store.get(refresh_key) != expected_jti:
+        if self._read(refresh_key) != expected_jti:
             return "INVALID"
 
-        self._store[used_key] = str(now)
-        self._expires[used_key] = _now() + used_ttl_seconds
-        self._store.pop(refresh_key, None)
-        self._expires.pop(refresh_key, None)
+        self._write(used_key, str(now), ttl_seconds=used_ttl_seconds)
+        self._write(refresh_key, new_refresh_jti, ttl_seconds=refresh_ttl_seconds)
+        self._write(access_key, new_access_jti, ttl_seconds=access_ttl_seconds)
+
+        self._purge_expired(sessions_key)
+        index = self._zsets.setdefault(sessions_key, {})
+        for member in [member for member, score in index.items() if score <= now]:
+            index.pop(member)
+        index[session_id] = float(now + refresh_ttl_seconds)
+        self._expire(sessions_key, refresh_ttl_seconds)
         return "OK"
 
     async def time(self) -> tuple[int, int]:

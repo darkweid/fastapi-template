@@ -6,7 +6,7 @@ from src.core.auth.cookies import TokenCookieResponder
 from src.core.auth.session_issuance import issue_session_pair
 from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.auth.token_transport import TokenTransport
-from src.core.auth.tokens import rotate_refresh_token
+from src.core.auth.tokens import rotate_session_tokens
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import TokenModel
 from src.main.config import config
@@ -79,7 +79,7 @@ async def test_a_refresh_token_of_one_realm_cannot_rotate_in_another(
     )
 
     with pytest.raises(UnauthorizedException):
-        await rotate_refresh_token(payload, fake_redis, realm=SECOND)
+        await rotate_session_tokens(payload, fake_redis, realm=SECOND)
 
     # A foreign signature must never trigger the protective family wipe: that
     # would let one realm log a subject out of every session in another.

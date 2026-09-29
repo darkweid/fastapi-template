@@ -9,8 +9,38 @@ from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.realm import AuthRealm
 from src.core.auth.redis_keys import AuthRedisKeyBuilder
 from src.core.auth.token_helpers import execute_token_rotation, validate_token_structure
+from src.core.schemas import TokenModel
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
+
+
+def build_token(
+    *,
+    sub: str,
+    mode: str,
+    ttl_minutes: int,
+    secret: str,
+    session_id: str | None = None,
+    extra_data: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """
+    Sign one JWT and return it with its jti. Nothing is registered in Redis:
+    the token is not live until a caller stores the jti.
+    """
+    jti = str(uuid4())
+    expire = get_utc_now() + timedelta(minutes=ttl_minutes)
+
+    payload: JWTPayload = {
+        "sub": sub,
+        "exp": int(expire.timestamp()),
+        "mode": mode,
+        "jti": jti,
+    }
+    if session_id is not None:
+        payload["session_id"] = session_id
+
+    token_data: dict[str, Any] = {**(extra_data or {}), **payload}
+    return str(jwt.encode(token_data, secret, config.jwt.ALGORITHM)), jti
 
 
 async def issue_token(
@@ -34,20 +64,14 @@ async def issue_token(
     track their active token differently leave it None and register the jti
     themselves using the returned value.
     """
-    jti = str(uuid4())
-    expire = get_utc_now() + timedelta(minutes=ttl_minutes)
-
-    payload: JWTPayload = {
-        "sub": sub,
-        "exp": int(expire.timestamp()),
-        "mode": mode,
-        "jti": jti,
-    }
-    if session_id is not None:
-        payload["session_id"] = session_id
-
-    token_data: dict[str, Any] = {**(extra_data or {}), **payload}
-    encoded_jwt = jwt.encode(token_data, secret, config.jwt.ALGORITHM)
+    encoded_jwt, jti = build_token(
+        sub=sub,
+        mode=mode,
+        ttl_minutes=ttl_minutes,
+        secret=secret,
+        session_id=session_id,
+        extra_data=extra_data,
+    )
 
     if redis_key is not None:
         await redis_client.set(redis_key, jti, ex=ttl_minutes * 60)
@@ -76,7 +100,7 @@ async def issue_token(
         )
         await redis_client.expire(index_key, index_ttl_seconds)
 
-    return str(encoded_jwt), jti
+    return encoded_jwt, jti
 
 
 async def create_access_token(
@@ -138,34 +162,47 @@ async def create_refresh_token(
     return token
 
 
-async def rotate_refresh_token(
+async def rotate_session_tokens(
     old_payload: JWTPayload, redis_client: Redis, *, realm: AuthRealm
-) -> str:
+) -> TokenModel:
     """
-    Mint a replacement refresh token inside the same session and burn the old one.
+    Burn the presented refresh token and hand out a new access/refresh pair for
+    the same session.
 
     Presenting a token that was already rotated out is theft until proven
     otherwise: outside the short grace window it costs the subject every
-    session, not just this request. The new token keeps the old session id, so
-    a client that refreshes does not appear as a new login.
+    session, not just this request. The pair keeps the old session id, so a
+    client that refreshes does not appear as a new login, and it is signed
+    before the rotation script runs because the script registers both jtis in
+    the same atomic step that consumes the old one.
     """
 
-    subject_id, old_session_id, old_jti = await validate_token_structure(
+    subject_id, session_id, old_jti = await validate_token_structure(
         old_payload, redis_client, keys=realm.keys
     )
 
-    await execute_token_rotation(
-        subject_id, old_session_id, old_jti, redis_client, keys=realm.keys
-    )
-
-    token, _ = await issue_token(
+    refresh_token, refresh_jti = build_token(
         sub=subject_id,
         mode="refresh_token",
         ttl_minutes=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES,
         secret=realm.secret,
-        redis_client=redis_client,
-        keys=realm.keys,
-        session_id=old_session_id,
-        redis_key=realm.keys.refresh(subject_id, old_session_id),
+        session_id=session_id,
     )
-    return token
+    access_token, access_jti = build_token(
+        sub=subject_id,
+        mode="access_token",
+        ttl_minutes=config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES,
+        secret=realm.secret,
+        session_id=session_id,
+    )
+
+    await execute_token_rotation(
+        subject_id,
+        session_id,
+        old_jti,
+        redis_client,
+        keys=realm.keys,
+        new_refresh_jti=refresh_jti,
+        new_access_jti=access_jti,
+    )
+    return TokenModel(access_token=access_token, refresh_token=refresh_token)
