@@ -162,7 +162,9 @@ services:
       - ./nginx:/etc/nginx/conf.d:ro
     # Writes the app upstream's servers before the image's own entrypoint runs
     # (infra/nginx/entrypoint.sh). Overriding the entrypoint drops the image's
-    # command, so it is repeated here.
+    # command, so it is repeated here. The files it and infra/deploy/deploy.sh
+    # write (app_upstream.inc, app_upstream.applied) sit in /etc/nginx itself,
+    # the container's writable layer, outside the read-only conf.d mount.
     entrypoint: ["sh", "/etc/nginx/conf.d/entrypoint.sh"]
     command: ["nginx", "-g", "daemon off;"]
     environment:

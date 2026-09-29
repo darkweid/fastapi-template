@@ -230,3 +230,28 @@ def test_leftover_containers_stop_after_the_retired_nginx_workers() -> None:
         'if [ -n "$leftover_ids" ]; then'
     )
     assert 'docker rm -f "$id"' not in body[: body.index("discard_new_app()")]
+
+
+def test_a_failed_roll_moves_nginx_back_before_removing_the_new_container() -> None:
+    """A failure after the cutover reload leaves nginx routing to the new
+    container; removing it first fails the requests in between."""
+    script = _script()
+    body = script[script.index("discard_new_app() {") :]
+    body = body[: body.index("\n}\n")]
+
+    assert body.index("route_app_to $(container_names $keep)") < body.index(
+        "wait_for_retired_nginx_workers"
+    )
+    assert body.index("wait_for_retired_nginx_workers") < body.index(
+        'docker stop "$id"'
+    )
+
+
+def test_generated_upstream_files_stay_outside_the_read_only_mount() -> None:
+    """conf.d is mounted read-only; a file written there fails every start."""
+    entrypoint = (NGINX_DIR / "entrypoint.sh").read_text(encoding="utf-8")
+    written = re.findall(r"/etc/nginx/[\w./]+", entrypoint + _script())
+
+    assert "./nginx:/etc/nginx/conf.d:ro" in _compose_service("nginx")["volumes"]
+    assert written
+    assert not [path for path in written if path.startswith("/etc/nginx/conf.d/")]

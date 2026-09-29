@@ -272,12 +272,22 @@ roll_app() {
   route_app_to app || return 1
 }
 
-# Removes every app container the roll started, the ones given excepted, and
-# pins nginx back to those. Best effort: it runs on a path that already failed.
+# Removes every app container the roll started, the ones given excepted. nginx
+# goes back to those first, and the workers that reload retires finish, since a
+# failure after the cutover reload leaves nginx routing to the new container.
+# Best effort: it runs on a path that already failed.
 discard_new_app() {
   local keep="$1" id
+  if [ -n "$keep" ]; then
+    # shellcheck disable=SC2046,SC2086  # container ids and names, one word each
+    route_app_to $(container_names $keep) || true
+    wait_for_retired_nginx_workers || true
+  fi
   for id in $("${COMPOSE[@]}" ps -a -q app); do
-    printf '%s\n' "$keep" | grep -qxF "$id" || docker rm -f "$id" >/dev/null || true
+    if ! printf '%s\n' "$keep" | grep -qxF "$id"; then
+      docker stop "$id" >/dev/null 2>&1 || true
+      docker rm -f "$id" >/dev/null || true
+    fi
   done
   route_app_to app || true
 }
