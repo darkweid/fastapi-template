@@ -303,3 +303,37 @@ def test_parse_env_reads_quotes_comments_and_embedded_equals(tmp_path: Path) -> 
         "SPACED": "padded",
         "DSN": "postgresql://user:pass@host:5432/db?ssl=require",
     }
+
+
+@pytest.mark.parametrize(
+    ("line", "value"),
+    [
+        ("DEBUG=true # temp", "true"),
+        ("DEBUG=true\t# temp", "true"),
+        ("PASSWORD=abc#def", "abc#def"),
+        ('QUOTED="a # b" # note', "a # b"),
+        ("SINGLE='a # b' # note", "a # b"),
+        ('ESCAPED="say \\"hi\\"" # note', 'say \\"hi\\"'),
+        ("EMPTY= # nothing", ""),
+    ],
+)
+def test_parse_env_strips_inline_comments_the_way_compose_does(
+    tmp_path: Path, line: str, value: str
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(line)
+
+    [parsed] = parse_env(env_file).values()
+
+    assert parsed == value
+
+
+def test_debug_enabled_behind_an_inline_comment_is_reported(tmp_path: Path) -> None:
+    """compose starts the container with DEBUG=true here; the gate once read
+    "true # temp", recognised no boolean and let the deploy through."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("DEBUG=true # temp\n")
+
+    problems = collect_problems({"DEBUG": "false"}, parse_env(env_file))
+
+    assert problems == ["DEBUG=true is not allowed outside local development"]
