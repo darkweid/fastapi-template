@@ -107,16 +107,16 @@ def test_nginx_closes_idle_upstream_connections_before_the_app_does() -> None:
 
 
 def test_nginx_routes_to_the_upstream_file_the_deploy_rewrites() -> None:
-    """deploy.sh writes the container names into /etc/nginx/app_upstream.inc;
+    """deploy.sh writes the container names into /etc/nginx/upstream/app_upstream.inc;
     an upstream declared anywhere else would ignore them."""
     main_conf = (NGINX_DIR / "main.conf").read_text(encoding="utf-8")
     entrypoint = (NGINX_DIR / "entrypoint.sh").read_text(encoding="utf-8")
     nginx = _compose_service("nginx")
 
-    assert "include /etc/nginx/app_upstream.inc;" in main_conf
+    assert "include /etc/nginx/upstream/app_upstream.inc;" in main_conf
     assert "resolver 127.0.0.11" in main_conf
-    assert "/etc/nginx/app_upstream.inc" in _script()
-    assert "upstream=/etc/nginx/app_upstream.inc" in entrypoint
+    assert "/etc/nginx/upstream/app_upstream.inc" in _script()
+    assert 'upstream="$state/app_upstream.inc"' in entrypoint
     assert "server app:%s resolve;" in entrypoint
     assert nginx["entrypoint"] == ["sh", "/etc/nginx/conf.d/entrypoint.sh"]
     assert nginx["command"] == ["nginx", "-g", "daemon off;"]
@@ -135,8 +135,8 @@ def test_a_restarted_nginx_keeps_the_pin_it_was_routing_by() -> None:
     assert entrypoint.rstrip().endswith('exec /docker-entrypoint.sh "$@"')
     # The pin is recorded as applied only after the reload that applies it.
     reload = script.index('"${COMPOSE[@]}" exec -T nginx nginx -s reload')
-    assert reload < script.index("/etc/nginx/app_upstream.applied.next")
-    assert "cat /etc/nginx/app_upstream.applied" in script
+    assert reload < script.index("/etc/nginx/upstream/app_upstream.applied.next")
+    assert "cat /etc/nginx/upstream/app_upstream.applied" in script
 
 
 def test_a_request_that_reached_the_app_is_never_sent_twice() -> None:
@@ -255,3 +255,15 @@ def test_generated_upstream_files_stay_outside_the_read_only_mount() -> None:
     assert "./nginx:/etc/nginx/conf.d:ro" in _compose_service("nginx")["volumes"]
     assert written
     assert not [path for path in written if path.startswith("/etc/nginx/conf.d/")]
+
+
+def test_the_applied_pin_survives_a_recreated_nginx() -> None:
+    """The deploy recreates nginx whenever its service changes; a pin kept in
+    the container layer would fall back to the service name mid-roll."""
+    nginx = _compose_service("nginx")
+    entrypoint = (NGINX_DIR / "entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "nginx-upstream:/etc/nginx/upstream" in nginx["volumes"]
+    assert "state=/etc/nginx/upstream" in entrypoint
+    # A pin naming containers that no longer exist is dropped, not served.
+    assert 'getent hosts "$host"' in entrypoint

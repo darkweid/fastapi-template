@@ -160,11 +160,14 @@ services:
       # those, and the mount also hides the image's own default.conf, which
       # would otherwise serve the stock page to Host "localhost".
       - ./nginx:/etc/nginx/conf.d:ro
+      # The app upstream's servers, written by infra/nginx/entrypoint.sh and
+      # infra/deploy/deploy.sh. A volume, so the pin a roll left behind survives
+      # a recreation of this container, which the deploy performs whenever the
+      # service below changes.
+      - nginx-upstream:/etc/nginx/upstream
     # Writes the app upstream's servers before the image's own entrypoint runs
     # (infra/nginx/entrypoint.sh). Overriding the entrypoint drops the image's
-    # command, so it is repeated here. The files it and infra/deploy/deploy.sh
-    # write (app_upstream.inc, app_upstream.applied) sit in /etc/nginx itself,
-    # the container's writable layer, outside the read-only conf.d mount.
+    # command, so it is repeated here.
     entrypoint: ["sh", "/etc/nginx/conf.d/entrypoint.sh"]
     command: ["nginx", "-g", "daemon off;"]
     environment:
@@ -222,6 +225,8 @@ volumes:
     name: template-postgres-data
   redis-data:
     name: template-redis-data
+  nginx-upstream:
+    name: template-nginx-upstream
 
 networks:
   app-network:

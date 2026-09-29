@@ -35,7 +35,7 @@ Pick a slug — lowercase, no spaces — and replace:
 | Dev image tag `template-app-dev-image:latest` | `infra/docker-compose.override.yml` | `myapp-app-dev-image:latest` |
 | Postgres image tag `template-postgres:18` | `infra/docker-compose.yml:23` | `myapp-postgres:18` |
 | Test Postgres tag `template-postgres-test:18` | `infra/docker-compose.test.yml:26` | `myapp-postgres-test:18` |
-| Volume names `template-postgres-data`, `template-redis-data` | `infra/docker-compose.yml:219,221` | `myapp-postgres-data`, `myapp-redis-data` |
+| Volume names `template-postgres-data`, `template-redis-data`, `template-nginx-upstream` | `infra/docker-compose.yml:225,227,229` | `myapp-postgres-data`, `myapp-redis-data`, `myapp-nginx-upstream` |
 | Integration-suite project prefix `template-test-$$` | `Makefile:145` | `myapp-test-$$` |
 
 If the stack has already run once, tear it down **before** renaming. `make down`

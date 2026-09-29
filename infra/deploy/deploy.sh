@@ -44,7 +44,7 @@ nginx_is_running() {
   [ -n "$("${COMPOSE[@]}" ps -q nginx)" ]
 }
 
-# nginx routes to whatever /etc/nginx/app_upstream.inc names (the upstream in
+# nginx routes to whatever /etc/nginx/upstream/app_upstream.inc names (the upstream in
 # infra/nginx/main.conf). It is written inside the nginx container, not in the
 # checkout: it changes on every deploy. Naming single containers keeps nginx off
 # a new one until it is healthy and off an old one before it stops, which
@@ -69,13 +69,13 @@ route_app_to() {
   "${COMPOSE[@]}" exec -T nginx sh -c '
     for host in "$@"; do
       printf "server %s:%s resolve;\n" "$host" "$APP_BACKEND_PORT"
-    done > /etc/nginx/app_upstream.inc.next
-    mv /etc/nginx/app_upstream.inc.next /etc/nginx/app_upstream.inc
+    done > /etc/nginx/upstream/app_upstream.inc.next
+    mv /etc/nginx/upstream/app_upstream.inc.next /etc/nginx/upstream/app_upstream.inc
   ' sh "$@" || return 1
   "${COMPOSE[@]}" exec -T nginx nginx -s reload || return 1
   "${COMPOSE[@]}" exec -T nginx sh -c '
-    cp /etc/nginx/app_upstream.inc /etc/nginx/app_upstream.applied.next
-    mv /etc/nginx/app_upstream.applied.next /etc/nginx/app_upstream.applied
+    cp /etc/nginx/upstream/app_upstream.inc /etc/nginx/upstream/app_upstream.applied.next
+    mv /etc/nginx/upstream/app_upstream.applied.next /etc/nginx/upstream/app_upstream.applied
   ' || return 1
 }
 
@@ -147,7 +147,7 @@ healthy_app_ids() {
 # mid-roll.
 pinned_app_names() {
   nginx_is_running || return 0
-  "${COMPOSE[@]}" exec -T nginx sh -c 'cat /etc/nginx/app_upstream.applied 2>/dev/null' \
+  "${COMPOSE[@]}" exec -T nginx sh -c 'cat /etc/nginx/upstream/app_upstream.applied 2>/dev/null' \
     | sed -n 's/^server \([^: ]*\):.*/\1/p' | grep -vx app || true
 }
 
