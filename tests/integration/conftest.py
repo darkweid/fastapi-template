@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import make_url, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from src.main.config import get_settings
@@ -93,6 +94,11 @@ async def _run_on_server(statement: str) -> None:
         await engine.dispose()
 
 
+def _quoted(name: str) -> str:
+    """A database name as a SQL identifier; `POSTGRES_DB` may carry a double quote."""
+    return postgresql.dialect().identifier_preparer.quote_identifier(name)
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def database_template(migrated_database: None) -> AsyncGenerator[str]:
     """A copy of the test database as the migrations leave it, before any test writes
@@ -105,11 +111,11 @@ async def database_template(migrated_database: None) -> AsyncGenerator[str]:
     """
     source = get_settings().postgres.POSTGRES_DB
     name = f"template_{uuid4().hex}"
-    await _run_on_server(f'CREATE DATABASE "{name}" TEMPLATE "{source}"')
+    await _run_on_server(f"CREATE DATABASE {_quoted(name)} TEMPLATE {_quoted(source)}")
     try:
         yield name
     finally:
-        await _run_on_server(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await _run_on_server(f"DROP DATABASE IF EXISTS {_quoted(name)} WITH (FORCE)")
 
 
 @dataclass(frozen=True)
@@ -134,7 +140,9 @@ async def scratch_database(
     built on the engine follow it there.
     """
     name = f"scratch_{uuid4().hex}"
-    await _run_on_server(f'CREATE DATABASE "{name}" TEMPLATE "{database_template}"')
+    await _run_on_server(
+        f"CREATE DATABASE {_quoted(name)} TEMPLATE {_quoted(database_template)}"
+    )
     engine = create_async_engine(
         make_url(get_settings().postgres.dsn_async).set(database=name),
         connect_args={"statement_cache_size": 0},
@@ -146,7 +154,7 @@ async def scratch_database(
         )
     finally:
         await engine.dispose()
-        await _run_on_server(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await _run_on_server(f"DROP DATABASE IF EXISTS {_quoted(name)} WITH (FORCE)")
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
