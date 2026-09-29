@@ -168,3 +168,22 @@ def test_no_pipeline_is_cut_short_by_head() -> None:
     """Under pipefail the writer's SIGPIPE fails the pipeline, and errexit then
     aborts a deploy that finds two healthy app containers."""
     assert "| head" not in _script()
+
+
+def test_nginx_is_brought_up_to_date_before_the_app_rolls() -> None:
+    """An nginx still on an older configuration ignores app_upstream.inc and
+    keeps routing to the container the roll is stopping."""
+    script = _script()
+
+    assert script.index('"${COMPOSE[@]}" up -d --no-deps nginx') < script.index(
+        'if ! roll_app "$APP_IMAGE"; then'
+    )
+
+
+def test_an_interrupted_roll_keeps_the_container_nginx_is_pinned_to() -> None:
+    """After the cutover nginx is pinned to the new container; routing to every
+    healthy one would bring the retired version back."""
+    script = _script()
+
+    assert 'old_ids="$(serving_app_ids)"' in script
+    assert 'RUNNING_APP="$(serving_app_ids)"' in script

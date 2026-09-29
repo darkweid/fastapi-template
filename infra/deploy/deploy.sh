@@ -127,6 +127,36 @@ healthy_app_ids() {
   done
 }
 
+# The containers nginx is pinned to by name, one per line; nothing while it
+# routes to the service name. Left behind by a deploy interrupted mid-roll.
+pinned_app_names() {
+  nginx_is_running || return 0
+  "${COMPOSE[@]}" exec -T nginx cat /etc/nginx/app_upstream.inc \
+    | sed -n 's/^server \([^: ]*\):.*/\1/p' | grep -vx app || true
+}
+
+# The healthy containers that serve: the ones nginx is pinned to when an
+# interrupted roll left it pinned to healthy ones - after the cutover that is
+# the new container, and the old one it no longer routes to must not come back
+# - otherwise every healthy one.
+serving_app_ids() {
+  local healthy pinned id serving=""
+  healthy="$(healthy_app_ids)"
+  pinned="$(pinned_app_names)"
+  if [ -n "$pinned" ]; then
+    for id in $healthy; do
+      if printf '%s\n' "$pinned" | grep -qxF "$(container_names "$id")"; then
+        serving="${serving}${id}"$'\n'
+      fi
+    done
+  fi
+  if [ -n "$serving" ]; then
+    printf '%s' "$serving"
+  elif [ -n "$healthy" ]; then
+    printf '%s\n' "$healthy"
+  fi
+}
+
 # Rolls the app to the image given, with no request refused: pin nginx to the
 # healthy serving containers, start one more beside them, wait for it to turn
 # healthy, move nginx onto it, let the retired nginx workers finish, then stop
@@ -147,11 +177,11 @@ roll_app() {
   "${COMPOSE[@]}" rm -f app >/dev/null || return 1
 
   all_ids="$("${COMPOSE[@]}" ps -a -q app)" || return 1
-  old_ids="$(healthy_app_ids)" || return 1
+  old_ids="$(serving_app_ids)" || return 1
   if [ -n "$old_ids" ]; then
     for id in $all_ids; do
       if ! printf '%s\n' "$old_ids" | grep -qxF "$id"; then
-        echo "[deploy] removing $(container_names "$id"), left behind unhealthy by an earlier deploy"
+        echo "[deploy] removing $(container_names "$id"), left behind by an interrupted deploy and serving nothing"
         docker rm -f "$id" >/dev/null || return 1
       fi
     done
@@ -246,7 +276,7 @@ PREVIOUS_IMAGE=""
 # The first line taken in the shell, not with `head`: head exits after one line,
 # and with two healthy containers left by an interrupted roll the writer's
 # SIGPIPE fails the pipeline under pipefail.
-RUNNING_APP="$(healthy_app_ids)"
+RUNNING_APP="$(serving_app_ids)"
 RUNNING_APP="${RUNNING_APP%%$'\n'*}"
 if [ -n "$RUNNING_APP" ]; then
   PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' "$RUNNING_APP")"
@@ -271,6 +301,12 @@ echo "[deploy] starting data services"
 
 echo "[deploy] applying migrations before any new code serves traffic"
 "${COMPOSE[@]}" run --rm --no-deps app alembic upgrade head
+
+# Before the roll, which relies on the running nginx reading app_upstream.inc.
+# Starts nginx on the first deploy; later a no-op unless the nginx service
+# itself changed in infra/docker-compose.yml (its image, its mounts, its
+# environment), which recreates it and drops the connections it holds.
+"${COMPOSE[@]}" up -d --no-deps nginx
 
 echo "[deploy] rolling the app"
 if ! roll_app "$APP_IMAGE"; then
@@ -297,11 +333,6 @@ if ! "${COMPOSE[@]}" up -d --no-deps --wait worker scheduler; then
   echo "[deploy] rolled back; the deploy failed"
   exit 1
 fi
-
-# Starts nginx on the first deploy. Later it is a no-op unless the nginx
-# service itself changed in infra/docker-compose.yml (its image, its mounts),
-# which recreates it and drops the connections it holds.
-"${COMPOSE[@]}" up -d --no-deps nginx
 
 # Every BUILD=0 deploy leaves a tagged sha- image behind, and plain
 # `image prune` only touches dangling ones, so the disk grows until a pull
