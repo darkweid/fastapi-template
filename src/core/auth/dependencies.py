@@ -28,6 +28,7 @@ from src.core.auth.credentials import (
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.realm import AuthRealm
 from src.core.database.base import Base
+from src.core.database.detached import detached_read
 from src.core.database.repositories import BaseRepository
 from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
@@ -79,20 +80,16 @@ async def load_principal(
     else would end it before the response: a handler that then waits on
     something slow outside a unit of work (an upload, a third-party call) keeps
     a pooled connection checked out and idle in transaction all that time. So
-    the read transaction ends here, when this call is what opened it.
-
-    It ends in a rollback, which expires every instance the session holds, so
-    the principal is expunged first: its loaded columns stay readable for the
-    rest of the request, whatever a later unit of work commits or rolls back.
-    A detached principal is not tracked, so a write re-reads the row inside its
-    own unit of work instead of mutating this object.
+    the read goes through `detached_read`, which ends that transaction when
+    this call is what opened it, and detaches the principal first: its loaded
+    columns stay readable for the rest of the request, whatever a later unit of
+    work commits or rolls back. A detached principal is not tracked, so a write
+    re-reads the row inside its own unit of work instead of mutating this
+    object.
     """
-    owns_transaction = not session.in_transaction()
-    principal = await repository.get_single(session, id=subject_id)
-    if principal is not None:
-        session.expunge(principal)
-    if owns_transaction:
-        await session.rollback()
+    async with detached_read(session) as read:
+        principal = await repository.get_single(session, id=subject_id)
+        read.detach(principal)
     return principal
 
 
