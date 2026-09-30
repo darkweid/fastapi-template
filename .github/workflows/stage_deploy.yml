@@ -30,8 +30,9 @@ jobs:
       image_tag: ${{ inputs.image_tag || '' }}
     secrets: inherit
     # The ceiling for _deploy.yml, which reads the triggering CI run's jobs to
-    # learn whether it built an image: a called workflow never holds more than
-    # the job that calls it.
+    # learn whether it built an image and pulls that image with the workflow
+    # token: a called workflow never holds more than the job that calls it.
     permissions:
       contents: read
       actions: read
+      packages: read

@@ -62,7 +62,6 @@ Everything the deploy itself reads is an **environment** secret or variable, und
 - APP_DIR — environment *variable*: the deploy directory on that box, e.g. `/root/app`. CD fails with a named error if it is unset.
 - SSH_PRIVATE_KEY, SERVER_IP, SSH_USER — environment secrets, server access.
 - SSH_KNOWN_HOSTS — environment secret, the output of `ssh-keyscan <server-ip>`, generated once by hand and verified against the host's own key.
-- GHCR_USER, GHCR_PULL_TOKEN — environment secrets, the server's pull credentials for GHCR (a classic PAT with `read:packages`). The package is private by default; make it public only if the application image may be world-readable.
 - ALERT_BOT_TOKEN, ALERT_CHAT_ID — environment secrets, Telegram notifications. The alert names its contour, so both environments may share a chat.
 - GITLEAKS_LICENSE (optional) — repository secret, needed only when the repository is owned by an organization; without it `gitleaks-action` exits before scanning.
 - PRECOMMIT_BOT_TOKEN (optional but recommended) — repository secret, token for creating autoupdate PRs so downstream workflows can run reliably.

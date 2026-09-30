@@ -290,7 +290,6 @@ before the environment resolves and would read an environment variable as empty.
 | `STAGE_DEPLOY_ENABLED` | Repository variable | Same for CD (stage). Leave unset if the project has no staging box. |
 | `APP_DIR` | Environment variable | Deploy directory on that environment's box, e.g. `/root/app`. CD fails with a named error if it is unset. |
 | `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_USER`, `SERVER_IP` | Environment secret | Access to that environment's box. Per environment, so a staging key cannot reach production. `SSH_KNOWN_HOSTS` is `ssh-keyscan <server-ip>`, verified by hand against the host key. |
-| `GHCR_USER`, `GHCR_PULL_TOKEN` | Environment secret | Pull the image from GHCR on the box (classic PAT, `read:packages`). |
 | `ALERT_BOT_TOKEN`, `ALERT_CHAT_ID` | Environment secret | Telegram deploy notifications. |
 | `GITLEAKS_LICENSE` | Repository secret, optional | Only needed when the repository is owned by an organization. |
 | `PRECOMMIT_BOT_TOKEN` | Repository secret, optional | Lets the pre-commit autoupdate workflow open PRs that trigger CI. |
