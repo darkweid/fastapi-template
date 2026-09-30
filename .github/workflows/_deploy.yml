@@ -20,14 +20,16 @@ on:
         required: false
         default: ""
 
-# The job reaches the box over SSH and authenticates to GHCR with its own PAT,
-# both from secrets - the workflow token only checks the code out and reads the
-# triggering CI run's jobs. Without this block the job would inherit whatever
-# the repository grants by default, which on a job holding deploy credentials
-# is more than it needs.
+# The job reaches the box over SSH from secrets. The workflow token checks the
+# code out, reads the triggering CI run's jobs and pulls the image: the package
+# belongs to this repository, and the token dies with the job, so the box never
+# holds a long-lived registry credential and there is no PAT to rotate. Without
+# this block the job would inherit whatever the repository grants by default,
+# which on a job holding deploy credentials is more than it needs.
 permissions:
   contents: read
   actions: read
+  packages: read
 
 jobs:
   deploy:
@@ -196,7 +198,7 @@ jobs:
           cd "$APP_DIR"
           git fetch --quiet origin
           git checkout --quiet ${{ steps.ref.outputs.sha }}
-          echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           # The token would otherwise sit base64-encoded in ~/.docker/config.json
           # on the box until the next deploy overwrites it.
           trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
