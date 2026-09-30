@@ -188,7 +188,7 @@ pydantic-settings==2.15.0
     # via -r base.in
 pygments==2.20.0
     # via pytest
-pyjwt==2.13.0
+pyjwt==2.14.0
     # via -r base.in
 pyproject-hooks==1.2.0
     # via
