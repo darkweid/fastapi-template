@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import delete, insert, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from src.core.database.query import ListQuery
 from src.core.pagination import PaginationParams, make_paginated_response
@@ -20,7 +21,7 @@ from src.core.utils.datetime_utils import get_utc_now
 from src.core.utils.security import password_hasher
 from src.event_log.actor import Actor
 from src.event_log.enums import ActorType, ObjectType
-from src.event_log.events import DomainEvent
+from src.event_log.events import DomainEvent, PublishedEvent
 from src.event_log.models import EventLog
 from src.event_log.repositories import EventLogRepository
 from src.event_log.schemas import EventLogViewModel
@@ -74,7 +75,13 @@ async def test_rejected_event_insert_leaves_the_action_committed(
         },
     )
     await EventLogRepository().record(
-        db_session, Actor.user(user.id), RejectedEvent(object_id=user.id)
+        db_session,
+        PublishedEvent(
+            id=uuid7(),
+            actor=Actor.user(user.id),
+            event=RejectedEvent(object_id=user.id),
+            occurred_at=get_utc_now(),
+        ),
     )
     await db_session.commit()
 
@@ -98,7 +105,13 @@ async def test_a_stored_address_survives_response_serialization(
     a v6 address is where a str-typed column would have got away with it."""
     object_id = uuid4()
     await EventLogRepository().record(
-        db_session, Actor.anonymous(ip="2001:db8::42"), InetEvent(object_id=object_id)
+        db_session,
+        PublishedEvent(
+            id=uuid7(),
+            actor=Actor.anonymous(ip="2001:db8::42"),
+            event=InetEvent(object_id=object_id),
+            occurred_at=get_utc_now(),
+        ),
     )
     await db_session.flush()
     db_session.expunge_all()

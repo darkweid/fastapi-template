@@ -151,7 +151,7 @@ async def test_profile_update_logs_the_names_of_changed_fields(
         actor=Actor.user(user.id),
     )
 
-    _, event = uow.event_logs.recorded[0]
+    _, event = uow.published[0]
     assert event.code == "user.profile_updated"
     assert event.fields == ["first_name"]
 
@@ -173,5 +173,5 @@ async def test_profile_update_that_changes_nothing_logs_nothing(
         actor=Actor.user(user.id),
     )
 
-    assert uow.event_logs.recorded == []
+    assert uow.published == []
     uow.commit.assert_awaited_once()

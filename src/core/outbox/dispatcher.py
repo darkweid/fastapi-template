@@ -114,6 +114,12 @@ class TaskDispatcher:
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> None:
+        # The hook stays on the unit of work when a SAVEPOINT inside it rolls
+        # back, while the outbox row goes with the SAVEPOINT: publishing then
+        # would run a task for work that never committed.
+        async with self._session_factory() as session:
+            if not await self._outbox_repository.exists(session, id=message_id):
+                return
         await task.kicker().with_task_id(str(message_id)).kiq(*args, **kwargs)
         async with self._session_factory() as session, session.begin():
             await self._outbox_repository.mark_published(session, message_id)

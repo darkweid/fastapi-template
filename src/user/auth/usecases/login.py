@@ -109,8 +109,7 @@ class LoginUserUseCase:
                 await self.throttle.record_failure(data.email, self.redis_client)
                 # Nothing else is pending, so this commit carries only the
                 # failed attempt; the error still reaches the caller.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     Actor.anonymous(ip=ip),
                     UserSignInFailed(email=data.email, reason="unknown_email"),
                 )
@@ -126,8 +125,7 @@ class LoginUserUseCase:
                 await self.throttle.record_failure(data.email, self.redis_client)
                 # Anonymous, not the account owner: the password did not
                 # match, so nothing here proves who made the attempt.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     Actor.anonymous(ip=ip),
                     UserSignInFailed(email=data.email, reason="wrong_password"),
                 )
@@ -143,8 +141,7 @@ class LoginUserUseCase:
                 )
                 # The password already matched, so this attempt is the
                 # account owner's and the row is attributed to them.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     Actor.user(user.id, ip=ip),
                     UserSignInFailed(email=data.email, reason=violation),
                 )
@@ -172,8 +169,7 @@ class LoginUserUseCase:
                 redis_client=self.redis_client,
             )
             await self.throttle.clear(data.email, self.redis_client)
-            await uow.event_logs.record(
-                uow.session,
+            await uow.publish(
                 Actor.user(user.id, ip=ip),
                 UserSignedIn(object_id=user.id),
             )

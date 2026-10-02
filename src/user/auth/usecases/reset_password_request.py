@@ -72,8 +72,7 @@ class ResetPasswordRequestUseCase:
             # row is what later tells a takeover attempt from a forgotten
             # password. The throttled and unknown-address branches above
             # return before it - neither queued an email.
-            await uow.event_logs.record(
-                uow.session,
+            await uow.publish(
                 Actor.anonymous(ip=ip),
                 UserPasswordResetRequested(object_id=user.id),
             )

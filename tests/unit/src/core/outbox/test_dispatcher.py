@@ -43,9 +43,17 @@ async def test_enqueue_runs_task() -> None:
     assert calls == [("direct", True)]
 
 
+def committed_rows(dispatcher: TaskDispatcher, *, exists: bool = True) -> AsyncMock:
+    """The dispatcher's own repository, answering whether the row committed."""
+    repository = AsyncMock(exists=AsyncMock(return_value=exists))
+    dispatcher._outbox_repository = repository  # noqa: SLF001
+    return repository
+
+
 async def test_enqueue_transactional_inserts_row_and_defers_publish() -> None:
     _broker, calls, probe = make_broker_and_probe()
     dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
+    committed_rows(dispatcher)
     uow, outbox_repo, _row = make_uow_with_outbox()
 
     async with uow:
@@ -67,7 +75,7 @@ async def test_enqueue_transactional_inserts_row_and_defers_publish() -> None:
 
 async def test_publish_hook_marks_row_published() -> None:
     dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
-    dispatcher._outbox_repository = AsyncMock()  # noqa: SLF001
+    committed_rows(dispatcher)
     uow, _outbox_repo, row = make_uow_with_outbox()
 
     kicker = MagicMock()
@@ -86,6 +94,23 @@ async def test_publish_hook_marks_row_published() -> None:
     assert (
         dispatcher._outbox_repository.mark_published.await_args.args[1] == row.id
     )  # noqa: SLF001
+
+
+async def test_a_row_its_savepoint_took_back_is_not_published() -> None:
+    """The hook outlives a rolled-back SAVEPOINT inside the unit of work, the
+    row does not: publishing would run the task for work that never
+    committed."""
+    _broker, calls, probe = make_broker_and_probe()
+    dispatcher = TaskDispatcher(session_factory=FakeSessionFactory())
+    repository = committed_rows(dispatcher, exists=False)
+    uow, _outbox_repo, _row = make_uow_with_outbox()
+
+    async with uow:
+        await dispatcher.enqueue_transactional(uow, probe, "hello")
+        await uow.commit()
+
+    assert calls == []
+    repository.mark_published.assert_not_awaited()
 
 
 class _Color(enum.StrEnum):

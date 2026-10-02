@@ -56,7 +56,7 @@ async def test_create_note_sets_owner(fake_session: FakeAsyncSession) -> None:
     create_call = notes_repo.create.await_args
     assert create_call.args[1]["owner_id"] == owner_id
     uow.commit.assert_awaited_once()
-    assert uow.event_logs.codes == ["note.created"]
+    assert uow.published_codes == ["note.created"]
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_update_note_owner_succeeds(fake_session: FakeAsyncSession) -> Non
 
     assert result.title == "New title"
     uow.commit.assert_awaited_once()
-    logged_actor, logged_event = uow.event_logs.recorded[0]
+    logged_actor, logged_event = uow.published[0]
     assert logged_actor.actor_id == current_user.id
     assert logged_event.code == "note.updated"
     assert logged_event.fields == ["title"]
@@ -209,7 +209,7 @@ async def test_delete_note_owner_succeeds(fake_session: FakeAsyncSession) -> Non
     )
 
     uow.commit.assert_awaited_once()
-    assert uow.event_logs.codes == ["note.deleted"]
+    assert uow.published_codes == ["note.deleted"]
 
 
 @pytest.mark.asyncio
@@ -232,4 +232,4 @@ async def test_update_note_with_unchanged_values_logs_nothing(
     )
 
     uow.commit.assert_awaited_once()
-    assert uow.event_logs.recorded == []
+    assert uow.published == []

@@ -56,9 +56,7 @@ class RegisterUseCase:
             await self.notifier.send(uow=uow, user=user)
             # Anonymous: nothing has proved yet that the person filling the
             # form owns the address they registered with.
-            await uow.event_logs.record(
-                uow.session, Actor.anonymous(ip=ip), UserRegistered(object_id=user.id)
-            )
+            await uow.publish(Actor.anonymous(ip=ip), UserRegistered(object_id=user.id))
             await uow.commit()
 
         logger.info("[Register User] User '%s' registered successfully.", data.username)

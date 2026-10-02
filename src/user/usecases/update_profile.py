@@ -73,8 +73,7 @@ class UpdateUserProfileUseCase:
             if changes:
                 # The empty body still bumps the cache above, but it changed no
                 # column and has nothing to record.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     actor,
                     UserProfileUpdated(object_id=user_id, fields=sorted(changes)),
                 )

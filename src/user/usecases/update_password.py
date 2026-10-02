@@ -94,9 +94,7 @@ class UpdateUserPasswordUseCase:
             )
             # No payload: the only thing that changed is a secret, and an audit
             # row outlives the account it describes.
-            await uow.event_logs.record(
-                uow.session, actor, UserPasswordChanged(object_id=user_id)
-            )
+            await uow.publish(actor, UserPasswordChanged(object_id=user_id))
             await uow.commit()
             logger.debug(
                 "[UpdateUserPassword] %s password updated successfully.",

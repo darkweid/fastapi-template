@@ -35,9 +35,7 @@ class CreateNoteUseCase:
         async with self.uow as uow:
             note = await uow.notes.create(uow.session, create_data)
             await uow.flush()
-            await uow.event_logs.record(
-                uow.session, actor, NoteCreated(object_id=note.id)
-            )
+            await uow.publish(actor, NoteCreated(object_id=note.id))
             await uow.commit()
             logger.debug("[CreateNote] note %s created for user %s.", note.id, owner_id)
             return NoteViewModel.model_validate(note)
