@@ -481,3 +481,8 @@ def test_search_reads_yo_as_ye_on_both_sides() -> None:
 
     assert "translate(query_models.name, 'Ёё', 'Ее') ILIKE" in compiled.string
     assert search_patterns(compiled) == ["%Алена%"]
+
+
+def test_search_words_keep_words_ilike_tells_apart() -> None:
+    """`casefold` reads `ß` as `ss`; `ILIKE` does not, so both stay."""
+    assert search_words("STRASSE straße") == ["STRASSE", "straße"]

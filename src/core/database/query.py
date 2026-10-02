@@ -52,9 +52,12 @@ def searchable_text(
 
 def search_words(term: str) -> list[str]:
     """The distinct words of a search in first-seen order, with `ё` read as
-    `е` and letter case ignored as `ilike` ignores it, at most
+    `е` and letter case ignored the way `ilike` ignores it, at most
     `MAX_SEARCH_WORDS`."""
-    words = {word.casefold(): word for word in reversed(fold_yo(term).split())}
+    # `lower`, not `casefold`: `casefold` maps one letter to several
+    # (`ß` -> `ss`) where `ILIKE` does not, and would merge two words the
+    # database tells apart.
+    words = {word.lower(): word for word in reversed(fold_yo(term).split())}
     return list(reversed(words.values()))[:MAX_SEARCH_WORDS]
 
 
