@@ -486,3 +486,8 @@ def test_search_reads_yo_as_ye_on_both_sides() -> None:
 def test_search_words_keep_words_ilike_tells_apart() -> None:
     """`casefold` reads `ß` as `ss`; `ILIKE` does not, so both stay."""
     assert search_words("STRASSE straße") == ["STRASSE", "straße"]
+
+
+def test_search_words_cap_keeps_the_first_distinct_words() -> None:
+    """A repeat after the cap must not push an earlier word out of it."""
+    assert search_words("a b c d e f a") == ["a", "b", "c", "d", "e"]

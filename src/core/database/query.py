@@ -57,8 +57,10 @@ def search_words(term: str) -> list[str]:
     # `lower`, not `casefold`: `casefold` maps one letter to several
     # (`ß` -> `ss`) where `ILIKE` does not, and would merge two words the
     # database tells apart.
-    words = {word.lower(): word for word in reversed(fold_yo(term).split())}
-    return list(reversed(words.values()))[:MAX_SEARCH_WORDS]
+    words: dict[str, str] = {}
+    for word in fold_yo(term).split():
+        words.setdefault(word.lower(), word)
+    return list(words.values())[:MAX_SEARCH_WORDS]
 
 
 class RelatedSearch(NamedTuple):
