@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+import re
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -110,7 +111,9 @@ def test_build_where_clauses_escapes_search_wildcards() -> None:
 
     compiled = compile_clauses(clauses)
 
-    assert "ESCAPE '\\'" in compiled.string
+    # The dialect doubles the backslash in the compiled text or not depending
+    # on the SQLAlchemy dialect options; either spelling is one escape char.
+    assert re.search(r"ESCAPE '\\{1,2}'", compiled.string)
     assert search_patterns(compiled) == [r"%100\%\_match%"]
 
 
