@@ -156,23 +156,25 @@ test-all: test test-integration ## Run the unit suite and then the integration s
 .PHONY: count-code-lines
 count-code-lines: ## Count lines in tracked Python files, per top-level directory
 	@color=; [ -t 1 ] && [ -z "$$NO_COLOR" ] && color=1; \
-	git ls-files -z -- '*.py' | tr '\0' '\n' | awk -v color="$$color" ' \
+	git ls-files -s -z -- '*.py' | tr '\0' '\n' | awk -v color="$$color" ' \
 		function paint(style, text) { return color ? "\033[" style "m" text "\033[0m" : text } \
 		function row(name, f, c, m, b, name_style) { \
 			return paint(name_style, sprintf("%-16s", name)) sprintf(" %7s ", f) paint("32", sprintf("%9s", c)) \
 				paint("2", sprintf(" %9s %9s", m, b)) paint("1", sprintf(" %9s", c + m + b)); \
 		} \
 		{ \
-			dir = index($$0, "/") ? substr($$0, 1, index($$0, "/") - 1) : "."; \
-			status = (getline line < $$0); \
+			path = substr($$0, index($$0, "\t") + 1); \
+			if ($$1 !~ /^100/ || seen[path]++) next; \
+			dir = index(path, "/") ? substr(path, 1, index(path, "/") - 1) : "."; \
+			status = (getline line < path); \
 			if (status < 0) next; \
 			files[dir]++; \
-			for (; status > 0; status = (getline line < $$0)) { \
+			for (; status > 0; status = (getline line < path)) { \
 				if (line ~ /^[[:space:]]*$$/) blank[dir]++; \
 				else if (line ~ /^[[:space:]]*#/) comment[dir]++; \
 				else code[dir]++; \
 			} \
-			close($$0); \
+			close(path); \
 		} \
 		END { \
 			print paint("1", sprintf("%-16s %7s %9s %9s %9s %9s", "directory", "files", "code", "comments", "blank", "total")); \
