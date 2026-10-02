@@ -76,3 +76,23 @@ def test_plain_output_carries_no_escape_codes() -> None:
 def test_paths_split_on_nul_and_repeat_once() -> None:
     """A conflicted path is listed once per stage and must count once."""
     assert read_paths(b"b.py\0a.py\0a.py\0") == [b"a.py", b"b.py"]
+
+
+def test_a_symlinked_parent_directory_is_not_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`O_NOFOLLOW` alone guards only the last component: a tracked directory
+    replaced by a link would count files from outside the repository."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "a.py").write_text("x = 1\n")
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "pkg").symlink_to(outside)
+    monkeypatch.chdir(repository)
+    assert read_regular_file(b"pkg/a.py") is None
+
+
+def test_a_control_character_in_a_directory_name_is_escaped() -> None:
+    """A raw newline would split one row over two lines."""
+    assert top_directory(b"odd\ndir/a.py") == "odd\\ndir"

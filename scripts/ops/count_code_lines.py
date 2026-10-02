@@ -47,12 +47,32 @@ def read_paths(listing: bytes) -> list[bytes]:
     return sorted({path for path in listing.split(b"\0") if path})
 
 
-def read_regular_file(path: bytes) -> bytes | None:
-    """`O_NOFOLLOW` refuses a symlink and `O_NONBLOCK` keeps a FIFO from
-    blocking the open; the type is then checked on the descriptor itself, so
-    nothing can be swapped in between the check and the read."""
+def open_without_links(path: bytes) -> int:
+    """Walks the path one component at a time from the working directory, so a
+    symlink is refused wherever it sits, not only in the last component as a
+    bare `O_NOFOLLOW` would."""
+    *parents, name = path.split(b"/")
+    directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        for part in parents:
+            child = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+            )
+            os.close(directory)
+            directory = child
+        return os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
+    finally:
+        os.close(directory)
+
+
+def read_regular_file(path: bytes) -> bytes | None:
+    """`O_NONBLOCK` keeps a FIFO from blocking the open, and the type is checked
+    on the descriptor itself, so nothing can be swapped in between the check
+    and the read."""
+    try:
+        descriptor = open_without_links(path)
     except OSError:
         return None
     with os.fdopen(descriptor, "rb") as file:
@@ -75,8 +95,14 @@ def count_lines(content: bytes) -> Counts:
 
 
 def top_directory(path: bytes) -> str:
+    """A name may hold a newline or a terminal escape; those are shown escaped
+    so they cannot break the table or reach the terminal."""
     head, separator, _ = path.partition(b"/")
-    return os.fsdecode(head) if separator else "."
+    if not separator:
+        return "."
+    return "".join(
+        char if char.isprintable() else repr(char)[1:-1] for char in os.fsdecode(head)
+    )
 
 
 def count_by_directory(paths: Iterable[bytes]) -> dict[str, Counts]:
