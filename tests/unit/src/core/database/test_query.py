@@ -73,7 +73,7 @@ def test_build_where_clauses_escapes_search_wildcards() -> None:
 
     compiled = compile_clauses(clauses)
 
-    assert r"ESCAPE '\\'" in compiled.string
+    assert "ESCAPE '\\'" in compiled.string
     assert compiled.params["name_1"] == r"%100\%\_match%"
 
 
