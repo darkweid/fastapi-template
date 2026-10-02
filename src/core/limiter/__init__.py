@@ -14,16 +14,19 @@ logger = get_logger(__name__)
 
 async def default_identifier(request: Request) -> str:
     """
-    Creates a rate-limiting key based on the IP address and request path.
+    Buckets by client IP alone.
+
+    `RateLimiter` appends the endpoint's qualified name to the key, so two
+    routes never share a budget. The concrete path is left out on purpose: it
+    carries path ids, and keying on it would give a guest a fresh budget for
+    every `/items/{id}`, leaving enumeration unthrottled.
 
     Reads the peer address only. `TrustedProxyHeadersMiddleware` has already
     resolved `X-Forwarded-For` against `TRUST_PROXY_HOSTS`; reading the header
     here again would take the attacker-controlled left edge of the chain and
     hand out a fresh limit bucket per request.
     """
-    ip = get_client_ip(request) or "unknown"
-
-    return f"{ip}:{request.scope['path']}"
+    return get_client_ip(request) or "unknown"
 
 
 async def http_default_callback(
