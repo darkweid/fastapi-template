@@ -41,6 +41,10 @@ def session_timeouts(
 engine = create_async_engine(
     DATABASE_URL,
     echo=config.postgres.DB_ECHO,
+    # A driver error otherwise renders its bound values into str(exc)
+    # ("[parameters: ...]"), which reaches logs and Sentry: phones, emails,
+    # password hashes. Every engine, migrations included, hides them.
+    hide_parameters=True,
     pool_size=config.postgres.DB_POOL_SIZE,
     max_overflow=config.postgres.DB_MAX_OVERFLOW,
     pool_timeout=POOL_TIMEOUT_SECONDS,
@@ -61,6 +65,7 @@ engine = create_async_engine(
 tasks_engine = create_async_engine(
     DATABASE_URL,
     echo=config.postgres.DB_ECHO,
+    hide_parameters=True,
     pool_size=config.postgres.DB_TASKS_POOL_SIZE,
     max_overflow=config.postgres.DB_TASKS_MAX_OVERFLOW,
     pool_timeout=POOL_TIMEOUT_SECONDS,

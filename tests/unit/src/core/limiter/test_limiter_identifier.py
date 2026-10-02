@@ -47,7 +47,7 @@ async def test_default_identifier_ignores_forwarded_for_header() -> None:
 async def test_default_identifier_uses_peer_address() -> None:
     request = build_request(path="/test")
 
-    assert await default_identifier(request) == "127.0.0.1:/test"
+    assert await default_identifier(request) == "127.0.0.1"
 
 
 @pytest.mark.asyncio
@@ -70,4 +70,45 @@ async def test_unique_forwarded_for_per_request_shares_one_limit_window(
         await limiter(request, response)
 
     endpoint_name = f"{sample_endpoint.__module__}.{sample_endpoint.__qualname__}"
-    assert fake_redis.evalsha_keys == [f"limiter:127.0.0.1:/test:{endpoint_name}"] * 3
+    assert fake_redis.evalsha_keys == [f"limiter:127.0.0.1:{endpoint_name}"] * 3
+
+
+async def other_endpoint() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_path_ids_share_one_limit_window(
+    limiter_state: None,
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Keying on the concrete path gave a guest a fresh budget per id, so
+    enumerating /items/{id} was never throttled."""
+    FastAPILimiter.redis = fake_redis
+    FastAPILimiter.lua_sha = await fake_redis.script_load(FastAPILimiter.lua_script)
+    limiter = RateLimiter(times=2, seconds=60, callback=AsyncMock())
+    response = Response()
+
+    for index in range(3):
+        request = build_request(path=f"/items/{index}", endpoint=sample_endpoint)
+        await limiter(request, response)
+
+    assert len(set(fake_redis.evalsha_keys)) == 1
+
+
+@pytest.mark.asyncio
+async def test_different_endpoints_keep_separate_limit_windows(
+    limiter_state: None,
+    fake_redis: InMemoryRedis,
+) -> None:
+    """With the path gone from the identifier, the endpoint name is what keeps
+    one route from spending another route's budget."""
+    FastAPILimiter.redis = fake_redis
+    FastAPILimiter.lua_sha = await fake_redis.script_load(FastAPILimiter.lua_script)
+    limiter = RateLimiter(times=1, seconds=60, callback=AsyncMock())
+    response = Response()
+
+    await limiter(build_request(path="/a", endpoint=sample_endpoint), response)
+    await limiter(build_request(path="/b", endpoint=other_endpoint), response)
+
+    assert len(set(fake_redis.evalsha_keys)) == 2
