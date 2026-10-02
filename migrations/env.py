@@ -65,7 +65,9 @@ async def run_async_migrations() -> None:
     In this scenario we need to create an Engine
     and associate a connection with the context.
     """
-    connectable: AsyncEngine = create_async_engine(url=_get_postgres_dsn())
+    connectable: AsyncEngine = create_async_engine(
+        url=_get_postgres_dsn(), hide_parameters=True
+    )
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
