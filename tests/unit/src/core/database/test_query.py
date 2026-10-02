@@ -13,7 +13,14 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
-from src.core.database.query import ListQuery, escape_like_literal
+from src.core.database.query import (
+    MAX_SEARCH_WORDS,
+    ListQuery,
+    RelatedSearch,
+    escape_like_literal,
+    search_words,
+)
+from src.core.database.repositories import BaseRepository
 from src.core.errors.exceptions import FilteringError
 from src.core.utils.datetime_utils import get_utc_now
 
@@ -66,6 +73,30 @@ def test_build_where_clauses_searches_all_searchable_fields_with_or() -> None:
     assert " OR " in compiled.string
     assert compiled.params["name_1"] == "%anne%"
     assert compiled.params["email_1"] == "%anne%"
+
+
+def test_build_where_clauses_requires_every_word_in_some_field() -> None:
+    clauses = ListQuery(search="anne  smith anne").build_where_clauses(
+        QueryModel, SEARCHABLE
+    )
+
+    compiled = compile_clauses(clauses)
+
+    assert compiled.string.count("ILIKE") == 4
+    assert " AND " in compiled.string
+    assert sorted(
+        value for key, value in compiled.params.items() if key.startswith("name")
+    ) == ["%anne%", "%smith%"]
+
+
+def test_build_where_clauses_searches_related_columns_without_own_fields() -> None:
+    related = select(QueryModel.email).scalar_subquery()
+
+    clauses = ListQuery(search="anne").build_where_clauses(
+        QueryModel, (), related_search_columns=[related]
+    )
+
+    assert compile_clauses(clauses).string.count("ILIKE") == 1
 
 
 def test_build_where_clauses_escapes_search_wildcards() -> None:
@@ -366,3 +397,48 @@ def test_build_order_by_falls_back_to_primary_key_without_created_at() -> None:
     ]
 
     assert clauses == ["orderless_models.id DESC"]
+
+
+def test_search_words_drop_case_duplicates_and_stop_at_the_cap() -> None:
+    """Every word costs an OR over every column, correlated subqueries
+    included, so a search of fifty one-letter words must not reach SQL."""
+    words = search_words("Ivan ivan " + " ".join(f"w{index}" for index in range(10)))
+
+    assert words[0] == "Ivan"
+    assert len(words) == MAX_SEARCH_WORDS
+
+
+class QueryParent(SQLAlchemyBase):
+    __tablename__ = "query_parents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(64))
+
+
+class QueryModelRepository(BaseRepository[QueryModel]):
+    model = QueryModel
+    searchable_fields = ("name",)
+
+    def _related_search(self) -> list[RelatedSearch]:
+        return [
+            RelatedSearch(
+                QueryParent, QueryParent.id == QueryModel.id, (QueryParent.title,)
+            )
+        ]
+
+
+@pytest.mark.parametrize(("search", "joined"), [(None, False), ("anne", True)])
+def test_related_search_joins_only_while_searching(
+    search: str | None, joined: bool
+) -> None:
+    """A list read without a search must not pay for the join."""
+    repository = QueryModelRepository()
+    query = ListQuery(search=search)
+
+    statement = repository._join_related_search(select(QueryModel), query).where(
+        *repository._search_where(query)
+    )
+    compiled = statement.compile(dialect=postgresql.dialect()).string
+
+    assert ("LEFT OUTER JOIN query_parents" in compiled) is joined
+    assert ("query_parents.title ILIKE" in compiled) is joined

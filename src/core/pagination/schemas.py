@@ -63,7 +63,8 @@ class SortableListQueryParams(PaginationParams):
     parameter that `_build_search_clause` can only answer with a 400.
     """
 
-    order_by: str | None = None
+    # A column name the repository allowlists; none is longer.
+    order_by: str | None = Field(default=None, max_length=64)
     order: SortOrder = "desc"
     date_from: DateBound | None = None
     date_to: DateBound | None = None

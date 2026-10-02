@@ -1,7 +1,9 @@
+from collections.abc import Sequence
 from typing import Any, Generic, TypeVar, cast
 
 from sqlalchemy import (
     Enum as SAEnum,
+    Select,
     String,
     Table,
     func,
@@ -18,7 +20,7 @@ from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
 from src.core.database.mixins import SoftDeleteMixin
-from src.core.database.query import ListQuery, SortOrder
+from src.core.database.query import ListQuery, RelatedSearch, SortOrder
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
@@ -104,6 +106,37 @@ class BaseRepository(Generic[T]):
         `is_deleted=False` here, in one place instead of in every method.
         """
         return filters
+
+    def _related_search(self) -> Sequence[RelatedSearch]:
+        """Tables the list search reads beyond `searchable_fields`, for a row
+        whose displayed name lives there. Server-chosen like
+        `searchable_fields`, never input."""
+        return ()
+
+    def _search_where(self, query: ListQuery) -> list[ColumnElement[bool]]:
+        """`query`'s WHERE clauses over this repository's searchable columns,
+        related ones included; pair with `_join_related_search`."""
+        return query.build_where_clauses(
+            self.model,
+            self.searchable_fields,
+            [
+                column
+                for related in self._related_search()
+                for column in related.columns
+            ],
+        )
+
+    def _join_related_search(
+        self, statement: Select[Any], query: ListQuery
+    ) -> Select[Any]:
+        """Joins the related tables, only while `query` searches: a list
+        read without a search pays no join. Call after `filter_by`, which
+        otherwise reads the last joined table."""
+        if not query.has_search:
+            return statement
+        for related in self._related_search():
+            statement = statement.outerjoin(related.target, related.onclause)
+        return statement
 
     async def create(
         self, session: AsyncSession, data: dict[str, Any], commit: bool = False
@@ -239,14 +272,14 @@ class BaseRepository(Generic[T]):
 
         filters = self._scope_filters(filters)
         list_query = query if query is not None else ListQuery()
-        where_clauses = list_query.build_where_clauses(
-            self.model, self.searchable_fields
-        )
+        where_clauses = self._search_where(list_query)
         order_by = list_query.build_order_by(
             self.model, self.sortable_fields, self.default_order_by
         )
 
-        statement = select(self.model).filter_by(**filters).where(*where_clauses)
+        statement = self._join_related_search(
+            select(self.model).filter_by(**filters), list_query
+        ).where(*where_clauses)
         if eager:
             statement = statement.options(*eager)
         statement = statement.order_by(*order_by)
@@ -258,12 +291,10 @@ class BaseRepository(Generic[T]):
         # The count must carry the same predicates as the selection, or `total`
         # and `items` describe different result sets. Eager options are left out:
         # they add joins a count does not need.
-        count_statement = (
-            select(func.count())
-            .select_from(self.model)
-            .filter_by(**filters)
-            .where(*where_clauses)
-        )
+        count_statement = self._join_related_search(
+            select(func.count()).select_from(self.model).filter_by(**filters),
+            list_query,
+        ).where(*where_clauses)
         total = int((await session.execute(count_statement)).scalar_one())
 
         return items, total

@@ -6,15 +6,19 @@ from pydantic import Field, field_validator
 
 from src.core.schemas import Base, PatchField
 
+# `notes.content` is `Text`: the schema is the only ceiling it has.
+NOTE_CONTENT_MAX_LENGTH = 10_000
+NoteContent = Annotated[str, Field(max_length=NOTE_CONTENT_MAX_LENGTH)]
+
 
 class NoteCreateModel(Base):
     title: str = Field(..., min_length=1, max_length=255)
-    content: str = ""
+    content: NoteContent = ""
 
 
 class NoteUpdateModel(Base):
     title: PatchField[Annotated[str, Field(min_length=1, max_length=255)]] = None
-    content: PatchField[str] = None
+    content: PatchField[NoteContent] = None
 
     @field_validator("title", "content")
     @classmethod

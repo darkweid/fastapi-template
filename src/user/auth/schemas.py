@@ -3,6 +3,8 @@ from pydantic import EmailStr, Field, field_validator
 from src.core.schemas import (
     Base,
     EmailNormalizationMixin,
+    OneTimeToken,
+    Password,
     StrongPasswordValidationMixin,
 )
 from src.core.validations import (
@@ -16,9 +18,11 @@ class CreateUserModel(StrongPasswordValidationMixin, EmailNormalizationMixin, Ba
     first_name: str = Field(min_length=2, max_length=30)
     last_name: str = Field(min_length=2, max_length=30)
     email: EmailStr
-    username: str
-    phone_number: str
-    password: str
+    # The validators below hold the real shape; the lengths publish the
+    # ceiling and refuse an oversized value before any regex runs.
+    username: str = Field(max_length=60)
+    phone_number: str = Field(max_length=16)
+    password: Password
 
     @field_validator("first_name")
     @classmethod
@@ -64,12 +68,12 @@ class ResendVerificationModel(EmailNormalizationMixin, Base):
 
 
 class VerifyEmailRequestModel(Base):
-    token: str
+    token: OneTimeToken
 
 
 class LoginUserModel(EmailNormalizationMixin, Base):
     email: EmailStr
-    password: str
+    password: Password
 
 
 class SendResetPasswordRequestModel(EmailNormalizationMixin, Base):
@@ -81,10 +85,10 @@ class LogoutRequestModel(Base):
 
 
 class ResetPasswordModel(StrongPasswordValidationMixin, Base):
-    token: str
-    password: str
+    token: OneTimeToken
+    password: Password
 
 
 class UserNewPassword(StrongPasswordValidationMixin, Base):
-    current_password: str
-    password: str
+    current_password: Password
+    password: Password
