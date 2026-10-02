@@ -154,8 +154,33 @@ test-integration: ## Run the integration suite against a throwaway PostgreSQL co
 test-all: test test-integration ## Run the unit suite and then the integration suite
 
 .PHONY: count-code-lines
-count-code-lines: ## Count Python lines, excluding the virtualenv
-	find . -path './.venv' -prune -o -type f -name '*.py' -print0 | xargs -0 wc -l | tail -1
+count-code-lines: ## Count lines in tracked Python files, per top-level directory
+	@color=; [ -t 1 ] && [ -z "$$NO_COLOR" ] && color=1; \
+	git ls-files -- '*.py' | awk -v color="$$color" ' \
+		function paint(style, text) { return color ? "\033[" style "m" text "\033[0m" : text } \
+		function row(name, f, c, m, b, name_style) { \
+			return paint(name_style, sprintf("%-16s", name)) sprintf(" %7s ", f) paint("32", sprintf("%9s", c)) \
+				paint("2", sprintf(" %9s %9s", m, b)) paint("1", sprintf(" %9s", c + m + b)); \
+		} \
+		{ \
+			dir = index($$0, "/") ? substr($$0, 1, index($$0, "/") - 1) : "."; \
+			files[dir]++; \
+			while ((getline line < $$0) > 0) { \
+				if (line ~ /^[[:space:]]*$$/) blank[dir]++; \
+				else if (line ~ /^[[:space:]]*#/) comment[dir]++; \
+				else code[dir]++; \
+			} \
+			close($$0); \
+		} \
+		END { \
+			print paint("1", sprintf("%-16s %7s %9s %9s %9s %9s", "directory", "files", "code", "comments", "blank", "total")); \
+			for (dir in files) { \
+				print code[dir] + 0 "\t" row(dir, files[dir], code[dir] + 0, comment[dir] + 0, blank[dir] + 0, "36") | "sort -nr | cut -f2-"; \
+				all_files += files[dir]; all_code += code[dir]; all_comment += comment[dir]; all_blank += blank[dir]; \
+			} \
+			close("sort -nr | cut -f2-"); \
+			print row("total", all_files, all_code, all_comment, all_blank, "1"); \
+		}'
 
 ##@ Dependencies
 
