@@ -1,6 +1,6 @@
 aioboto3
 aiohttp>=3.14.3  # security: CVE-2026-34993/47265/50269/54273-54280, PYSEC-2026-237
-aiosmtplib>=5.1.1  # security: PYSEC-2026-2338
+aiosmtplib>=5.1.3  # security: PYSEC-2026-2338
 alembic
 alembic-postgresql-enum
 argon2-cffi  # direct argon2 backend for password hashing (passlib removed as unmaintained)
@@ -10,7 +10,7 @@ email-validator
 fastapi
 gunicorn
 jinja2
-mako>=1.4.1
+mako>=1.4.3
 pydantic
 pydantic-settings
 pyjwt
@@ -18,7 +18,7 @@ python-multipart>=0.0.32
 redis
 sentry-sdk
 sqlalchemy
-starlette>=1.4.1  # security: CVE-2026-48817/48818, PYSEC-2026-161/248/249
+starlette>=1.7.0  # security: CVE-2026-48817/48818, PYSEC-2026-161/248/249
 taskiq
 taskiq-redis
 uuid6
