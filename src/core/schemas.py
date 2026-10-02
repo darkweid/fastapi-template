@@ -1,4 +1,4 @@
-from typing import Annotated, Any, TypeVar
+from typing import Annotated, Any, Final, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -51,6 +51,18 @@ class EmailNormalizationMixin(BaseModel):
     @classmethod
     def _normalize_email(cls, v: str | EmailStr) -> str:
         return normalize_email(str(v))
+
+
+Password = Annotated[str, Field(max_length=PASSWORD_MAX_LENGTH)]
+"""Any password a client sends, the sign-in one included: the strong-password
+rule never lets a longer one be set, so the same ceiling refuses an oversized
+body before it reaches the hasher."""
+
+# A signed one-time token (password reset, email confirmation) is a few
+# hundred characters; the ceiling only keeps an oversized body away from the
+# decoder.
+ONE_TIME_TOKEN_MAX_LENGTH: Final[int] = 2048
+OneTimeToken = Annotated[str, Field(max_length=ONE_TIME_TOKEN_MAX_LENGTH)]
 
 
 class StrongPasswordValidationMixin(BaseModel):

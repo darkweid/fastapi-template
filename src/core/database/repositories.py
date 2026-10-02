@@ -1,7 +1,9 @@
+from collections.abc import Sequence
 from typing import Any, Generic, TypeVar, cast
 
 from sqlalchemy import (
     Enum as SAEnum,
+    Select,
     String,
     Table,
     func,
@@ -18,7 +20,7 @@ from loggers import get_logger
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
 from src.core.database.mixins import SoftDeleteMixin
-from src.core.database.query import ListQuery, SortOrder
+from src.core.database.query import ListQuery, RelatedSearch, SortOrder
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
 from src.core.utils.datetime_utils import get_utc_now
@@ -104,6 +106,36 @@ class BaseRepository(Generic[T]):
         `is_deleted=False` here, in one place instead of in every method.
         """
         return filters
+
+    def _related_search(self) -> Sequence[RelatedSearch]:
+        """Tables the list search reads beyond `searchable_fields`, for a row
+        whose displayed name lives there. Server-chosen like
+        `searchable_fields`, never input."""
+        return ()
+
+    def _apply_list_filters(
+        self, query: ListQuery, *statements: Select[Any]
+    ) -> list[Select[Any]]:
+        """Each statement with every WHERE clause of `query` and, while it
+        searches, the `_related_search` joins; a read without a search pays
+        no join. The hook is read once, so an `aliased()` target is the same
+        object in the joins and in the searched columns - two reads would
+        join one alias and filter on another, an implicit cross join. Pass
+        statements after `filter_by`, which otherwise reads the last joined
+        table."""
+        related = self._related_search()
+        where = query.build_where_clauses(
+            self.model,
+            self.searchable_fields,
+            [column for search in related for column in search.columns],
+        )
+        filtered = []
+        for statement in statements:
+            if query.has_search:
+                for search in related:
+                    statement = statement.outerjoin(search.target, search.onclause)
+            filtered.append(statement.where(*where))
+        return filtered
 
     async def create(
         self, session: AsyncSession, data: dict[str, Any], commit: bool = False
@@ -239,14 +271,17 @@ class BaseRepository(Generic[T]):
 
         filters = self._scope_filters(filters)
         list_query = query if query is not None else ListQuery()
-        where_clauses = list_query.build_where_clauses(
-            self.model, self.searchable_fields
-        )
         order_by = list_query.build_order_by(
             self.model, self.sortable_fields, self.default_order_by
         )
-
-        statement = select(self.model).filter_by(**filters).where(*where_clauses)
+        # The count must carry the same predicates as the selection, or `total`
+        # and `items` describe different result sets. Eager options are left out:
+        # they add joins a count does not need.
+        statement, count_statement = self._apply_list_filters(
+            list_query,
+            select(self.model).filter_by(**filters),
+            select(func.count()).select_from(self.model).filter_by(**filters),
+        )
         if eager:
             statement = statement.options(*eager)
         statement = statement.order_by(*order_by)
@@ -255,15 +290,6 @@ class BaseRepository(Generic[T]):
         result = await session.execute(statement)
         items = list(result.unique().scalars().all())
 
-        # The count must carry the same predicates as the selection, or `total`
-        # and `items` describe different result sets. Eager options are left out:
-        # they add joins a count does not need.
-        count_statement = (
-            select(func.count())
-            .select_from(self.model)
-            .filter_by(**filters)
-            .where(*where_clauses)
-        )
         total = int((await session.execute(count_statement)).scalar_one())
 
         return items, total

@@ -75,11 +75,8 @@ def test_user_new_password_rejects_password_longer_than_128_characters() -> None
     with pytest.raises(ValidationError) as exc_info:
         UserNewPassword(current_password="OldPass1!", password=password)
 
-    error_message = exc_info.value.errors()[0]["msg"]
-    assert (
-        error_message
-        == "Value error, Password must be 8-128 characters long and contain at least one lowercase letter, one uppercase letter, one digit, and one non-alphanumeric non-space character. Printable ASCII characters are allowed."
-    )
+    # The `Password` length ceiling refuses it before the strength rule runs.
+    assert exc_info.value.errors()[0]["type"] == "string_too_long"
 
 
 def test_user_new_password_rejects_non_ascii_characters() -> None:

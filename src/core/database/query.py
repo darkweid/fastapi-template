@@ -1,9 +1,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
-from typing import Any, Literal, cast
+from typing import Any, Literal, NamedTuple, cast
 
-from sqlalchemy import inspect, or_
+from sqlalchemy import SQLColumnExpression, and_, func, inspect, literal_column, or_
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql.elements import ColumnElement, UnaryExpression
 from sqlalchemy.sql.expression import ColumnClause
@@ -30,6 +30,50 @@ def escape_like_literal(value: str) -> str:
     )
 
 
+# Each word is an OR across every searchable column, correlated subqueries
+# included, so the count of words multiplies the work per row.
+MAX_SEARCH_WORDS = 5
+
+
+def fold_yo(text: str) -> str:
+    """`ё` read as `е`: people type both for one letter."""
+    return text.replace("ё", "е").replace("Ё", "Е")
+
+
+def searchable_text(
+    column: SQLColumnExpression[Any],
+) -> SQLColumnExpression[Any]:
+    """The text the search matches: `column` with `ё` read as `е`. The two
+    alphabets are literals, never bound parameters: a trigram index over this
+    expression matches a query only when the expression is spelled the same,
+    and under a generic plan a parameter is not."""
+    return func.translate(column, literal_column("'Ёё'"), literal_column("'Ее'"))
+
+
+def search_words(term: str) -> list[str]:
+    """The distinct words of a search in first-seen order, with `ё` read as
+    `е` and letter case ignored the way `ilike` ignores it, at most
+    `MAX_SEARCH_WORDS`."""
+    # `lower`, not `casefold`: `casefold` maps one letter to several
+    # (`ß` -> `ss`) where `ILIKE` does not, and would merge two words the
+    # database tells apart.
+    words: dict[str, str] = {}
+    for word in fold_yo(term).split():
+        words.setdefault(word.lower(), word)
+    return list(words.values())[:MAX_SEARCH_WORDS]
+
+
+class RelatedSearch(NamedTuple):
+    """A table the list search reads beyond the model's own columns, joined
+    `LEFT OUTER` on `onclause` only while a search is active. The join must
+    reach at most one row per model row (a parent, never a child
+    collection), or the page and its count multiply."""
+
+    target: Any
+    onclause: ColumnElement[bool]
+    columns: Sequence[SQLColumnExpression[Any]]
+
+
 @dataclass(frozen=True, slots=True)
 class ListQuery:
     """
@@ -53,12 +97,22 @@ class ListQuery:
     # in local days passes theirs, or "until the 24th" ends hours off.
     local_timezone: tzinfo = UTC
 
+    @property
+    def has_search(self) -> bool:
+        return bool(search_words(self.search or ""))
+
     def build_where_clauses(
         self,
         model: type[DeclarativeBase],
         searchable_fields: Sequence[str],
+        related_search_columns: Sequence[SQLColumnExpression[Any]] = (),
     ) -> list[ColumnElement[bool]]:
-        """Build every WHERE clause this query implies."""
+        """Build every WHERE clause this query implies.
+
+        `related_search_columns` are columns of the tables a `RelatedSearch`
+        joins: the name a row shows may live on another table, and a search
+        that cannot see it finds nothing by the name on the screen. The
+        caller adds the joins."""
         clauses: list[ColumnElement[bool]] = []
 
         if self.conditions is not None and self.conditions.has_conditions():
@@ -66,7 +120,9 @@ class ListQuery:
 
         clauses.extend(self._build_date_clauses(model))
 
-        search_clause = self._build_search_clause(model, searchable_fields)
+        search_clause = self._build_search_clause(
+            model, searchable_fields, related_search_columns
+        )
         if search_clause is not None:
             clauses.append(search_clause)
 
@@ -146,18 +202,33 @@ class ListQuery:
         self,
         model: type[DeclarativeBase],
         searchable_fields: Sequence[str],
+        related_search_columns: Sequence[SQLColumnExpression[Any]],
     ) -> ColumnElement[bool] | None:
-        term = (self.search or "").strip()
-        if not term:
+        """Every word of the search must be found in some searchable column,
+        in any order: "Ivan Petrov" finds the row whose first name holds one
+        word and last name the other, which a match of the whole phrase
+        against each column alone never does."""
+        words = search_words(self.search or "")
+        if not words:
             return None
-        if not searchable_fields:
+        columns = [
+            *(getattr(model, field) for field in searchable_fields),
+            *related_search_columns,
+        ]
+        if not columns:
             raise FilteringError("Search is not supported for this resource")
 
-        pattern = f"%{escape_like_literal(term)}%"
-        return or_(
+        return and_(
             *(
-                getattr(model, field).ilike(pattern, escape=_ESCAPE_CHAR)
-                for field in searchable_fields
+                or_(
+                    *(
+                        searchable_text(column).ilike(
+                            f"%{escape_like_literal(word)}%", escape=_ESCAPE_CHAR
+                        )
+                        for column in columns
+                    )
+                )
+                for word in words
             )
         )
 

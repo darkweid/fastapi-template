@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+import re
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, aliased, mapped_column
 from sqlalchemy.sql.compiler import Compiled
 from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.database.base import Base as SQLAlchemyBase
 from src.core.database.filters import FilterCondition
-from src.core.database.query import ListQuery, escape_like_literal
+from src.core.database.query import (
+    MAX_SEARCH_WORDS,
+    ListQuery,
+    RelatedSearch,
+    escape_like_literal,
+    search_words,
+)
+from src.core.database.repositories import BaseRepository
 from src.core.errors.exceptions import FilteringError
 from src.core.utils.datetime_utils import get_utc_now
 
@@ -48,6 +56,15 @@ def compile_clauses(clauses: list[ColumnElement[bool]]) -> Compiled:
     return statement.compile(dialect=postgresql.dialect())
 
 
+def search_patterns(compiled: Compiled) -> list[str]:
+    """The ILIKE patterns a compiled search binds, in clause order."""
+    return [
+        value
+        for value in compiled.params.values()
+        if isinstance(value, str) and value.startswith("%")
+    ]
+
+
 def test_escape_like_literal_escapes_wildcards() -> None:
     assert escape_like_literal(r"100%_match\value") == r"100\%\_match\\value"
 
@@ -64,8 +81,29 @@ def test_build_where_clauses_searches_all_searchable_fields_with_or() -> None:
     assert len(clauses) == 1
     assert compiled.string.count("ILIKE") == 2
     assert " OR " in compiled.string
-    assert compiled.params["name_1"] == "%anne%"
-    assert compiled.params["email_1"] == "%anne%"
+    assert search_patterns(compiled) == ["%anne%", "%anne%"]
+
+
+def test_build_where_clauses_requires_every_word_in_some_field() -> None:
+    clauses = ListQuery(search="anne  smith anne").build_where_clauses(
+        QueryModel, SEARCHABLE
+    )
+
+    compiled = compile_clauses(clauses)
+
+    assert compiled.string.count("ILIKE") == 4
+    assert " AND " in compiled.string
+    assert sorted(set(search_patterns(compiled))) == ["%anne%", "%smith%"]
+
+
+def test_build_where_clauses_searches_related_columns_without_own_fields() -> None:
+    related = select(QueryModel.email).scalar_subquery()
+
+    clauses = ListQuery(search="anne").build_where_clauses(
+        QueryModel, (), related_search_columns=[related]
+    )
+
+    assert compile_clauses(clauses).string.count("ILIKE") == 1
 
 
 def test_build_where_clauses_escapes_search_wildcards() -> None:
@@ -73,8 +111,10 @@ def test_build_where_clauses_escapes_search_wildcards() -> None:
 
     compiled = compile_clauses(clauses)
 
-    assert "ESCAPE '\\'" in compiled.string
-    assert compiled.params["name_1"] == r"%100\%\_match%"
+    # The dialect doubles the backslash in the compiled text or not depending
+    # on the SQLAlchemy dialect options; either spelling is one escape char.
+    assert re.search(r"ESCAPE '\\{1,2}'", compiled.string)
+    assert search_patterns(compiled) == [r"%100\%\_match%"]
 
 
 @pytest.mark.parametrize("search", ["", "   ", None])
@@ -366,3 +406,88 @@ def test_build_order_by_falls_back_to_primary_key_without_created_at() -> None:
     ]
 
     assert clauses == ["orderless_models.id DESC"]
+
+
+def test_search_words_drop_case_duplicates_and_stop_at_the_cap() -> None:
+    """Every word costs an OR over every column, correlated subqueries
+    included, so a search of fifty one-letter words must not reach SQL."""
+    words = search_words("Ivan ivan " + " ".join(f"w{index}" for index in range(10)))
+
+    assert words[0] == "Ivan"
+    assert len(words) == MAX_SEARCH_WORDS
+
+
+class QueryParent(SQLAlchemyBase):
+    __tablename__ = "query_parents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(64))
+
+
+class QueryModelRepository(BaseRepository[QueryModel]):
+    model = QueryModel
+    searchable_fields = ("name",)
+
+    def _related_search(self) -> list[RelatedSearch]:
+        return [
+            RelatedSearch(
+                QueryParent, QueryParent.id == QueryModel.id, (QueryParent.title,)
+            )
+        ]
+
+
+@pytest.mark.parametrize(("search", "joined"), [(None, False), ("anne", True)])
+def test_related_search_joins_only_while_searching(
+    search: str | None, joined: bool
+) -> None:
+    """A list read without a search must not pay for the join."""
+    repository = QueryModelRepository()
+    query = ListQuery(search=search)
+
+    (statement,) = repository._apply_list_filters(query, select(QueryModel))
+    compiled = statement.compile(dialect=postgresql.dialect()).string
+
+    assert ("LEFT OUTER JOIN query_parents" in compiled) is joined
+    assert ("translate(query_parents.title" in compiled) is joined
+
+
+class AliasedParentRepository(BaseRepository[QueryModel]):
+    """Builds a fresh alias on every hook call, as a repository searching two
+    foreign keys to one table must."""
+
+    model = QueryModel
+
+    def _related_search(self) -> list[RelatedSearch]:
+        parent = aliased(QueryParent)
+        return [RelatedSearch(parent, parent.id == QueryModel.id, (parent.title,))]
+
+
+def test_related_search_filters_on_the_alias_it_joins() -> None:
+    """Two hook reads would join one alias and filter on another, which
+    SQLAlchemy turns into an implicit cross join."""
+    (statement,) = AliasedParentRepository()._apply_list_filters(
+        ListQuery(search="anne"), select(QueryModel)
+    )
+
+    compiled = statement.compile(dialect=postgresql.dialect()).string
+
+    assert compiled.count("query_parents AS") == 1
+
+
+def test_search_reads_yo_as_ye_on_both_sides() -> None:
+    clauses = ListQuery(search="Алёна").build_where_clauses(QueryModel, ("name",))
+
+    compiled = compile_clauses(clauses)
+
+    assert "translate(query_models.name, 'Ёё', 'Ее') ILIKE" in compiled.string
+    assert search_patterns(compiled) == ["%Алена%"]
+
+
+def test_search_words_keep_words_ilike_tells_apart() -> None:
+    """`casefold` reads `ß` as `ss`; `ILIKE` does not, so both stay."""
+    assert search_words("STRASSE straße") == ["STRASSE", "straße"]
+
+
+def test_search_words_cap_keeps_the_first_distinct_words() -> None:
+    """A repeat after the cap must not push an earlier word out of it."""
+    assert search_words("a b c d e f a") == ["a", "b", "c", "d", "e"]
