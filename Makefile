@@ -154,8 +154,9 @@ test-integration: ## Run the integration suite against a throwaway PostgreSQL co
 test-all: test test-integration ## Run the unit suite and then the integration suite
 
 .PHONY: count-code-lines
+count-code-lines: SHELL := /bin/bash
 count-code-lines: ## Count lines in tracked Python files, per top-level directory
-	@git ls-files -z -- '*.py' | python3 scripts/ops/count_code_lines.py
+	@set -o pipefail; git ls-files -z -- '*.py' | python3 scripts/ops/count_code_lines.py
 
 ##@ Dependencies
 
