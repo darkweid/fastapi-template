@@ -151,6 +151,7 @@ packaging==26.3
     #   build
     #   pytest
     #   taskiq
+    #   virtualenv
     #   wheel
 pathspec==1.1.1
     # via
@@ -188,7 +189,7 @@ pydantic-settings==2.15.0
     # via -r base.in
 pygments==2.20.0
     # via pytest
-pyjwt==2.14.0
+pyjwt==2.15.1
     # via -r base.in
 pyproject-hooks==1.2.0
     # via
@@ -210,7 +211,7 @@ python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
     #   botocore
-python-discovery==1.5.1
+python-discovery==1.6.1
     # via virtualenv
 python-dotenv==1.2.3
     # via pydantic-settings
@@ -272,7 +273,7 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   botocore
     #   sentry-sdk
@@ -285,7 +286,7 @@ uvicorn==0.52.4
     #   uvicorn-worker
 uvicorn-worker==0.4.0
     # via -r base.in
-virtualenv==21.7.4
+virtualenv==21.14.3
     # via pre-commit
 watchdog==6.0.0
     # via taskiq
