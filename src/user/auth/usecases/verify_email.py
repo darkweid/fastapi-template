@@ -91,8 +91,7 @@ class VerifyEmailUseCase:
                 )
                 # Attributed to the account: consuming the token proved the
                 # caller reads that mailbox, which is all verification claims.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     Actor.user(user.id, ip=ip),
                     UserEmailVerified(object_id=user.id),
                 )

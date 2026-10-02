@@ -15,11 +15,13 @@ from src.main.docs import (
     docs_credentials_are_configured,
     include_protected_docs,
 )
+from src.main.event_subscribers import register_event_subscribers
 from src.main.lifespan import lifespan
 from src.main.openapi import SWAGGER_UI_PARAMETERS
 from src.main.presentation import include_exceptions_handlers, include_routers
 from src.main.route_logging import log_routes_summary
 
+register_event_subscribers()
 logging.getLogger("uvicorn.access").disabled = True
 logger = get_logger(__name__)
 

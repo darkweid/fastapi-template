@@ -42,9 +42,7 @@ class DeleteNoteUseCase:
             if deleted_note is None:
                 raise InstanceNotFoundException("Note not found.")
             await uow.flush()
-            await uow.event_logs.record(
-                uow.session, actor, NoteDeleted(object_id=note_id)
-            )
+            await uow.publish(actor, NoteDeleted(object_id=note_id))
             await uow.commit()
             logger.debug(
                 "[DeleteNote] note %s deleted by user %s.", note_id, current_user.id

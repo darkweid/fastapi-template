@@ -42,20 +42,35 @@ that shapes everything below: a payload cannot be pruned once written.
    principal is proven (a failed sign-in) and `Actor.system()` for a scheduled
    task.
 
-3. **Record inside the use case's UoW**, before its `commit()`:
+3. **Publish inside the use case's UoW**, before its `commit()`:
 
    ```python
-   await uow.event_logs.record(uow.session, actor, NoteUpdated(...))
+   await uow.publish(actor, NoteUpdated(...))
    await uow.commit()
    ```
 
-   The row is part of the same transaction as the action, so a rolled-back
-   action leaves no audit trail claiming it happened. `record()` writes inside
-   a SAVEPOINT and swallows a failed INSERT into Sentry: an audit row is never
-   worth failing the action it describes, and the SAVEPOINT is what lets the
-   caller's own work survive the rejection. It flushes the session first, so a
-   constraint violation of the *action* surfaces to the caller instead of being
-   swallowed as a logging failure.
+   `ApplicationUnitOfWork.publish` writes the journal row and then runs every
+   subscriber, all in the action's transaction, so a rolled-back action
+   leaves neither an audit row nor a subscriber's work claiming it happened.
+   The row goes in a SAVEPOINT and a failed INSERT is swallowed into Sentry:
+   an audit row is never worth failing the action it describes. The session
+   is flushed first, so a constraint violation of the *action* surfaces to
+   the caller instead of being swallowed as a logging failure. A use case
+   never calls `uow.event_logs.record` itself.
+
+4. **React to an event by subscribing to it, never by reading the journal.**
+   A module that must act when something happens (a notification, an
+   integration) writes `async def handler(uow, published) -> None` and lists
+   it in `EVENT_SUBSCRIBERS` (`src/main/event_subscribers.py`), which both
+   entry points register at import. A subscriber runs after the journal row
+   whatever became of it, gets the event itself (`PublishedEvent`: `id`,
+   `actor`, `event`, `occurred_at`, the same `id` and instant as the row), and
+   its exception fails the action: what it writes - usually an outbox row
+   carrying the event - must not be lost silently. The journal is best-effort
+   by design, so anything hung on its row inherits that and loses work the
+   moment an audit insert fails. An occurrence that is nobody's action and
+   tells a reader of the log nothing (a reminder coming due) sets
+   `journaled = False` on its class: subscribers get it, the journal does not.
 
 Where the scenario lives in `src/core/` - the realm-agnostic `LogoutUseCase` -
 the realm wraps it instead of pushing its catalog down into core:

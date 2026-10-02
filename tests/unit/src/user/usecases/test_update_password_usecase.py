@@ -196,7 +196,7 @@ async def test_update_password_success(
     assert await cache.get(cache_key) is None
     # Pre-commit bump plus the after-commit hook's second bump.
     assert cache_invalidate_spy.await_count == 2
-    assert uow.event_logs.codes == ["user.password_changed"]
+    assert uow.published_codes == ["user.password_changed"]
 
 
 @pytest.mark.asyncio

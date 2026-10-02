@@ -4,8 +4,6 @@ from collections.abc import Generator, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from tests.fakes.event_log import FakeEventLogRepository
-
 
 class AsyncTransactionContext:
     """Stands in for AsyncSessionTransaction: awaitable like the real
@@ -119,15 +117,22 @@ class FakeUnitOfWork:
     ) -> None:
         self._session = session or FakeAsyncSession()
         self._repositories = dict(repositories or {})
-        # Every use case may log; a test that does not care about the event
-        # should not have to wire the repository that stores it.
-        self._repositories.setdefault("event_logs", FakeEventLogRepository())
+        # What `publish` was given, in order, so a test asserts on the event
+        # object itself instead of on a mock's call arguments.
+        self.published: list[tuple[Any, Any]] = []
         self._completed = False
         self._after_commit_hooks: list[Any] = []
         self.commit = AsyncMock(side_effect=self._commit)
         self.rollback = AsyncMock(side_effect=self._mark_rolled_back)
         self.flush = AsyncMock(side_effect=self._flush)
         self.refresh = AsyncMock(side_effect=self._refresh)
+
+    async def publish(self, actor: Any, event: Any) -> None:
+        self.published.append((actor, event))
+
+    @property
+    def published_codes(self) -> list[str]:
+        return [event.code for _, event in self.published]
 
     async def __aenter__(self) -> FakeUnitOfWork:
         return self

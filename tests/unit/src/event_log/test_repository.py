@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.event_log.actor import Actor
 from src.event_log.enums import ActorType, ObjectType
-from src.event_log.events import DomainEvent
+from src.event_log.events import DomainEvent, PublishedEvent
 from src.event_log.repositories import EventLogRepository
 
 
@@ -22,11 +22,22 @@ class SomethingHappened(DomainEvent):
     signed_up_on: date
 
 
+OCCURRED_AT = datetime(2020, 1, 1, tzinfo=UTC)
+
+
+async def _record(session: Any, actor: Actor, event: DomainEvent) -> PublishedEvent:
+    published = PublishedEvent(
+        id=uuid4(), actor=actor, event=event, occurred_at=OCCURRED_AT
+    )
+    await EventLogRepository().record(session, published)
+    return published
+
+
 async def test_actor_and_event_land_in_their_own_columns(fake_session) -> None:
     """The columns are what the log is queried by; the payload is not indexed."""
     user_id = uuid4()
 
-    await EventLogRepository().record(
+    published = await _record(
         fake_session,
         Actor.user(user_id, ip="10.0.0.1"),
         SomethingHappened(
@@ -43,13 +54,15 @@ async def test_actor_and_event_land_in_their_own_columns(fake_session) -> None:
     assert row.object_id == user_id
     assert row.event_type == "test.something_happened"
     assert row.ip_address == "10.0.0.1"
+    # One id and one instant for the row and every subscriber of the event.
+    assert (row.id, row.created_at) == (published.id, OCCURRED_AT)
 
 
 async def test_payload_is_json_safe_and_holds_no_column_twice(fake_session) -> None:
     """`object_id` is a column; repeating it in JSONB invites the two to drift."""
     note_id = uuid4()
 
-    await EventLogRepository().record(
+    await _record(
         fake_session,
         Actor.user(uuid4()),
         SomethingHappened(
@@ -70,7 +83,7 @@ async def test_a_failed_insert_leaves_the_action_alone(fake_session) -> None:
     fake_session.fail_nested_with = IntegrityError("insert", {}, Exception("boom"))
 
     with patch("src.event_log.repositories.sentry_sdk.capture_exception") as captured:
-        await EventLogRepository().record(
+        await _record(
             fake_session,
             Actor.system(),
             SomethingHappened(
@@ -92,7 +105,7 @@ async def test_a_failing_action_is_not_reported_as_a_logging_failure(
 
     with patch("src.event_log.repositories.sentry_sdk.capture_exception") as captured:
         with pytest.raises(IntegrityError):
-            await EventLogRepository().record(
+            await _record(
                 fake_session,
                 Actor.system(),
                 SomethingHappened(

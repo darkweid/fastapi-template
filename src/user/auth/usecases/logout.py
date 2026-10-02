@@ -47,8 +47,7 @@ class UserLogoutUseCase:
         )
         subject_id = UUID(identity.subject_id)
         async with self.uow as uow:
-            await uow.event_logs.record(
-                uow.session,
+            await uow.publish(
                 Actor.user(subject_id, ip=ip),
                 UserSignedOut(
                     object_id=subject_id, all_sessions=terminate_all_sessions

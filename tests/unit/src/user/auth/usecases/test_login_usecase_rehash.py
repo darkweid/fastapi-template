@@ -124,7 +124,7 @@ async def test_login_does_not_rehash_when_not_needed(
     # Login invalidates unconditionally, even on the no-rehash path where the row
     # is not written - see LoginUserUseCase's docstring for why.
     assert await cache.get(cache_key) is None
-    logged_actor, logged_event = uow.event_logs.recorded[0]
+    logged_actor, logged_event = uow.published[0]
     assert logged_event.code == "user.signed_in"
     assert logged_actor.actor_id == user.id
 
@@ -155,7 +155,7 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
     # The rejection commits on its own: the audit row is the only thing this
     # transaction carries, and it has to survive the error that follows it.
     uow.commit.assert_awaited_once()
-    logged_actor, logged_event = uow.event_logs.recorded[0]
+    logged_actor, logged_event = uow.published[0]
     assert logged_actor.actor_type is ActorType.ANONYMOUS
     assert logged_event.code == "user.sign_in_failed"
     assert logged_event.reason == "unknown_email"
@@ -188,7 +188,7 @@ async def test_login_returns_unified_error_for_wrong_password(
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
-    logged_actor, logged_event = uow.event_logs.recorded[0]
+    logged_actor, logged_event = uow.published[0]
     # Anonymous although the account is known: the password did not match, so
     # nothing here proves the owner made the attempt.
     assert logged_actor.actor_type is ActorType.ANONYMOUS
@@ -230,7 +230,7 @@ async def test_login_returns_unified_error_for_account_state_failures(
     uow.users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
-    logged_actor, logged_event = uow.event_logs.recorded[0]
+    logged_actor, logged_event = uow.published[0]
     # The password matched, so this attempt is the account owner's.
     assert logged_actor.actor_id == user.id
     assert logged_event.reason == expected_violation
@@ -269,5 +269,5 @@ async def test_a_session_that_cannot_be_issued_logs_no_sign_in(
             LoginUserModel(email="user@example.com", password="plain-pass")
         )
 
-    assert uow.event_logs.recorded == []
+    assert uow.published == []
     uow.commit.assert_not_awaited()

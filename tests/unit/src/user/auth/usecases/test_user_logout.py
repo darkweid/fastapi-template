@@ -33,7 +33,7 @@ async def test_logout_records_which_sessions_it_ended(
         ip="10.0.0.1",
     )
 
-    actor, event = uow.event_logs.recorded[0]
+    actor, event = uow.published[0]
     assert actor.actor_id == subject_id
     assert actor.ip == "10.0.0.1"
     assert event.code == "user.signed_out"

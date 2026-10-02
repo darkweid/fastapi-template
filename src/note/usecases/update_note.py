@@ -59,8 +59,7 @@ class UpdateNoteUseCase:
             if changes:
                 # A PATCH that resends the stored values changed nothing, and a
                 # row saying otherwise is what a reader would have to disprove.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     actor,
                     NoteUpdated(object_id=note_id, fields=sorted(changes)),
                 )

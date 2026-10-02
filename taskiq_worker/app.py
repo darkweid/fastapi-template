@@ -12,6 +12,7 @@ from src.core.cache.serializer import JsonSerializer
 import src.core.email_service.tasks  # noqa: F401
 import src.core.outbox.tasks  # noqa: F401
 from src.main.config import config
+from src.main.event_subscribers import register_event_subscribers
 from src.main.sentry import init_sentry
 import src.user.auth.tasks  # noqa: F401
 import src.user.tasks  # noqa: F401
@@ -22,6 +23,7 @@ from taskiq_worker.dependencies import (
 )
 
 init_sentry()
+register_event_subscribers()
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)

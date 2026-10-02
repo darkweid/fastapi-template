@@ -99,8 +99,7 @@ class ResetPasswordConfirmUseCase:
                 # Attributed to the account: the spent token proved the caller
                 # reads its mailbox. Whether that caller is the owner is what
                 # the preceding `user.password_reset_requested` row helps answer.
-                await uow.event_logs.record(
-                    uow.session,
+                await uow.publish(
                     Actor.user(user.id, ip=ip),
                     UserPasswordReset(object_id=user.id),
                 )
