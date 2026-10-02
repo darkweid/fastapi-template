@@ -164,8 +164,10 @@ count-code-lines: ## Count lines in tracked Python files, per top-level director
 		} \
 		{ \
 			dir = index($$0, "/") ? substr($$0, 1, index($$0, "/") - 1) : "."; \
+			status = (getline line < $$0); \
+			if (status < 0) next; \
 			files[dir]++; \
-			while ((getline line < $$0) > 0) { \
+			for (; status > 0; status = (getline line < $$0)) { \
 				if (line ~ /^[[:space:]]*$$/) blank[dir]++; \
 				else if (line ~ /^[[:space:]]*#/) comment[dir]++; \
 				else code[dir]++; \
