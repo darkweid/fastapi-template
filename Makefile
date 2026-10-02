@@ -156,7 +156,7 @@ test-all: test test-integration ## Run the unit suite and then the integration s
 .PHONY: count-code-lines
 count-code-lines: ## Count lines in tracked Python files, per top-level directory
 	@color=; [ -t 1 ] && [ -z "$$NO_COLOR" ] && color=1; \
-	git ls-files -- '*.py' | awk -v color="$$color" ' \
+	git ls-files -z -- '*.py' | tr '\0' '\n' | awk -v color="$$color" ' \
 		function paint(style, text) { return color ? "\033[" style "m" text "\033[0m" : text } \
 		function row(name, f, c, m, b, name_style) { \
 			return paint(name_style, sprintf("%-16s", name)) sprintf(" %7s ", f) paint("32", sprintf("%9s", c)) \
