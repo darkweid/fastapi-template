@@ -94,19 +94,23 @@ def count_lines(content: bytes) -> Counts:
     return counts
 
 
-def top_directory(path: bytes) -> str:
-    """A name may hold a newline or a terminal escape; those are shown escaped
-    so they cannot break the table or reach the terminal."""
+def top_directory(path: bytes) -> bytes:
     head, separator, _ = path.partition(b"/")
-    if not separator:
-        return "."
+    return head if separator else b"."
+
+
+def label(directory: bytes) -> str:
+    """A name may hold a newline or a terminal escape; those are shown escaped
+    so they cannot break the table or reach the terminal. Rows are grouped by
+    the raw name, so two names that escape alike still stay apart."""
     return "".join(
-        char if char.isprintable() else repr(char)[1:-1] for char in os.fsdecode(head)
+        char if char.isprintable() else repr(char)[1:-1]
+        for char in os.fsdecode(directory)
     )
 
 
-def count_by_directory(paths: Iterable[bytes]) -> dict[str, Counts]:
-    by_directory: dict[str, Counts] = {}
+def count_by_directory(paths: Iterable[bytes]) -> dict[bytes, Counts]:
+    by_directory: dict[bytes, Counts] = {}
     for path in paths:
         content = read_regular_file(path)
         if content is None:
@@ -129,13 +133,13 @@ def format_row(name: str, counts: Counts, name_style: str, color: bool) -> str:
     )
 
 
-def render(by_directory: dict[str, Counts], color: bool) -> list[str]:
+def render(by_directory: dict[bytes, Counts], color: bool) -> list[str]:
     total = Counts()
     lines = [paint(BOLD, ROW_FORMAT.format(*HEADER), color)]
     for name, counts in sorted(
         by_directory.items(), key=lambda item: (-item[1].code, item[0])
     ):
-        lines.append(format_row(name, counts, CYAN, color))
+        lines.append(format_row(label(name), counts, CYAN, color))
         total.add(counts)
     lines.append(format_row("total", total, BOLD, color))
     return lines

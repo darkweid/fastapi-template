@@ -7,6 +7,7 @@ from scripts.ops.count_code_lines import (
     Counts,
     count_by_directory,
     count_lines,
+    label,
     read_paths,
     read_regular_file,
     render,
@@ -52,12 +53,12 @@ def test_a_file_name_with_a_newline_is_counted(
     monkeypatch.chdir(tmp_path)
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "odd\nname.py").write_text("x = 1\n")
-    assert count_by_directory([b"pkg/odd\nname.py"])["pkg"].files == 1
+    assert count_by_directory([b"pkg/odd\nname.py"])[b"pkg"].files == 1
 
 
 def test_a_root_level_file_belongs_to_the_dot_row() -> None:
-    assert top_directory(b"setup.py") == "."
-    assert top_directory(b"src/app.py") == "src"
+    assert top_directory(b"setup.py") == b"."
+    assert top_directory(b"src/app.py") == b"src"
 
 
 def test_rows_are_ordered_by_code_and_end_with_the_total() -> None:
@@ -70,7 +71,7 @@ def test_rows_are_ordered_by_code_and_end_with_the_total() -> None:
 
 def test_plain_output_carries_no_escape_codes() -> None:
     """A pipe or a file must get text, not terminal control sequences."""
-    assert "\033" not in "".join(render({"src": Counts(1, 1, 0, 0)}, color=False))
+    assert "\033" not in "".join(render({b"src": Counts(1, 1, 0, 0)}, color=False))
 
 
 def test_paths_split_on_nul_and_repeat_once() -> None:
@@ -95,4 +96,14 @@ def test_a_symlinked_parent_directory_is_not_followed(
 
 def test_a_control_character_in_a_directory_name_is_escaped() -> None:
     """A raw newline would split one row over two lines."""
-    assert top_directory(b"odd\ndir/a.py") == "odd\\ndir"
+    assert label(b"odd\ndir") == "odd\\ndir"
+
+
+def test_names_that_escape_alike_stay_separate_rows() -> None:
+    """Grouping by the escaped label would merge a directory holding a newline
+    with one literally named with a backslash and an `n`."""
+    lines = render(
+        {b"odd\ndir": Counts(1, 2, 0, 0), b"odd\\ndir": Counts(1, 1, 0, 0)},
+        color=False,
+    )
+    assert len(lines) == 4
