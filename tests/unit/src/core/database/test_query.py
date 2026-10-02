@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import Boolean, DateTime, Integer, String, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, aliased, mapped_column
 from sqlalchemy.sql.compiler import Compiled
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -55,6 +55,15 @@ def compile_clauses(clauses: list[ColumnElement[bool]]) -> Compiled:
     return statement.compile(dialect=postgresql.dialect())
 
 
+def search_patterns(compiled: Compiled) -> list[str]:
+    """The ILIKE patterns a compiled search binds, in clause order."""
+    return [
+        value
+        for value in compiled.params.values()
+        if isinstance(value, str) and value.startswith("%")
+    ]
+
+
 def test_escape_like_literal_escapes_wildcards() -> None:
     assert escape_like_literal(r"100%_match\value") == r"100\%\_match\\value"
 
@@ -71,8 +80,7 @@ def test_build_where_clauses_searches_all_searchable_fields_with_or() -> None:
     assert len(clauses) == 1
     assert compiled.string.count("ILIKE") == 2
     assert " OR " in compiled.string
-    assert compiled.params["name_1"] == "%anne%"
-    assert compiled.params["email_1"] == "%anne%"
+    assert search_patterns(compiled) == ["%anne%", "%anne%"]
 
 
 def test_build_where_clauses_requires_every_word_in_some_field() -> None:
@@ -84,9 +92,7 @@ def test_build_where_clauses_requires_every_word_in_some_field() -> None:
 
     assert compiled.string.count("ILIKE") == 4
     assert " AND " in compiled.string
-    assert sorted(
-        value for key, value in compiled.params.items() if key.startswith("name")
-    ) == ["%anne%", "%smith%"]
+    assert sorted(set(search_patterns(compiled))) == ["%anne%", "%smith%"]
 
 
 def test_build_where_clauses_searches_related_columns_without_own_fields() -> None:
@@ -105,7 +111,7 @@ def test_build_where_clauses_escapes_search_wildcards() -> None:
     compiled = compile_clauses(clauses)
 
     assert "ESCAPE '\\'" in compiled.string
-    assert compiled.params["name_1"] == r"%100\%\_match%"
+    assert search_patterns(compiled) == [r"%100\%\_match%"]
 
 
 @pytest.mark.parametrize("search", ["", "   ", None])
@@ -435,10 +441,40 @@ def test_related_search_joins_only_while_searching(
     repository = QueryModelRepository()
     query = ListQuery(search=search)
 
-    statement = repository._join_related_search(select(QueryModel), query).where(
-        *repository._search_where(query)
-    )
+    (statement,) = repository._apply_list_filters(query, select(QueryModel))
     compiled = statement.compile(dialect=postgresql.dialect()).string
 
     assert ("LEFT OUTER JOIN query_parents" in compiled) is joined
-    assert ("query_parents.title ILIKE" in compiled) is joined
+    assert ("translate(query_parents.title" in compiled) is joined
+
+
+class AliasedParentRepository(BaseRepository[QueryModel]):
+    """Builds a fresh alias on every hook call, as a repository searching two
+    foreign keys to one table must."""
+
+    model = QueryModel
+
+    def _related_search(self) -> list[RelatedSearch]:
+        parent = aliased(QueryParent)
+        return [RelatedSearch(parent, parent.id == QueryModel.id, (parent.title,))]
+
+
+def test_related_search_filters_on_the_alias_it_joins() -> None:
+    """Two hook reads would join one alias and filter on another, which
+    SQLAlchemy turns into an implicit cross join."""
+    (statement,) = AliasedParentRepository()._apply_list_filters(
+        ListQuery(search="anne"), select(QueryModel)
+    )
+
+    compiled = statement.compile(dialect=postgresql.dialect()).string
+
+    assert compiled.count("query_parents AS") == 1
+
+
+def test_search_reads_yo_as_ye_on_both_sides() -> None:
+    clauses = ListQuery(search="Алёна").build_where_clauses(QueryModel, ("name",))
+
+    compiled = compile_clauses(clauses)
+
+    assert "translate(query_models.name, 'Ёё', 'Ее') ILIKE" in compiled.string
+    assert search_patterns(compiled) == ["%Алена%"]

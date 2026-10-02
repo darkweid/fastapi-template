@@ -86,3 +86,20 @@ async def test_related_search_mixes_own_and_joined_columns(
 
     assert total == 1
     assert items[0].id == wanted.id
+
+
+async def test_search_reads_yo_as_ye(db_session: AsyncSession) -> None:
+    """People type `е` for `ё` and the other way round; both find the row."""
+    repository = SearchableUserRepository()
+    marker = uuid4().hex[:8]
+    user = await repository.create(
+        db_session, build_user_data(f"y{marker}", first_name=f"Алёна{marker}")
+    )
+    await db_session.flush()
+
+    for search in (f"АЛЕНА{marker}", f"алёна{marker}"):
+        items, total = await repository.get_paginated_list(
+            db_session, page=1, size=10, query=ListQuery(search=search)
+        )
+        assert total == 1
+        assert items[0].id == user.id

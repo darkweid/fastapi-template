@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any, Literal, NamedTuple, cast
 
-from sqlalchemy import SQLColumnExpression, and_, inspect, or_
+from sqlalchemy import SQLColumnExpression, and_, func, inspect, literal_column, or_
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql.elements import ColumnElement, UnaryExpression
 from sqlalchemy.sql.expression import ColumnClause
@@ -35,10 +35,26 @@ def escape_like_literal(value: str) -> str:
 MAX_SEARCH_WORDS = 5
 
 
+def fold_yo(text: str) -> str:
+    """`ё` read as `е`: people type both for one letter."""
+    return text.replace("ё", "е").replace("Ё", "Е")
+
+
+def searchable_text(
+    column: SQLColumnExpression[Any],
+) -> SQLColumnExpression[Any]:
+    """The text the search matches: `column` with `ё` read as `е`. The two
+    alphabets are literals, never bound parameters: a trigram index over this
+    expression matches a query only when the expression is spelled the same,
+    and under a generic plan a parameter is not."""
+    return func.translate(column, literal_column("'Ёё'"), literal_column("'Ее'"))
+
+
 def search_words(term: str) -> list[str]:
-    """The distinct words of a search in first-seen order, letter case
-    ignored as `ilike` ignores it, at most `MAX_SEARCH_WORDS`."""
-    words = {word.casefold(): word for word in reversed(term.split())}
+    """The distinct words of a search in first-seen order, with `ё` read as
+    `е` and letter case ignored as `ilike` ignores it, at most
+    `MAX_SEARCH_WORDS`."""
+    words = {word.casefold(): word for word in reversed(fold_yo(term).split())}
     return list(reversed(words.values()))[:MAX_SEARCH_WORDS]
 
 
@@ -201,7 +217,7 @@ class ListQuery:
             *(
                 or_(
                     *(
-                        column.ilike(
+                        searchable_text(column).ilike(
                             f"%{escape_like_literal(word)}%", escape=_ESCAPE_CHAR
                         )
                         for column in columns

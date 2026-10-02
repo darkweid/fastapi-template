@@ -113,30 +113,29 @@ class BaseRepository(Generic[T]):
         `searchable_fields`, never input."""
         return ()
 
-    def _search_where(self, query: ListQuery) -> list[ColumnElement[bool]]:
-        """`query`'s WHERE clauses over this repository's searchable columns,
-        related ones included; pair with `_join_related_search`."""
-        return query.build_where_clauses(
+    def _apply_list_filters(
+        self, query: ListQuery, *statements: Select[Any]
+    ) -> list[Select[Any]]:
+        """Each statement with every WHERE clause of `query` and, while it
+        searches, the `_related_search` joins; a read without a search pays
+        no join. The hook is read once, so an `aliased()` target is the same
+        object in the joins and in the searched columns - two reads would
+        join one alias and filter on another, an implicit cross join. Pass
+        statements after `filter_by`, which otherwise reads the last joined
+        table."""
+        related = self._related_search()
+        where = query.build_where_clauses(
             self.model,
             self.searchable_fields,
-            [
-                column
-                for related in self._related_search()
-                for column in related.columns
-            ],
+            [column for search in related for column in search.columns],
         )
-
-    def _join_related_search(
-        self, statement: Select[Any], query: ListQuery
-    ) -> Select[Any]:
-        """Joins the related tables, only while `query` searches: a list
-        read without a search pays no join. Call after `filter_by`, which
-        otherwise reads the last joined table."""
-        if not query.has_search:
-            return statement
-        for related in self._related_search():
-            statement = statement.outerjoin(related.target, related.onclause)
-        return statement
+        filtered = []
+        for statement in statements:
+            if query.has_search:
+                for search in related:
+                    statement = statement.outerjoin(search.target, search.onclause)
+            filtered.append(statement.where(*where))
+        return filtered
 
     async def create(
         self, session: AsyncSession, data: dict[str, Any], commit: bool = False
@@ -272,14 +271,17 @@ class BaseRepository(Generic[T]):
 
         filters = self._scope_filters(filters)
         list_query = query if query is not None else ListQuery()
-        where_clauses = self._search_where(list_query)
         order_by = list_query.build_order_by(
             self.model, self.sortable_fields, self.default_order_by
         )
-
-        statement = self._join_related_search(
-            select(self.model).filter_by(**filters), list_query
-        ).where(*where_clauses)
+        # The count must carry the same predicates as the selection, or `total`
+        # and `items` describe different result sets. Eager options are left out:
+        # they add joins a count does not need.
+        statement, count_statement = self._apply_list_filters(
+            list_query,
+            select(self.model).filter_by(**filters),
+            select(func.count()).select_from(self.model).filter_by(**filters),
+        )
         if eager:
             statement = statement.options(*eager)
         statement = statement.order_by(*order_by)
@@ -288,13 +290,6 @@ class BaseRepository(Generic[T]):
         result = await session.execute(statement)
         items = list(result.unique().scalars().all())
 
-        # The count must carry the same predicates as the selection, or `total`
-        # and `items` describe different result sets. Eager options are left out:
-        # they add joins a count does not need.
-        count_statement = self._join_related_search(
-            select(func.count()).select_from(self.model).filter_by(**filters),
-            list_query,
-        ).where(*where_clauses)
         total = int((await session.execute(count_statement)).scalar_one())
 
         return items, total
