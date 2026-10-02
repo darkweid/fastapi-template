@@ -25,6 +25,7 @@ import os
 import stat
 import sys
 from typing import TextIO
+import unicodedata
 
 HEADER = ("directory", "files", "code", "comments", "blank", "total")
 NAME_WIDTH = 16
@@ -192,11 +193,25 @@ def paint(style: str, text: str, color: bool) -> str:
     return f"\033[{style}m{text}\033[0m" if color else text
 
 
+def display_width(text: str) -> int:
+    """Terminal columns, not code points: an East Asian wide character takes
+    two and a combining mark none. Control characters never get here, since
+    `label` has escaped them."""
+    return sum(
+        (
+            0
+            if unicodedata.combining(char)
+            else 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        )
+        for char in text
+    )
+
+
 def format_row(
     name: str, counts: Counts, name_style: str, width: int, color: bool
 ) -> str:
     return (
-        paint(name_style, f"{name:<{width}}", color)
+        paint(name_style, name + " " * (width - display_width(name)), color)
         + f" {counts.files:>7} "
         + paint(GREEN, f"{counts.code:>9}", color)
         + paint(DIM, f" {counts.comments:>9} {counts.blank:>9}", color)
@@ -214,7 +229,7 @@ def render(by_directory: dict[bytes, Counts], color: bool) -> list[str]:
             by_directory.items(), key=lambda item: (-item[1].code, item[0])
         )
     ]
-    width = max([NAME_WIDTH, *(len(name) for name, _ in rows)])
+    width = max([NAME_WIDTH, *(display_width(name) for name, _ in rows)])
     total = Counts()
     lines = [paint(BOLD, ROW_FORMAT.format(*HEADER, width=width), color)]
     for name, counts in rows:

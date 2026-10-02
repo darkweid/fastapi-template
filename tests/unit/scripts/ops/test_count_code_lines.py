@@ -11,6 +11,7 @@ from scripts.ops.count_code_lines import (
     Counts,
     count_by_directory,
     count_lines,
+    display_width,
     is_plain_relative,
     label,
     main,
@@ -312,3 +313,11 @@ def test_a_reader_that_stops_early_leaves_no_traceback(tmp_path: Path) -> None:
     stderr = process.stderr.read()
     assert process.wait() == 1
     assert stderr == b""
+
+
+def test_wide_and_combining_names_keep_the_columns_aligned() -> None:
+    """Padding by code points shifts a row whose name takes two columns per
+    character, or none for a combining mark."""
+    names = ["测试".encode(), "e\u0301".encode(), b"plain"]
+    lines = render({name: Counts(1, 1, 0, 0) for name in names}, color=False)
+    assert len({display_width(line) for line in lines}) == 1
