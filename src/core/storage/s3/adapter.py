@@ -546,6 +546,10 @@ class S3Adapter(S3ClientProtocol):
         A missing source raises the provider's ClientError (NoSuchKey), it is
         not reported as a quiet no-op. Copying a key onto itself is refused
         here because S3 itself rejects it.
+
+        A single CopyObject takes sources up to 5 GB: a larger one is refused by
+        S3 and surfaces as ClientError, so a copy that did not happen never reads
+        as success. Multipart copy is not implemented.
         """
         if source_key == destination_key:
             raise InstanceProcessingException(
