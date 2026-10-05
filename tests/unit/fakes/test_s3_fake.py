@@ -98,3 +98,11 @@ async def test_fake_set_last_modified_refuses_naive_datetime() -> None:
     await s3.upload_bytes("a", b"x")
     with pytest.raises(ValueError):
         s3.set_last_modified("a", datetime(2026, 1, 1))
+
+
+@pytest.mark.parametrize("page_size", [0, 1001])
+async def test_fake_list_refuses_page_size_the_adapter_refuses(page_size: int) -> None:
+    """A caller passing a size S3 rejects must fail in tests too."""
+    s3 = InMemoryS3Client()
+    with pytest.raises(ValueError):
+        _ = [item async for item in s3.list_objects(prefix="", page_size=page_size)]

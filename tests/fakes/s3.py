@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from starlette.datastructures import UploadFile
 
 from src.core.errors.exceptions import InstanceProcessingException
+from src.core.storage.s3.adapter import MAX_LIST_PAGE_SIZE
 from src.core.storage.s3.interface import StoredObject
 
 
@@ -143,6 +144,8 @@ class InMemoryS3Client:
     async def list_objects(
         self, *, prefix: str, bucket: str | None = None, page_size: int = 1000
     ) -> AsyncIterator[StoredObject]:
+        if not 1 <= page_size <= MAX_LIST_PAGE_SIZE:
+            raise ValueError(f"page_size must be within 1..{MAX_LIST_PAGE_SIZE}.")
         for key in sorted(self._get_bucket(bucket)):
             if key.startswith(prefix):
                 yield self._stored(key, bucket)
