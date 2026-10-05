@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 import math
 from types import TracebackType
 from typing import Any, Self
@@ -16,10 +17,11 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
     PayloadTooLargeException,
 )
-from src.core.storage.s3.interface import S3ClientProtocol
+from src.core.storage.s3.interface import S3ClientProtocol, StoredObject
 
 MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
 MAX_MULTIPART_PARTS = 10_000
+MAX_LIST_PAGE_SIZE = 1000
 logger = get_logger(__name__)
 
 
@@ -474,26 +476,93 @@ class S3Adapter(S3ClientProtocol):
             return str(await url_or_coro)
         return str(url_or_coro)
 
+    def _is_missing(self, exc: ClientError) -> bool:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in {"404", "NoSuchKey", "NotFound"}:
+            return True
+        return self._treat_access_denied_as_missing and error_code in {
+            "403",
+            "AccessDenied",
+            "Forbidden",
+        }
+
     async def object_exists(self, key: str, *, bucket: str | None = None) -> bool:
+        return await self.head_object(key, bucket=bucket) is not None
+
+    async def list_objects(
+        self, *, prefix: str, bucket: str | None = None, page_size: int = 1000
+    ) -> AsyncIterator[StoredObject]:
+        """Every object under the prefix, a page at a time: a large bucket is
+        never held in memory as one list.
+
+        `page_size` must be within 1..1000, S3's per-request maximum.
+        """
+        if not 1 <= page_size <= MAX_LIST_PAGE_SIZE:
+            raise ValueError(f"page_size must be within 1..{MAX_LIST_PAGE_SIZE}.")
+        client = self._ensure_client()
+        paginator = client.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(
+            Bucket=self._get_bucket(bucket),
+            Prefix=prefix,
+            PaginationConfig={"PageSize": page_size},
+        ):
+            for item in page.get("Contents") or []:
+                yield StoredObject(
+                    key=item["Key"],
+                    size=int(item["Size"]),
+                    etag=str(item["ETag"]).strip('"'),
+                    last_modified=item["LastModified"],
+                )
+
+    async def head_object(
+        self, key: str, *, bucket: str | None = None
+    ) -> StoredObject | None:
+        """The object's metadata, or None when the bucket has no such key.
+
+        Other failures (and access denied, unless configured as missing) raise.
+        """
         client = self._ensure_client()
         try:
-            await client.head_object(Bucket=self._get_bucket(bucket), Key=key)
-            return True
+            response = await client.head_object(
+                Bucket=self._get_bucket(bucket), Key=key
+            )
         except ClientError as exc:
-            error_code = exc.response.get("Error", {}).get("Code")
-            if error_code in {
-                "404",
-                "NoSuchKey",
-                "NotFound",
-            }:
-                return False
-            if self._treat_access_denied_as_missing and error_code in {
-                "403",
-                "AccessDenied",
-                "Forbidden",
-            }:
-                return False
+            if self._is_missing(exc):
+                return None
             raise
+        return StoredObject(
+            key=key,
+            size=int(response["ContentLength"]),
+            etag=str(response["ETag"]).strip('"'),
+            last_modified=response["LastModified"],
+        )
+
+    async def copy_object(
+        self, source_key: str, destination_key: str, *, bucket: str | None = None
+    ) -> None:
+        """Server-side copy inside one bucket that keeps the content type and
+        Cache-Control.
+
+        A missing source raises the provider's ClientError (NoSuchKey), it is
+        not reported as a quiet no-op. Copying a key onto itself is refused
+        here because S3 itself rejects it.
+
+        A single CopyObject takes sources up to 5 GB: a larger one is refused by
+        S3 and surfaces as ClientError, so a copy that did not happen never reads
+        as success. Multipart copy is not implemented.
+        """
+        if source_key == destination_key:
+            raise InstanceProcessingException(
+                "S3 copy source and destination must differ."
+            )
+        client = self._ensure_client()
+        name = self._get_bucket(bucket)
+        await client.copy_object(
+            Bucket=name,
+            Key=destination_key,
+            CopySource={"Bucket": name, "Key": source_key},
+            MetadataDirective="COPY",
+        )
 
     async def close(
         self,

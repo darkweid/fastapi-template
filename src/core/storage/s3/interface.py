@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from starlette.datastructures import UploadFile
+
+
+@dataclass(frozen=True, slots=True)
+class StoredObject:
+    """One object as the bucket reports it. `etag` comes without the quotes
+    S3 wraps it in, so two reports of one object compare equal."""
+
+    key: str
+    size: int
+    etag: str
+    last_modified: datetime
 
 
 class S3ClientProtocol(Protocol):
@@ -37,6 +51,15 @@ class S3ClientProtocol(Protocol):
         bucket: str | None = None,
         max_keys: int | None = None,
     ) -> list[str]: ...
+    def list_objects(
+        self, *, prefix: str, bucket: str | None = None, page_size: int = 1000
+    ) -> AsyncIterator[StoredObject]: ...
+    async def head_object(
+        self, key: str, *, bucket: str | None = None
+    ) -> StoredObject | None: ...
+    async def copy_object(
+        self, source_key: str, destination_key: str, *, bucket: str | None = None
+    ) -> None: ...
     async def generate_presigned_get_url(
         self,
         key: str,

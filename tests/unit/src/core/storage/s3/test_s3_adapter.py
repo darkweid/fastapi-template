@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -22,6 +23,7 @@ from src.core.storage.s3.adapter import (
     MAX_MULTIPART_PARTS,
     S3Adapter,
 )
+from src.core.storage.s3.interface import StoredObject
 
 
 class FakeClientCM:
@@ -369,7 +371,11 @@ async def test_object_exists_true_and_false(
 ) -> None:
     adapter, client, _ = s3_mocks
     client.head_object.side_effect = [
-        None,
+        {
+            "ContentLength": 1,
+            "ETag": '"e"',
+            "LastModified": datetime(2026, 1, 1, tzinfo=UTC),
+        },
         ClientError({"Error": {"Code": "404"}}, "HeadObject"),
     ]
 
@@ -719,3 +725,293 @@ async def test_upload_large_uploadfile_empty_stream_raises_infrastructure(
             )
 
     client.abort_multipart_upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_objects_yields_metadata_page_by_page(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = s3_mocks
+    stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    paginator = FakePaginator(
+        [
+            {
+                "Contents": [
+                    {"Key": "p/a", "Size": 3, "ETag": '"e1"', "LastModified": stamp}
+                ]
+            },
+            {
+                "Contents": [
+                    {"Key": "p/b", "Size": 5, "ETag": '"e2"', "LastModified": stamp}
+                ]
+            },
+            {},
+        ]
+    )
+    client.get_paginator = Mock(return_value=paginator)
+
+    async with adapter:
+        objects = [
+            item async for item in adapter.list_objects(prefix="p/", page_size=2)
+        ]
+
+    assert objects == [
+        StoredObject(key="p/a", size=3, etag="e1", last_modified=stamp),
+        StoredObject(key="p/b", size=5, etag="e2", last_modified=stamp),
+    ]
+    assert paginator.paginate_calls == [
+        {
+            "Bucket": "default-bucket",
+            "Prefix": "p/",
+            "PaginationConfig": {"PageSize": 2},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_objects_survives_empty_and_missing_contents(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """S3 omits `Contents` on an empty listing and a page may carry None."""
+    adapter, client, _ = s3_mocks
+    client.get_paginator = Mock(
+        return_value=FakePaginator([{}, {"Contents": None}, {"Contents": []}])
+    )
+
+    async with adapter:
+        objects = [item async for item in adapter.list_objects(prefix="none/")]
+
+    assert objects == []
+
+
+@pytest.mark.asyncio
+async def test_list_objects_honours_bucket_override_and_default_page_size(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = s3_mocks
+    paginator = FakePaginator([])
+    client.get_paginator = Mock(return_value=paginator)
+
+    async with adapter:
+        _ = [item async for item in adapter.list_objects(prefix="p/", bucket="other")]
+
+    assert paginator.paginate_calls == [
+        {"Bucket": "other", "Prefix": "p/", "PaginationConfig": {"PageSize": 1000}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_objects_keeps_unquoted_and_inner_quote_free_etag(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """A multipart ETag (`hash-3`) and an unquoted one both come out unwrapped."""
+    adapter, client, _ = s3_mocks
+    stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    client.get_paginator = Mock(
+        return_value=FakePaginator(
+            [
+                {
+                    "Contents": [
+                        {
+                            "Key": "a",
+                            "Size": 1,
+                            "ETag": '"abc-3"',
+                            "LastModified": stamp,
+                        },
+                        {"Key": "b", "Size": 1, "ETag": "plain", "LastModified": stamp},
+                    ]
+                }
+            ]
+        )
+    )
+
+    async with adapter:
+        etags = [item.etag async for item in adapter.list_objects(prefix="")]
+
+    assert etags == ["abc-3", "plain"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [0, -1, 1001])
+async def test_list_objects_refuses_page_size_outside_bounds(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM], page_size: int
+) -> None:
+    adapter, client, _ = s3_mocks
+    client.get_paginator = Mock()
+
+    async with adapter:
+        with pytest.raises(ValueError):
+            _ = [
+                item
+                async for item in adapter.list_objects(prefix="p/", page_size=page_size)
+            ]
+
+    client.get_paginator.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [1, 1000])
+async def test_list_objects_accepts_page_size_bounds(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM], page_size: int
+) -> None:
+    adapter, client, _ = s3_mocks
+    paginator = FakePaginator([])
+    client.get_paginator = Mock(return_value=paginator)
+
+    async with adapter:
+        _ = [
+            item
+            async for item in adapter.list_objects(prefix="p/", page_size=page_size)
+        ]
+
+    assert paginator.paginate_calls[0]["PaginationConfig"] == {"PageSize": page_size}
+
+
+@pytest.mark.asyncio
+async def test_head_object_returns_metadata_or_none(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = s3_mocks
+    stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    client.head_object.side_effect = [
+        {"ContentLength": 7, "ETag": '"abc"', "LastModified": stamp},
+        ClientError({"Error": {"Code": "404"}}, "HeadObject"),
+    ]
+
+    async with adapter:
+        found = await adapter.head_object("k1")
+        missing = await adapter.head_object("k2")
+
+    assert found == StoredObject(key="k1", size=7, etag="abc", last_modified=stamp)
+    assert missing is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["404", "NoSuchKey", "NotFound"])
+async def test_head_object_treats_every_missing_code_as_none(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM], code: str
+) -> None:
+    adapter, client, _ = s3_mocks
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": code}}, "HeadObject"
+    )
+
+    async with adapter:
+        assert await adapter.head_object("k") is None
+
+
+@pytest.mark.asyncio
+async def test_head_object_raises_on_other_errors(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = s3_mocks
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "500"}}, "HeadObject"
+    )
+
+    async with adapter:
+        with pytest.raises(ClientError):
+            await adapter.head_object("k1")
+
+
+@pytest.mark.asyncio
+async def test_head_object_raises_on_access_denied_by_default(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """Hiding a permissions problem as 'missing' would make a cleanup job
+    believe objects are gone; it is opt-in."""
+    adapter, client, _ = s3_mocks
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "403"}}, "HeadObject"
+    )
+
+    async with adapter:
+        with pytest.raises(ClientError):
+            await adapter.head_object("k1")
+
+
+@pytest.mark.asyncio
+async def test_head_object_access_denied_is_none_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AsyncMock()
+    session = FakeSession(client, FakeClientCM(client))
+    monkeypatch.setattr("src.core.storage.s3.adapter.aioboto3.Session", lambda: session)
+    adapter = S3Adapter(
+        bucket="default-bucket",
+        region="us-east-1",
+        access_key="ak",
+        secret_key="sk",
+        default_presign_ttl=300,
+        treat_access_denied_as_missing=True,
+    )
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "403"}}, "HeadObject"
+    )
+
+    async with adapter:
+        assert await adapter.head_object("k1") is None
+
+
+@pytest.mark.asyncio
+async def test_copy_object_copies_server_side_with_metadata(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = s3_mocks
+
+    async with adapter:
+        await adapter.copy_object("a/src", "trash/a/src")
+
+    client.copy_object.assert_awaited_once_with(
+        Bucket="default-bucket",
+        Key="trash/a/src",
+        CopySource={"Bucket": "default-bucket", "Key": "a/src"},
+        MetadataDirective="COPY",
+    )
+
+
+@pytest.mark.asyncio
+async def test_copy_object_uses_bucket_override_for_both_sides(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = s3_mocks
+
+    async with adapter:
+        await adapter.copy_object("a", "b", bucket="other")
+
+    client.copy_object.assert_awaited_once_with(
+        Bucket="other",
+        Key="b",
+        CopySource={"Bucket": "other", "Key": "a"},
+        MetadataDirective="COPY",
+    )
+
+
+@pytest.mark.asyncio
+async def test_copy_object_propagates_missing_source(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """Unlike HEAD, a copy has no 'missing' answer: the caller must not move
+    on to delete the original after a copy that did not happen."""
+    adapter, client, _ = s3_mocks
+    client.copy_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey"}}, "CopyObject"
+    )
+
+    async with adapter:
+        with pytest.raises(ClientError):
+            await adapter.copy_object("gone", "trash/gone")
+
+
+@pytest.mark.asyncio
+async def test_copy_object_onto_itself_is_refused_before_the_call(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """S3 answers InvalidRequest for a self-copy with unchanged metadata."""
+    adapter, client, _ = s3_mocks
+
+    async with adapter:
+        with pytest.raises(InstanceProcessingException):
+            await adapter.copy_object("same", "same")
+
+    client.copy_object.assert_not_awaited()

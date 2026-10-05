@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+import hashlib
+
+from botocore.exceptions import ClientError
 from starlette.datastructures import UploadFile
+
+from src.core.errors.exceptions import InstanceProcessingException
+from src.core.storage.s3.adapter import MAX_LIST_PAGE_SIZE
+from src.core.storage.s3.interface import StoredObject
 
 
 class InMemoryS3Client:
     def __init__(self, default_bucket: str = "test-bucket") -> None:
         self._default_bucket = default_bucket
         self._buckets: dict[str, dict[str, bytes]] = {}
+        self._modified: dict[str, dict[str, datetime]] = {}
         self.closed = False
+
+    def _get_modified(self, bucket: str | None) -> dict[str, datetime]:
+        return self._modified.setdefault(bucket or self._default_bucket, {})
+
+    def _stored(self, key: str, bucket: str | None) -> StoredObject:
+        data = self._get_bucket(bucket)[key]
+        return StoredObject(
+            key=key,
+            size=len(data),
+            etag=hashlib.md5(data, usedforsecurity=False).hexdigest(),
+            last_modified=self._get_modified(bucket)[key],
+        )
+
+    def set_last_modified(
+        self, key: str, value: datetime, *, bucket: str | None = None
+    ) -> None:
+        if value.tzinfo is None:
+            raise ValueError("last_modified must be timezone-aware.")
+        if key not in self._get_bucket(bucket):
+            raise FileNotFoundError(f"Object not found: {key}")
+        self._get_modified(bucket)[key] = value
 
     def _get_bucket(self, bucket: str | None) -> dict[str, bytes]:
         name = bucket or self._default_bucket
@@ -26,6 +57,7 @@ class InMemoryS3Client:
     ) -> None:
         target = self._get_bucket(bucket)
         target[key] = data
+        self._get_modified(bucket)[key] = datetime.now(UTC)
 
     async def upload_uploadfile(
         self,
@@ -65,6 +97,7 @@ class InMemoryS3Client:
     async def delete_object(self, key: str, *, bucket: str | None = None) -> None:
         source = self._get_bucket(bucket)
         source.pop(key, None)
+        self._get_modified(bucket).pop(key, None)
 
     async def list_keys(
         self,
@@ -107,6 +140,43 @@ class InMemoryS3Client:
     async def object_exists(self, key: str, *, bucket: str | None = None) -> bool:
         source = self._get_bucket(bucket)
         return key in source
+
+    async def list_objects(
+        self, *, prefix: str, bucket: str | None = None, page_size: int = 1000
+    ) -> AsyncIterator[StoredObject]:
+        if not 1 <= page_size <= MAX_LIST_PAGE_SIZE:
+            raise ValueError(f"page_size must be within 1..{MAX_LIST_PAGE_SIZE}.")
+        for key in sorted(self._get_bucket(bucket)):
+            if key.startswith(prefix):
+                yield self._stored(key, bucket)
+
+    async def head_object(
+        self, key: str, *, bucket: str | None = None
+    ) -> StoredObject | None:
+        if key not in self._get_bucket(bucket):
+            return None
+        return self._stored(key, bucket)
+
+    async def copy_object(
+        self, source_key: str, destination_key: str, *, bucket: str | None = None
+    ) -> None:
+        if source_key == destination_key:
+            raise InstanceProcessingException(
+                "S3 copy source and destination must differ."
+            )
+        source = self._get_bucket(bucket)
+        if source_key not in source:
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "NoSuchKey",
+                        "Message": f"Object not found: {source_key}",
+                    }
+                },
+                "CopyObject",
+            )
+        source[destination_key] = source[source_key]
+        self._get_modified(bucket)[destination_key] = datetime.now(UTC)
 
     async def close(self) -> None:
         self.closed = True
