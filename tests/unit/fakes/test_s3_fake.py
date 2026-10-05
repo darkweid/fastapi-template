@@ -106,3 +106,12 @@ async def test_fake_list_refuses_page_size_the_adapter_refuses(page_size: int) -
     s3 = InMemoryS3Client()
     with pytest.raises(ValueError):
         _ = [item async for item in s3.list_objects(prefix="", page_size=page_size)]
+
+
+async def test_fake_objects_shows_only_the_default_bucket() -> None:
+    """Tests assert on what a run left behind; another bucket must not leak in."""
+    s3 = InMemoryS3Client()
+    await s3.upload_bytes("a", b"x")
+    await s3.upload_bytes("b", b"y", bucket="other")
+
+    assert s3.objects == {"a": b"x"}

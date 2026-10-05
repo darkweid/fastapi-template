@@ -46,6 +46,11 @@ class InMemoryS3Client:
             self._buckets[name] = {}
         return self._buckets[name]
 
+    @property
+    def objects(self) -> dict[str, bytes]:
+        """Contents of the default bucket, keyed by object key."""
+        return self._get_bucket(None)
+
     async def upload_bytes(
         self,
         key: str,
