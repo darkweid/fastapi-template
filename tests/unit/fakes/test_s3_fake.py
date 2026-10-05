@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import hashlib
 
+from botocore.exceptions import ClientError
 import pytest
 
 from src.core.errors.exceptions import InstanceProcessingException
@@ -51,8 +52,9 @@ async def test_fake_copy_of_missing_source_and_onto_itself_raise() -> None:
     s3 = InMemoryS3Client()
     await s3.upload_bytes("a", b"x")
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ClientError) as raised:
         await s3.copy_object("missing", "b")
+    assert raised.value.response["Error"]["Code"] == "NoSuchKey"
     with pytest.raises(InstanceProcessingException):
         await s3.copy_object("a", "a")
 
@@ -88,3 +90,11 @@ async def test_fake_set_last_modified_on_missing_key_raises() -> None:
     s3 = InMemoryS3Client()
     with pytest.raises(FileNotFoundError):
         s3.set_last_modified("nope", datetime.now(UTC))
+
+
+async def test_fake_set_last_modified_refuses_naive_datetime() -> None:
+    """A real bucket reports aware values; a naive one would hide a bug in age maths."""
+    s3 = InMemoryS3Client()
+    await s3.upload_bytes("a", b"x")
+    with pytest.raises(ValueError):
+        s3.set_last_modified("a", datetime(2026, 1, 1))

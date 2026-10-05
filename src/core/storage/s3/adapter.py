@@ -21,6 +21,7 @@ from src.core.storage.s3.interface import S3ClientProtocol, StoredObject
 
 MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
 MAX_MULTIPART_PARTS = 10_000
+MAX_LIST_PAGE_SIZE = 1000
 logger = get_logger(__name__)
 
 
@@ -492,7 +493,12 @@ class S3Adapter(S3ClientProtocol):
         self, *, prefix: str, bucket: str | None = None, page_size: int = 1000
     ) -> AsyncIterator[StoredObject]:
         """Every object under the prefix, a page at a time: a large bucket is
-        never held in memory as one list."""
+        never held in memory as one list.
+
+        `page_size` must be within 1..1000, S3's per-request maximum.
+        """
+        if not 1 <= page_size <= MAX_LIST_PAGE_SIZE:
+            raise ValueError(f"page_size must be within 1..{MAX_LIST_PAGE_SIZE}.")
         client = self._ensure_client()
         paginator = client.get_paginator("list_objects_v2")
         async for page in paginator.paginate(

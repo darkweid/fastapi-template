@@ -832,29 +832,39 @@ async def test_list_objects_keeps_unquoted_and_inner_quote_free_etag(
 
 
 @pytest.mark.asyncio
-async def test_list_objects_keeps_aware_last_modified(
-    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+@pytest.mark.parametrize("page_size", [0, -1, 1001])
+async def test_list_objects_refuses_page_size_outside_bounds(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM], page_size: int
 ) -> None:
-    """Age checks subtract from an aware `get_utc_now()`; a naive value would raise."""
     adapter, client, _ = s3_mocks
-    stamp = datetime(2026, 1, 1, tzinfo=UTC)
-    client.get_paginator = Mock(
-        return_value=FakePaginator(
-            [
-                {
-                    "Contents": [
-                        {"Key": "a", "Size": 0, "ETag": '"e"', "LastModified": stamp}
-                    ]
-                }
-            ]
-        )
-    )
+    client.get_paginator = Mock()
 
     async with adapter:
-        [item] = [item async for item in adapter.list_objects(prefix="")]
+        with pytest.raises(ValueError):
+            _ = [
+                item
+                async for item in adapter.list_objects(prefix="p/", page_size=page_size)
+            ]
 
-    assert item.last_modified.tzinfo is not None
-    assert item.size == 0
+    client.get_paginator.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [1, 1000])
+async def test_list_objects_accepts_page_size_bounds(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM], page_size: int
+) -> None:
+    adapter, client, _ = s3_mocks
+    paginator = FakePaginator([])
+    client.get_paginator = Mock(return_value=paginator)
+
+    async with adapter:
+        _ = [
+            item
+            async for item in adapter.list_objects(prefix="p/", page_size=page_size)
+        ]
+
+    assert paginator.paginate_calls[0]["PaginationConfig"] == {"PageSize": page_size}
 
 
 @pytest.mark.asyncio

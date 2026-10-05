@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 import hashlib
 
+from botocore.exceptions import ClientError
 from starlette.datastructures import UploadFile
 
 from src.core.errors.exceptions import InstanceProcessingException
@@ -32,6 +33,8 @@ class InMemoryS3Client:
     def set_last_modified(
         self, key: str, value: datetime, *, bucket: str | None = None
     ) -> None:
+        if value.tzinfo is None:
+            raise ValueError("last_modified must be timezone-aware.")
         if key not in self._get_bucket(bucket):
             raise FileNotFoundError(f"Object not found: {key}")
         self._get_modified(bucket)[key] = value
@@ -160,7 +163,15 @@ class InMemoryS3Client:
             )
         source = self._get_bucket(bucket)
         if source_key not in source:
-            raise FileNotFoundError(f"Object not found: {source_key}")
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "NoSuchKey",
+                        "Message": f"Object not found: {source_key}",
+                    }
+                },
+                "CopyObject",
+            )
         source[destination_key] = source[source_key]
         self._get_modified(bucket)[destination_key] = datetime.now(UTC)
 
