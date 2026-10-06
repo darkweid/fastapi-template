@@ -159,6 +159,22 @@ class SentryConfig(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
 
+class HttpConfig(BaseSettings):
+    # Sent on every outgoing request (src/core/http). Blank derives
+    # "<project-name>/<VERSION>" from PROJECT_NAME and VERSION.
+    HTTP_USER_AGENT: str = Field("", max_length=256)
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    @field_validator("HTTP_USER_AGENT")
+    @classmethod
+    def reject_unprintable(cls, value: str) -> str:
+        # A control character in a header is a request-splitting vector.
+        if any(not " " <= character <= "~" for character in value):
+            raise ValueError("HTTP_USER_AGENT must be printable ASCII")
+        return value.strip()
+
+
 class CookieConfig(BaseSettings):
     """Policy for auth cookies. Applied by TokenCookieResponder."""
 
@@ -477,6 +493,7 @@ class Config(BaseModel):
     redis: RedisConfig
     cache: CacheConfig
     sentry: SentryConfig
+    http: HttpConfig
     cookie: CookieConfig
     postgres: PostgresConfig
     broadcasting: BroadcastingConfig
@@ -503,6 +520,7 @@ def get_settings() -> Config:
         redis=RedisConfig(_env_file=env_file),
         cache=CacheConfig(_env_file=env_file),
         sentry=SentryConfig(_env_file=env_file),
+        http=HttpConfig(_env_file=env_file),
         cookie=CookieConfig(_env_file=env_file),
         postgres=PostgresConfig(_env_file=env_file),
         broadcasting=BroadcastingConfig(_env_file=env_file),

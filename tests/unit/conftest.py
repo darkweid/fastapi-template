@@ -1,5 +1,8 @@
+from collections.abc import AsyncIterator
+
 import pytest
 
+from src.core.http.client import close_http_clients
 from src.main.config import Config
 
 # `TESTING` is what selects `.env.test`, so it is the one config key a test must
@@ -33,3 +36,11 @@ def _isolated_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for name in _config_env_keys():
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+async def _closed_http_clients() -> AsyncIterator[None]:
+    """A session opened in a test's loop is closed in that loop; left open, the
+    next loop drops it unclosed and asyncio logs it as a leak."""
+    yield
+    await close_http_clients()

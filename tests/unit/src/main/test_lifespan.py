@@ -36,6 +36,9 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     async def cache_shutdown() -> None:
         calls.append("cache_shutdown")
 
+    async def http_shutdown() -> None:
+        calls.append("http_shutdown")
+
     monkeypatch.setattr(
         lifespan_module,
         "init_sentry",
@@ -47,6 +50,7 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     monkeypatch.setattr(lifespan_module.FastAPILimiter, "close", limiter_close)
     monkeypatch.setattr(lifespan_module, "on_cache_startup", cache_startup)
     monkeypatch.setattr(lifespan_module, "on_cache_shutdown", cache_shutdown)
+    monkeypatch.setattr(lifespan_module, "close_http_clients", http_shutdown)
 
     yield calls
 
@@ -67,6 +71,7 @@ async def test_lifespan_initializes_and_shutdowns(
         "redis_startup",
         "limiter_startup",
         "cache_startup",
+        "http_shutdown",
         "cache_shutdown",
         "limiter_shutdown",
         "redis_shutdown",
@@ -121,3 +126,18 @@ async def test_lifespan_builds_and_tears_down_s3_adapter_when_enabled(
     assert patched_infra_lifecycle.index("s3_exit") < patched_infra_lifecycle.index(
         "cache_shutdown"
     )
+
+
+@pytest.mark.asyncio
+async def test_http_clients_close_when_the_app_stops_on_an_error(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An abnormal shutdown is when leaked provider sockets are least noticed."""
+    monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
+
+    with pytest.raises(RuntimeError):
+        async with lifespan(FastAPI()):
+            raise RuntimeError("server crashed")
+
+    assert "http_shutdown" in patched_infra_lifecycle

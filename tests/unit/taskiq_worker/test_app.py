@@ -98,3 +98,24 @@ async def test_worker_shutdown_resets_the_cache_singleton(
 
     with pytest.raises(RuntimeError, match="Cache is not initialized"):
         get_cache_instance()
+
+
+async def test_worker_shutdown_closes_every_http_client(
+    clean_cache_singleton: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider session left open at shutdown leaks its sockets and logs
+    "Unclosed client session" on every worker restart."""
+    closed: list[bool] = []
+
+    async def close_http_clients() -> None:
+        closed.append(True)
+
+    fake_redis = InMemoryRedis()
+    monkeypatch.setattr(worker_app, "get_tasks_redis_singleton", lambda: fake_redis)
+    monkeypatch.setattr(worker_app, "close_http_clients", close_http_clients)
+    await worker_app.on_worker_startup(TaskiqState())
+
+    await worker_app.on_worker_shutdown(TaskiqState())
+
+    assert closed == [True]

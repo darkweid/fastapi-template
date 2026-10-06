@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from loggers import get_logger
 from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
+from src.core.http.client import close_http_clients
 from src.core.limiter import FastAPILimiter
 from src.core.redis.lifecycle import on_redis_shutdown, on_redis_startup
 from src.core.storage.s3.dependencies import build_s3_adapter
@@ -33,6 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await broker.startup()
 
     async with AsyncExitStack() as stack:
+        # Registered first so it runs last, after S3, and also when the app
+        # stops on an error.
+        stack.push_async_callback(close_http_clients)
         # Built once per process and reused across requests instead of opening a
         # fresh aioboto3 client per call; get_s3_adapter reads it off app.state.
         # Absent entirely when disabled, so a misconfigured deploy fails at the
