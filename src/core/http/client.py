@@ -1,9 +1,11 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 import random
 import time
 
 import aiohttp
+from aiohttp import TraceConfig, TraceRequestHeadersSentParams
 from multidict import CIMultiDict
 from yarl import URL
 
@@ -40,27 +42,56 @@ async def close_http_clients() -> None:
 
 
 def validate_request(
-    method: str, path: str, operation: str, policy: RetryPolicy | None
+    method: str,
+    path: str,
+    operation: str,
+    policy: RetryPolicy | None,
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     """The checks every `HttpRequester` runs before sending, so a test fake
     refuses what the real client refuses."""
     if not path.startswith("/"):
         raise ValueError(f"{operation}: the path must start with '/'")
+    if headers is not None and "User-Agent" in CIMultiDict(headers):
+        raise ValueError(f"{operation}: the User-Agent is set on the client only")
     if policy is not None:
         policy.ensure_allows(method)
 
 
-def _transport_error(operation: str, error: Exception) -> HttpTransportError:
-    reason = type(error).__name__
-    # A certificate error is a ClientConnectorError too, so it is checked
-    # first: the server never saw the request, and no retry will fix it.
-    if isinstance(error, aiohttp.ClientSSLError | aiohttp.InvalidURL):
-        return HttpTransportError(
-            operation, reason, request_sent=False, transient=False
-        )
-    if isinstance(error, aiohttp.ClientConnectorError | aiohttp.ConnectionTimeoutError):
-        return HttpTransportError(operation, reason, request_sent=False, transient=True)
-    return HttpTransportError(operation, reason, request_sent=True, transient=True)
+def is_transient(error: Exception) -> bool:
+    """False for a certificate or TLS failure and a malformed URL, which no
+    retry fixes; a certificate error is a ClientConnectorError too, so this is
+    not a question of the error's family."""
+    return not isinstance(error, aiohttp.ClientSSLError | aiohttp.InvalidURL)
+
+
+def _too_large(operation: str) -> HttpTransportError:
+    # Counted against the decoded body: a small gzip answer can expand past
+    # any limit its Content-Length suggests.
+    return HttpTransportError(
+        operation, "ResponseTooLarge", request_sent=True, transient=False
+    )
+
+
+@dataclass(slots=True)
+class _Progress:
+    """Per-request flag set by the trace hook below. The error class cannot
+    tell whether the server saw the request: a total deadline raises the same
+    TimeoutError while waiting for a pooled connection and while reading."""
+
+    headers_sent: bool = False
+
+
+async def _mark_headers_sent(
+    session: aiohttp.ClientSession,
+    context: object,
+    params: TraceRequestHeadersSentParams,
+) -> None:
+    # aiohttp fires this on an open connection, just before the bytes go out:
+    # from here on the request may have reached the server.
+    progress = getattr(context, "trace_request_ctx", None)
+    if isinstance(progress, _Progress):
+        progress.headers_sent = True
 
 
 class HttpClient:
@@ -108,21 +139,30 @@ class HttpClient:
 
     def _http(self) -> aiohttp.ClientSession:
         loop = asyncio.get_running_loop()
-        # A session is bound to the loop it was opened on. A new loop (each
-        # test gets one) can neither use the old session nor close it.
-        if self._session is None or self._session.closed or self._loop is not loop:
-            self._session = aiohttp.ClientSession(
-                headers=self._headers,
-                timeout=self._timeout.to_aiohttp(),
-                connector=aiohttp.TCPConnector(
-                    limit=self._limits.connections,
-                    limit_per_host=self._limits.connections_per_host,
-                    keepalive_timeout=self._limits.keepalive_seconds,
-                    ttl_dns_cache=self._limits.dns_cache_seconds,
-                ),
+        if self._session is not None and not self._session.closed:
+            if self._loop is loop:
+                return self._session
+            # Only the loop that opened a session can close it; replacing it
+            # here would leak its connection pool.
+            raise RuntimeError(
+                f"HTTP client {self.name} is open in another event loop; "
+                "close it there first (close_http_clients)"
             )
-            self._loop = loop
-            _open_clients.add(self)
+        trace = TraceConfig()
+        trace.on_request_headers_sent.append(_mark_headers_sent)
+        self._session = aiohttp.ClientSession(
+            headers=self._headers,
+            trace_configs=[trace],
+            timeout=self._timeout.to_aiohttp(),
+            connector=aiohttp.TCPConnector(
+                limit=self._limits.connections,
+                limit_per_host=self._limits.connections_per_host,
+                keepalive_timeout=self._limits.keepalive_seconds,
+                ttl_dns_cache=self._limits.dns_cache_seconds,
+            ),
+        )
+        self._loop = loop
+        _open_clients.add(self)
         return self._session
 
     async def aclose(self) -> None:
@@ -148,7 +188,7 @@ class HttpClient:
         retry: RetryPolicy | ClientDefault | None = CLIENT_DEFAULT,
     ) -> HttpResponse:
         policy = self._retry if isinstance(retry, ClientDefault) else retry
-        validate_request(method, path, operation, policy)
+        validate_request(method, path, operation, policy, headers)
         started = self._clock()
         attempt = 1
         while True:
@@ -171,6 +211,7 @@ class HttpClient:
                 delay = self._next_delay(policy, attempt, started, retry_after=None)
                 if delay is None:
                     raise
+                cause = error.reason
             else:
                 if policy is None or response.status not in policy.retry_statuses:
                     return response
@@ -186,12 +227,14 @@ class HttpClient:
                 )
                 if delay is None:
                     return response
+                cause = f"status={response.status}"
             attempt += 1
             logger.info(
-                "HTTP retry operation=%s attempt=%s delay=%.2fs",
+                "HTTP retry operation=%s attempt=%s delay=%.2fs after %s",
                 operation,
                 attempt,
                 delay,
+                cause,
             )
             await self._sleep(delay)
 
@@ -228,6 +271,7 @@ class HttpClient:
         timeout: HttpTimeout,  # noqa: ASYNC109
     ) -> HttpResponse:
         started = self._clock()
+        progress = _Progress()
         try:
             async with self._http().request(
                 method,
@@ -240,10 +284,24 @@ class HttpClient:
                 # A redirect would re-send the body and any custom key header
                 # (aiohttp strips only Authorization) to the host it names.
                 allow_redirects=False,
+                trace_request_ctx=progress,
             ) as response:
                 body = await self._read_body(response, operation)
         except (aiohttp.ClientError, TimeoutError) as error:
-            raise _transport_error(operation, error) from None
+            logger.debug(
+                "HTTP %s operation=%s host=%s failed=%s elapsed_ms=%d",
+                method,
+                operation,
+                self._host,
+                type(error).__name__,
+                (self._clock() - started) * 1000,
+            )
+            raise HttpTransportError(
+                operation,
+                type(error).__name__,
+                request_sent=progress.headers_sent,
+                transient=is_transient(error),
+            ) from None
         logger.debug(
             "HTTP %s operation=%s host=%s status=%s elapsed_ms=%d",
             method,
@@ -258,14 +316,11 @@ class HttpClient:
         self, response: aiohttp.ClientResponse, operation: str
     ) -> bytes:
         limit = self._limits.max_response_bytes
-        too_large = HttpTransportError(
-            operation, "ResponseTooLarge", request_sent=True, transient=False
-        )
         if response.content_length is not None and response.content_length > limit:
-            raise too_large
+            raise _too_large(operation)
         body = bytearray()
         async for chunk in response.content.iter_chunked(READ_CHUNK_BYTES):
             body.extend(chunk)
             if len(body) > limit:
-                raise too_large
+                raise _too_large(operation)
         return bytes(body)

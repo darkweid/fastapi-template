@@ -34,6 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await broker.startup()
 
     async with AsyncExitStack() as stack:
+        # Registered first so it runs last, after S3, and also when the app
+        # stops on an error.
+        stack.push_async_callback(close_http_clients)
         # Built once per process and reused across requests instead of opening a
         # fresh aioboto3 client per call; get_s3_adapter reads it off app.state.
         # Absent entirely when disabled, so a misconfigured deploy fails at the
@@ -45,7 +48,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
         yield
 
-    await close_http_clients()
     if not broker.is_worker_process:
         await broker.shutdown()
     await on_cache_shutdown()

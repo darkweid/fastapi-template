@@ -40,7 +40,10 @@ class FakeHttpClient:
     """`HttpRequester` for an integration's tests: records every request and
     answers from a queue of responses or exceptions, repeating the last."""
 
-    def __init__(self, *answers: HttpResponse | Exception) -> None:
+    def __init__(
+        self, *answers: HttpResponse | Exception, retry: RetryPolicy | None = None
+    ) -> None:
+        self.retry = retry
         self.answers: list[HttpResponse | Exception] = list(answers) or [
             fake_response()
         ]
@@ -61,7 +64,11 @@ class FakeHttpClient:
         retry: RetryPolicy | ClientDefault | None = CLIENT_DEFAULT,
     ) -> HttpResponse:
         validate_request(
-            method, path, operation, None if isinstance(retry, ClientDefault) else retry
+            method,
+            path,
+            operation,
+            self.retry if isinstance(retry, ClientDefault) else retry,
+            headers,
         )
         self.requests.append(
             RecordedRequest(method, path, operation, params, json, data, headers)

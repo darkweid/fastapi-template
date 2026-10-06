@@ -30,8 +30,8 @@ if is_permanent_failure(response.status): ...
 - **`User-Agent`** is required. `get_user_agent()` returns `HTTP_USER_AGENT`, or `<project-name>/<VERSION>` when that is blank. WAFs often refuse the library default.
 - **A status never raises.** The caller reads it: `response.ok`, `is_permanent_failure(status)`, `response.json_or_none()` for a body that may be an HTML error page.
 - **Redirects are not followed.** A 3xx comes back as a status: following it would re-send the body and any custom key header to the host the `Location` names.
-- **`HttpTransportError` means no status came back.** Its message is `<operation>: <exception class>` and never the URL, so a token in a path stays out of logs and Sentry. `request_sent` says whether the server may have seen the request; a deadline that runs out, waiting for a pooled connection included, counts as sent.
-- **Closing.** Every client opened in the process is closed by `close_http_clients()` at API and worker shutdown, so an integration has no shutdown hook of its own.
+- **`HttpTransportError` means no status came back.** Its message is `<operation>: <exception class>` and never the URL, so a token in a path stays out of logs and Sentry. `request_sent` is False only when nothing was written to a connection - a refused connection, a DNS or TLS failure, a deadline spent waiting for a pooled connection - so repeating it cannot duplicate anything. `transient` is False for a certificate error, a malformed URL and an answer over the size cap.
+- **Closing.** Every client opened in the process is closed by `close_http_clients()` at API and worker shutdown, so an integration has no shutdown hook of its own. A session belongs to the event loop that opened it: using the client from another loop while that session is open raises `RuntimeError`, and a client used after the hook opens a new session.
 
 ## Choosing a retry policy
 
@@ -46,4 +46,6 @@ A policy that may repeat a sent request refuses a non-idempotent method with `Va
 
 ## Testing
 
-`tests/fakes/http.py` has `FakeHttpClient`: hand it to the provider client, queue `fake_response(...)` answers or exceptions, and assert on `requests`.
+`tests/fakes/http.py` has `FakeHttpClient`: hand it to the provider client, queue `fake_response(...)` answers or exceptions, and assert on `requests`. It refuses what the real client refuses - a relative path, a `User-Agent` in `headers`, a repeating policy on a non-idempotent method; build it with the factory's policy (`FakeHttpClient(retry=...)`) so that choice is checked too.
+
+Unit tests close every client after each test (`tests/unit/conftest.py`), so a client cached across tests reopens in the next test's loop.

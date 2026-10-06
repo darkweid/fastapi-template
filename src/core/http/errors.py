@@ -6,9 +6,10 @@ class HttpTransportError(InfrastructureException):
 
     Carries the caller's operation name and the failure class only: the URL
     may hold a token, and aiohttp's own messages quote the URL and sometimes
-    request headers. `request_sent` is False only when the server cannot have
-    seen the request; `transient` is False when retrying cannot help. The
-    defaults claim the least: possibly sent, not worth repeating.
+    request headers. `request_sent` is False only when nothing was written to
+    a connection, so repeating the request cannot duplicate it; `transient` is
+    False when retrying cannot help. The defaults claim the least: possibly
+    sent, not worth repeating.
     """
 
     def __init__(

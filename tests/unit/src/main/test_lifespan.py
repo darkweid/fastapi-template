@@ -126,3 +126,18 @@ async def test_lifespan_builds_and_tears_down_s3_adapter_when_enabled(
     assert patched_infra_lifecycle.index("s3_exit") < patched_infra_lifecycle.index(
         "cache_shutdown"
     )
+
+
+@pytest.mark.asyncio
+async def test_http_clients_close_when_the_app_stops_on_an_error(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An abnormal shutdown is when leaked provider sockets are least noticed."""
+    monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
+
+    with pytest.raises(RuntimeError):
+        async with lifespan(FastAPI()):
+            raise RuntimeError("server crashed")
+
+    assert "http_shutdown" in patched_infra_lifecycle

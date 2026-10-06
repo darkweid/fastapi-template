@@ -43,3 +43,17 @@ async def test_the_fake_refuses_a_post_under_a_repeating_policy() -> None:
         await FakeHttpClient().request(
             "POST", "/", operation="x", retry=RETRY_IDEMPOTENT
         )
+
+
+async def test_the_fake_refuses_a_user_agent_override_like_the_client() -> None:
+    with pytest.raises(ValueError, match="User-Agent"):
+        await FakeHttpClient().request(
+            "GET", "/", operation="x", headers={"User-Agent": "other/1"}
+        )
+
+
+async def test_the_fake_checks_its_client_policy_too() -> None:
+    """A factory that gives a POST-only provider a repeating policy fails every
+    send in production; the fake built with that policy fails the same way."""
+    with pytest.raises(ValueError, match="idempotent"):
+        await FakeHttpClient(retry=RETRY_IDEMPOTENT).request("POST", "/", operation="x")

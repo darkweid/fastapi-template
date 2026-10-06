@@ -1,17 +1,23 @@
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, timedelta
+from email.utils import format_datetime
+import gzip
+import logging
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
 import pytest
 
-from src.core.http.client import HttpClient, close_http_clients
+from src.core.http.client import HttpClient, close_http_clients, is_transient
 from src.core.http.errors import HttpTransportError
 from src.core.http.options import HttpLimits, HttpTimeout
 from src.core.http.retry import RETRY_CONNECT_ONLY, RETRY_IDEMPOTENT, RetryPolicy
+from src.core.utils.datetime_utils import get_utc_now
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 USER_AGENT = "template-tests/1.0"
@@ -411,3 +417,158 @@ async def test_one_failing_close_does_not_keep_the_others_open() -> None:
         broken.aclose = HttpClient.aclose.__get__(broken)  # type: ignore[method-assign]
 
         assert healthy._session is None  # noqa: SLF001
+
+
+async def test_request_headers_cannot_replace_the_user_agent() -> None:
+    """The configured agent is the one a provider's WAF lets through."""
+    with pytest.raises(ValueError, match="User-Agent"):
+        await refused_client().request(
+            "GET", "/", operation="test.get", headers={"user-agent": "other/1"}
+        )
+
+
+def test_a_session_open_in_another_loop_is_refused_not_dropped() -> None:
+    """Replacing it would leak its pool: only its own loop can close it."""
+    client = refused_client()
+    first = asyncio.Runner()
+    try:
+        with pytest.raises(HttpTransportError):
+            first.run(client.request("GET", "/", operation="test.get"))
+
+        with asyncio.Runner() as second, pytest.raises(RuntimeError, match="loop"):
+            second.run(client.request("GET", "/", operation="test.get"))
+    finally:
+        first.run(client.aclose())
+        first.close()
+
+
+async def test_a_request_that_never_left_the_pool_counts_as_not_sent() -> None:
+    """A deadline spent waiting for a pooled connection sent nothing, so a
+    connect-only policy may repeat it, POST included."""
+    release = asyncio.Event()
+
+    async def held(request: web.Request) -> web.Response:
+        await release.wait()
+        return web.Response()
+
+    async with serve(held) as server:
+        client = client_for(
+            server, limits=HttpLimits(connections=1, connections_per_host=1)
+        )
+        holder = asyncio.create_task(client.request("GET", "/", operation="test.hold"))
+        await asyncio.sleep(0.05)
+        with pytest.raises(HttpTransportError) as caught:
+            await client.request(
+                "POST",
+                "/",
+                operation="test.post",
+                timeout=HttpTimeout(total_seconds=0.1),
+            )
+        release.set()
+        await holder
+
+    assert caught.value.request_sent is False
+    assert caught.value.transient is True
+
+
+async def test_a_compressed_answer_is_capped_after_decoding() -> None:
+    """A small gzip body can expand far past the limit its length suggests."""
+
+    async def bomb(request: web.Request) -> web.Response:
+        return web.Response(
+            body=gzip.compress(b"x" * 4096), headers={"Content-Encoding": "gzip"}
+        )
+
+    async with serve(bomb) as server:
+        client = client_for(server, limits=HttpLimits(max_response_bytes=1024))
+        with pytest.raises(HttpTransportError) as caught:
+            await client.request("GET", "/", operation="test.get")
+
+    assert caught.value.reason == "ResponseTooLarge"
+
+
+async def test_a_retry_after_date_sets_the_pause() -> None:
+    sleeps = Sleeps()
+    moment = get_utc_now().astimezone(UTC) + timedelta(seconds=3)
+    handler, _ = statuses(
+        503, 200, headers={"Retry-After": format_datetime(moment, usegmt=True)}
+    )
+
+    async with serve(handler) as server:
+        client = client_for(server, retry=RETRY_IDEMPOTENT, sleep=sleeps)
+        await client.request("GET", "/", operation="test.get")
+
+    assert len(sleeps.calls) == 1
+    assert 1.0 <= sleeps.calls[0] <= 3.0
+
+
+async def test_an_unreadable_retry_after_falls_back_to_backoff() -> None:
+    sleeps = Sleeps()
+    handler, _ = statuses(503, 200, headers={"Retry-After": "soon"})
+
+    async with serve(handler) as server:
+        client = client_for(
+            server, retry=RETRY_IDEMPOTENT, sleep=sleeps, rng=lambda: 1.0
+        )
+        await client.request("GET", "/", operation="test.get")
+
+    assert sleeps.calls == [0.5]
+
+
+class Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+@pytest.fixture
+def client_log() -> Iterator[Records]:
+    target = logging.getLogger("src.core.http.client")
+    records, level = Records(), target.level
+    target.addHandler(records)
+    target.setLevel(logging.DEBUG)
+    yield records
+    target.removeHandler(records)
+    target.setLevel(level)
+
+
+async def test_logs_name_the_failure_and_never_the_path(client_log: Records) -> None:
+    """The Telegram path holds the bot token; an outage must still be
+    readable from the client's own lines."""
+    handler, _ = statuses(503, 200)
+
+    async with serve(handler) as server:
+        client = client_for(server, retry=RETRY_IDEMPOTENT, sleep=Sleeps())
+        await client.request("GET", "/bot1:secret/getMe", operation="telegram.get_me")
+    with pytest.raises(HttpTransportError):
+        await refused_client(retry=RETRY_CONNECT_ONLY, sleep=Sleeps()).request(
+            "POST", "/bot1:secret/sendMessage", operation="telegram.send"
+        )
+
+    assert not [line for line in client_log.lines if "secret" in line]
+    assert any("status=503" in line for line in client_log.lines)
+    assert any("ClientConnectorError" in line for line in client_log.lines)
+
+
+@pytest.mark.parametrize(
+    ("error_class", "transient"),
+    [
+        (aiohttp.ClientConnectorCertificateError, False),
+        (aiohttp.ClientConnectorSSLError, False),
+        (aiohttp.InvalidURL, False),
+        (aiohttp.ClientConnectorError, True),
+        (aiohttp.ServerDisconnectedError, True),
+        (TimeoutError, True),
+    ],
+)
+def test_only_a_failure_a_retry_cannot_fix_is_permanent(
+    error_class: type[Exception], transient: bool
+) -> None:
+    """A certificate error is a ClientConnectorError too: it must not be
+    retried as a refused connection would be."""
+    error = error_class.__new__(error_class)
+
+    assert is_transient(error) is transient
