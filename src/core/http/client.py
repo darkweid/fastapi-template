@@ -173,18 +173,31 @@ class HttpClient:
         return self._session
 
     async def aclose(self) -> None:
-        _open_clients.discard(self)
+        """Closes the session on the loop that opened it. Raises RuntimeError,
+        keeping the client open, when that loop is alive but not running:
+        dropping the session there would strand its pool."""
         session, loop = self._session, self._loop
+        if session is not None and not session.closed and loop is not None:
+            if loop is asyncio.get_running_loop():
+                await session.close()
+            elif loop.is_closed():
+                logger.warning(
+                    "HTTP client %s dropped a session of a closed event loop",
+                    self.name,
+                )
+            elif loop.is_running():
+                # Another thread's loop: only it may touch the session.
+                await asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(session.close(), loop)
+                )
+            else:
+                raise RuntimeError(
+                    f"HTTP client {self.name} is open in an event loop that is "
+                    "not running; close it from that loop"
+                )
+        _open_clients.discard(self)
         self._session = None
         self._loop = None
-        if session is None or session.closed:
-            return
-        if loop is asyncio.get_running_loop():
-            await session.close()
-        else:
-            logger.warning(
-                "HTTP client %s dropped a session of another event loop", self.name
-            )
 
     async def request(
         self,

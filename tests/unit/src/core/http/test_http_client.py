@@ -7,6 +7,7 @@ from email.utils import format_datetime
 import gc
 import gzip
 import logging
+import threading
 from typing import Any
 import warnings
 
@@ -510,6 +511,51 @@ def test_a_session_open_in_another_loop_is_refused_not_dropped() -> None:
     finally:
         first.run(client.aclose())
         first.close()
+
+
+def test_a_close_from_another_loop_keeps_a_session_its_idle_loop_still_owns() -> None:
+    """Dropping it would strand its pool where no later close can reach it."""
+    client = refused_client()
+    first = asyncio.Runner()
+    try:
+        with pytest.raises(HttpTransportError):
+            first.run(client.request("GET", "/", operation="test.get"))
+        session = client._session  # noqa: SLF001
+
+        with asyncio.Runner() as second, pytest.raises(RuntimeError, match="loop"):
+            second.run(client.aclose())
+        assert session is not None
+        assert not session.closed
+
+        first.run(client.aclose())
+        assert session.closed
+    finally:
+        first.close()
+
+
+def test_a_close_from_another_thread_closes_on_the_owning_loop() -> None:
+    """A worker thread's loop owns the session; shutdown runs elsewhere."""
+    client = refused_client()
+    owner = asyncio.new_event_loop()
+    thread = threading.Thread(target=owner.run_forever)
+    thread.start()
+    try:
+        opened = asyncio.run_coroutine_threadsafe(
+            client.request("GET", "/", operation="test.get"), owner
+        )
+        with pytest.raises(HttpTransportError):
+            opened.result(timeout=5)
+        session = client._session  # noqa: SLF001
+
+        asyncio.run(close_http_clients())
+
+        assert session is not None
+        assert session.closed
+        assert client._session is None  # noqa: SLF001
+    finally:
+        owner.call_soon_threadsafe(owner.stop)
+        thread.join()
+        owner.close()
 
 
 async def test_a_request_that_never_left_the_pool_counts_as_not_sent() -> None:
