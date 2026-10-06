@@ -1,3 +1,5 @@
+import traceback
+
 import pytest
 
 from src.core.http.errors import HttpTransportError
@@ -75,3 +77,21 @@ async def test_the_fake_records_the_retry_and_timeout_of_a_call() -> None:
     await http.request("GET", "/", operation="x", retry=None, timeout=deadline)
 
     assert (http.requests[0].retry, http.requests[0].timeout) == (None, deadline)
+
+
+async def test_the_fake_refuses_a_boolean_query_value_like_the_client() -> None:
+    with pytest.raises(ValueError, match="bool"):
+        await FakeHttpClient(fake_response(200)).request(
+            "GET", "/", operation="test.get", params=[("active", False)]
+        )
+
+
+async def test_a_repeated_exception_does_not_grow_its_traceback() -> None:
+    http = FakeHttpClient(HttpTransportError("test.get", "Boom"))
+    depths = []
+    for _ in range(3):
+        with pytest.raises(HttpTransportError) as caught:
+            await http.request("GET", "/", operation="test.get")
+        depths.append(len(traceback.extract_tb(caught.value.__traceback__)))
+
+    assert depths[0] == depths[-1]

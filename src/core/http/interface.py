@@ -31,6 +31,7 @@ def validate_request(
     *,
     policy: RetryPolicy | None,
     headers: Mapping[str, str] | None,
+    params: QueryParams | None,
     json: object,
     data: RequestData | None,
 ) -> None:
@@ -40,6 +41,11 @@ def validate_request(
         raise ValueError(f"{operation}: the path must start with '/'")
     if headers is not None and "User-Agent" in CIMultiDict(headers):
         raise ValueError(f"{operation}: the User-Agent is set on the client only")
+    pairs = params.items() if isinstance(params, Mapping) else params or ()
+    if any(isinstance(value, bool) for _, value in pairs):
+        # yarl refuses a bool when the URL is built; say so before a fake
+        # accepts what the real client cannot send.
+        raise ValueError(f"{operation}: a query value cannot be a bool")
     if json is not None and data is not None:
         raise ValueError(f"{operation}: send either json or data, not both")
     if policy is not None:

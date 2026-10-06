@@ -4,9 +4,11 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, timedelta
 from email.utils import format_datetime
+import gc
 import gzip
 import logging
 from typing import Any
+import warnings
 
 import aiohttp
 from aiohttp import web
@@ -42,6 +44,27 @@ async def serve(handler: Handler) -> AsyncIterator[TestServer]:
         yield server
     finally:
         await server.close()
+
+
+@asynccontextmanager
+async def serve_raw(answer: bytes) -> AsyncIterator[str]:
+    """A server that writes `answer` as is, for heads aiohttp.web rewrites."""
+
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(answer)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def client_for(server: TestServer, **kwargs: Any) -> HttpClient:
@@ -218,6 +241,37 @@ async def test_an_oversized_answer_is_refused() -> None:
 
     assert caught.value.reason == "ResponseTooLarge"
     assert caught.value.transient is False
+
+
+async def test_a_head_of_a_large_resource_comes_back_as_a_status() -> None:
+    """HEAD carries the length the GET would return, with no body to cap."""
+
+    async def big(request: web.Request) -> web.Response:
+        return web.Response(body=b"x" * 2048)
+
+    async with serve(big) as server:
+        client = client_for(server, limits=HttpLimits(max_response_bytes=1024))
+        response = await client.request("HEAD", "/", operation="test.head")
+
+    assert response.status == 200
+    assert response.body == b""
+
+
+async def test_a_not_modified_with_a_large_length_comes_back_as_a_status() -> None:
+    """A 304 may state the representation's length (RFC 9110 8.6)."""
+    answer = b"HTTP/1.1 304 Not Modified\r\nContent-Length: 52428800\r\n\r\n"
+    async with serve_raw(answer) as base_url:
+        client = HttpClient(
+            name="test",
+            base_url=base_url,
+            user_agent=USER_AGENT,
+            limits=HttpLimits(max_response_bytes=1024),
+        )
+        response = await client.request(
+            "GET", "/", operation="test.get", headers={"If-None-Match": '"v1"'}
+        )
+
+    assert response.status == 304
 
 
 async def test_a_chunked_answer_without_a_length_is_capped_too() -> None:
@@ -405,6 +459,8 @@ def test_a_user_agent_among_the_default_headers_is_refused() -> None:
         "https:///api",
         "https://api.example/?key=1",
         "https://api.example/#top",
+        "https://api.example/api?",
+        "https://api.example/api#",
     ],
 )
 def test_a_base_url_that_cannot_prefix_a_path_is_refused(base_url: str) -> None:
@@ -606,6 +662,14 @@ async def test_repeated_and_numeric_query_keys_are_sent() -> None:
     assert seen == [["1", "2"]]
 
 
+async def test_a_boolean_query_value_is_refused() -> None:
+    """yarl refuses a bool at send time; the check makes the fake refuse it too."""
+    with pytest.raises(ValueError, match="bool"):
+        await refused_client().request(
+            "GET", "/", operation="test.get", params={"active": True}
+        )
+
+
 def test_a_session_whose_loop_has_closed_is_dropped_and_reopened(
     client_log: Records,
 ) -> None:
@@ -615,10 +679,15 @@ def test_a_session_whose_loop_has_closed_is_dropped_and_reopened(
     with asyncio.Runner() as first, pytest.raises(HttpTransportError):
         first.run(client.request("GET", "/", operation="test.get"))
 
-    with asyncio.Runner() as second:
-        with pytest.raises(HttpTransportError):
-            second.run(client.request("GET", "/", operation="test.get"))
-        second.run(client.aclose())
+    # The dropped session warns as unclosed when collected; collect it here so
+    # the warning cannot land in whichever test runs next.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        with asyncio.Runner() as second:
+            with pytest.raises(HttpTransportError):
+                second.run(client.request("GET", "/", operation="test.get"))
+            second.run(client.aclose())
+        gc.collect()
 
     assert any("closed event loop" in line for line in client_log.lines)
 

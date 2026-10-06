@@ -5,8 +5,8 @@ import aiohttp
 
 @dataclass(frozen=True, slots=True)
 class HttpTimeout:
-    """Seconds per phase. Waiting for a free pooled connection counts only
-    against `total_seconds`."""
+    """Seconds per phase. Waiting for a free pooled connection and the DNS
+    lookup count only against `total_seconds`."""
 
     connect_seconds: float = 5
     read_seconds: float = 10

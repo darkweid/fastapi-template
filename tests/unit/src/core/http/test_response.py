@@ -6,9 +6,11 @@ from src.core.http.response import HttpResponse
 from src.core.http.status import is_permanent_failure
 
 
-def _response(status: int, body: bytes) -> HttpResponse:
+def _response(
+    status: int, body: bytes, headers: dict[str, str] | None = None
+) -> HttpResponse:
     return HttpResponse(
-        status=status, headers=CIMultiDictProxy(CIMultiDict()), body=body
+        status=status, headers=CIMultiDictProxy(CIMultiDict(headers or {})), body=body
     )
 
 
@@ -74,3 +76,22 @@ def test_a_transport_error_without_a_classification_is_never_repeated() -> None:
 def test_a_deeply_nested_body_is_none_for_the_lenient_reader() -> None:
     """A hostile proxy page must not crash the reader meant to survive it."""
     assert _response(502, b"[" * 100_000).json_or_none() is None
+
+
+def test_text_decodes_with_the_declared_charset() -> None:
+    response = _response(
+        200,
+        "Привет".encode("cp1251"),
+        {"Content-Type": "text/plain; charset=windows-1251"},
+    )
+
+    assert response.text() == "Привет"
+
+
+@pytest.mark.parametrize(
+    "content_type", [None, "text/plain", "text/plain; charset=no-such-charset"]
+)
+def test_text_falls_back_to_utf8(content_type: str | None) -> None:
+    headers = {"Content-Type": content_type} if content_type else None
+
+    assert _response(200, "ok ü".encode(), headers).text() == "ok ü"

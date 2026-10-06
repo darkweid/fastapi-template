@@ -349,4 +349,5 @@ ref selector still defaults to `main`, so a blank `image_tag` there deploys
 - Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)
 - Adding an auth realm: [docs/readme/auth-realms.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/auth-realms.md)
 - Recording and reading the event log: [docs/readme/event-log.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/event-log.md)
+- Calling a third-party API: [docs/readme/http-client.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/http-client.md)
 - Contributing & CI/CD: [docs/readme/contributing.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/contributing.md)

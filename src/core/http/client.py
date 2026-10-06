@@ -51,9 +51,10 @@ async def close_http_clients() -> None:
 
 
 def is_transient(error: Exception) -> bool:
-    """False for a certificate or TLS failure and a malformed URL, which no
-    retry fixes; a certificate error is a ClientConnectorError too, so this is
-    not a question of the error's family."""
+    """False for any TLS failure (a certificate, a handshake the peer cut) and
+    a malformed URL. A TLS error is a ClientConnectorError too, so this is not
+    a question of the error's family; a reset mid-handshake is counted with
+    them, since a retry within a call seldom outlives a broken TLS setup."""
     return not isinstance(error, aiohttp.ClientSSLError | aiohttp.InvalidURL)
 
 
@@ -120,7 +121,7 @@ class HttpClient:
         url = URL(base_url)
         if url.scheme not in ("http", "https") or not url.host:
             raise ValueError("base_url needs an http(s) scheme and a host")
-        if url.query_string or url.fragment:
+        if "?" in base_url or "#" in base_url:
             raise ValueError("base_url cannot carry a query or a fragment")
         self.name = name
         self._base_url = base_url.rstrip("/")
@@ -206,6 +207,7 @@ class HttpClient:
             operation,
             policy=policy,
             headers=headers,
+            params=params,
             json=json,
             data=data,
         )
@@ -335,9 +337,9 @@ class HttpClient:
     async def _read_body(
         self, response: aiohttp.ClientResponse, operation: str
     ) -> bytes:
+        # Counted while streaming, never from Content-Length: a HEAD or a 304
+        # states a length with no body behind it.
         limit = self._limits.max_response_bytes
-        if response.content_length is not None and response.content_length > limit:
-            raise _too_large(operation)
         body = bytearray()
         async for chunk in response.content.iter_chunked(READ_CHUNK_BYTES):
             body.extend(chunk)

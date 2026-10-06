@@ -76,6 +76,7 @@ class FakeHttpClient:
             operation,
             policy=self.retry if isinstance(retry, ClientDefault) else retry,
             headers=headers,
+            params=params,
             json=json,
             data=data,
         )
@@ -86,7 +87,9 @@ class FakeHttpClient:
         )
         answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if isinstance(answer, Exception):
-            raise answer
+            # The same object is raised on every repeat; without a reset its
+            # traceback grows by one call each time.
+            raise answer.with_traceback(None)
         return answer
 
     async def aclose(self) -> None:
