@@ -40,6 +40,8 @@ jobs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       tree: ${{ steps.verified.outputs.tree }}
       verified: ${{ steps.verified.outputs.verified }}
+      coverage_run: ${{ steps.coverage.outputs.run }}
+      coverage_tree: ${{ steps.coverage.outputs.tree }}
 
     steps:
       - name: Checkout code
@@ -81,6 +83,41 @@ jobs:
             fi
           fi
           echo "verified=${verified}" >> "$GITHUB_OUTPUT"
+
+      # Coveralls compares a pull request with the build of its base commit, so
+      # every pushed commit needs one, including a push whose tests this gate
+      # skips. The report of the nearest first-parent commit whose tree was
+      # tested is this commit's coverage while every commit walked past is
+      # documentation-only (the classifier above, same diff flags). A miss of
+      # any kind - a code commit without a report, an expired report, a walk
+      # past the cap, an API error - leaves `run` empty, and `unit-tests` then
+      # runs on this push to produce the report itself.
+      - name: Look for a coverage report this push can carry
+        id: coverage
+        if: ${{ github.event_name == 'push' && (steps.verified.outputs.verified == 'true' || steps.classify.outputs.docs_only == 'true') }}
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for commit in $(git rev-list --first-parent -n 50 HEAD); do
+            tree="$(git rev-parse "${commit}^{tree}")"
+            # Only this repository's own runs, as in the lookup above.
+            run_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=coverage-${tree}&per_page=100" \
+              --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | last | .workflow_run.id // empty')"
+            if [ -n "${run_id}" ]; then
+              echo "run=${run_id}" >> "$GITHUB_OUTPUT"
+              echo "tree=${tree}" >> "$GITHUB_OUTPUT"
+              echo "::notice::Coverage of tree ${tree} (run ${run_id}) is carried to this commit."
+              exit 0
+            fi
+            git cat-file -e "${commit}^" 2>/dev/null || break
+            verdict="$(git -c core.quotePath=false diff --no-renames --name-only "${commit}^" "${commit}" \
+              | python3 scripts/ops/docs_only_change.py)"
+            [ "${verdict}" = "true" ] || break
+          done
+          echo "::notice::No coverage report to carry; unit tests run on this push."
 
   # Not gated on docs_only, like gitleaks: `make lint` runs pre-commit over every
   # file, and end-of-file-fixer, trailing-whitespace and check-yaml all apply to
@@ -197,7 +234,9 @@ jobs:
   unit-tests:
     name: Unit tests
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
+    # Also on a skipped push with no coverage report to carry, so that commit
+    # still reaches Coveralls (see the coverage lookup in `changes`).
+    if: ${{ !cancelled() && ((needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true') || (github.event_name == 'push' && needs.changes.outputs.coverage_run == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -271,18 +310,12 @@ jobs:
           path: coverage.xml
           retention-days: 30
 
-  # Coveralls compares a pull request with the build of its base commit. A push
-  # whose tests the gate skipped - a tree a pull request already passed, or a
-  # documentation-only change - would leave that commit without a build, and
-  # every later pull request would report "No base build found". The report of
-  # the nearest first-parent commit whose tree was tested is this commit's
-  # coverage only while every commit walked past is documentation-only; one
-  # code change without a report of its own (a cancelled or failed run) ends
-  # the walk with no upload rather than a stale build.
+  # Uploads the report `changes` found for a push whose tests were skipped, as
+  # this commit's Coveralls build.
   carry-coverage:
     name: Carry coverage
-    needs: [changes, unit-tests]
-    if: ${{ !cancelled() && github.event_name == 'push' && needs.unit-tests.result == 'skipped' }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.coverage_run != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -292,69 +325,32 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 20
 
-      # Best effort like the upload: an API hiccup leaves one commit without a
-      # Coveralls build, it must not turn the push red.
-      - name: Find the nearest tested tree's report
-        id: report
-        continue-on-error: true
+      - name: Download the carried report
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          found=false
-          for commit in $(git rev-list --first-parent -n 20 HEAD); do
-            tree="$(git rev-parse "${commit}^{tree}")"
-            # Only this repository's own runs, as in the `changes` gate.
-            run_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=coverage-${tree}&per_page=100" \
-              --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | last | .workflow_run.id // empty')"
-            if [ -n "${run_id}" ]; then
-              gh run download "${run_id}" --repo "${{ github.repository }}" --name "coverage-${tree}" --dir "${RUNNER_TEMP}/coverage"
-              echo "file=${RUNNER_TEMP}/coverage/coverage.xml" >> "$GITHUB_OUTPUT"
-              echo "::notice::Coverage carried from tree ${tree} (run ${run_id})."
-              found=true
-              break
-            fi
-            # Walk past this commit only if it changed documentation alone, by
-            # the classifier the `changes` gate uses (same diff flags).
-            if ! git cat-file -e "${commit}^" 2>/dev/null; then
-              break
-            fi
-            verdict="$(git -c core.quotePath=false diff --no-renames --name-only "${commit}^" "${commit}" \
-              | python3 scripts/ops/docs_only_change.py)"
-            if [ "${verdict}" != "true" ]; then
-              echo "::warning::Commit ${commit} changed code and has no coverage report; Coveralls gets no build for this commit."
-              break
-            fi
-          done
-          if [ "${found}" = false ]; then
-            echo "::warning::No coverage report to carry; Coveralls gets no build for this commit."
-          fi
-          echo "found=${found}" >> "$GITHUB_OUTPUT"
+          gh run download "${{ needs.changes.outputs.coverage_run }}" --repo "${{ github.repository }}" \
+            --name "coverage-${{ needs.changes.outputs.coverage_tree }}" --dir "${RUNNER_TEMP}/coverage"
 
-      # Saved again under this commit's tree, so the next documentation-only
-      # push finds a report one step back instead of walking toward the cap,
-      # and a report kept alive by such pushes does not expire after 30 days.
+      # Saved again under this commit's tree, so the next push finds it one step
+      # back instead of walking the whole run of documentation commits.
       - name: Keep the carried report for this tree
-        if: ${{ steps.report.outputs.found == 'true' }}
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ needs.changes.outputs.tree }}
-          path: ${{ steps.report.outputs.file }}
+          path: ${{ runner.temp }}/coverage/coverage.xml
           retention-days: 30
 
       - name: Upload coverage to Coveralls
-        if: ${{ steps.report.outputs.found == 'true' }}
         continue-on-error: true
         uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           format: cobertura
-          file: ${{ steps.report.outputs.file }}
+          file: ${{ runner.temp }}/coverage/coverage.xml
 
   integration-tests:
     name: Integration tests
