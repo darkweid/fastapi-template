@@ -335,6 +335,18 @@ jobs:
           fi
           echo "found=${found}" >> "$GITHUB_OUTPUT"
 
+      # Saved again under this commit's tree, so the next documentation-only
+      # push finds a report one step back instead of walking toward the cap,
+      # and a report kept alive by such pushes does not expire after 30 days.
+      - name: Keep the carried report for this tree
+        if: ${{ steps.report.outputs.found == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ needs.changes.outputs.tree }}
+          path: ${{ steps.report.outputs.file }}
+          retention-days: 30
+
       - name: Upload coverage to Coveralls
         if: ${{ steps.report.outputs.found == 'true' }}
         continue-on-error: true
