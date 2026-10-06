@@ -261,6 +261,71 @@ jobs:
           format: cobertura
           file: coverage.xml
 
+      # Kept under the tree's name for `carry-coverage`: the push that lands this
+      # tree on the branch skips the tests, and Coveralls still needs a build
+      # for that commit to compare the next pull request against.
+      - name: Keep the coverage report for this tree
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ needs.changes.outputs.tree }}
+          path: coverage.xml
+          retention-days: 30
+
+  # Coveralls compares a pull request with the build of its base commit. A push
+  # whose tests the gate skipped - a tree a pull request already passed, or a
+  # documentation-only change - would leave that commit without a build, and
+  # every later pull request would report "No base build found". The report of
+  # the nearest first-parent commit whose tree was tested is this commit's
+  # coverage: the trees match, or only documentation changed since.
+  carry-coverage:
+    name: Carry coverage
+    needs: [changes, unit-tests]
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.unit-tests.result == 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 20
+
+      - name: Find the nearest tested tree's report
+        id: report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          found=false
+          for tree in $(git log --first-parent --format=%T -n 20 HEAD); do
+            # Only this repository's own runs, as in the `changes` gate.
+            run_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=coverage-${tree}&per_page=100" \
+              --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | last | .workflow_run.id // empty')"
+            if [ -n "${run_id}" ]; then
+              gh run download "${run_id}" --repo "${{ github.repository }}" --name "coverage-${tree}" --dir "${RUNNER_TEMP}/coverage"
+              echo "file=${RUNNER_TEMP}/coverage/coverage.xml" >> "$GITHUB_OUTPUT"
+              echo "::notice::Coverage carried from tree ${tree} (run ${run_id})."
+              found=true
+              break
+            fi
+          done
+          if [ "${found}" = false ]; then
+            echo "::warning::No coverage report within 20 commits; Coveralls gets no build for this commit."
+          fi
+          echo "found=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage to Coveralls
+        if: ${{ steps.report.outputs.found == 'true' }}
+        continue-on-error: true
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          format: cobertura
+          file: ${{ steps.report.outputs.file }}
+
   integration-tests:
     name: Integration tests
     needs: changes
