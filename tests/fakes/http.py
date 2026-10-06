@@ -4,6 +4,7 @@ import json as jsonlib
 
 from multidict import CIMultiDict, CIMultiDictProxy
 
+from src.core.http.client import validate_request
 from src.core.http.interface import CLIENT_DEFAULT, ClientDefault
 from src.core.http.options import HttpTimeout
 from src.core.http.response import HttpResponse
@@ -59,6 +60,9 @@ class FakeHttpClient:
         timeout: HttpTimeout | None = None,  # noqa: ASYNC109
         retry: RetryPolicy | ClientDefault | None = CLIENT_DEFAULT,
     ) -> HttpResponse:
+        validate_request(
+            method, path, operation, None if isinstance(retry, ClientDefault) else retry
+        )
         self.requests.append(
             RecordedRequest(method, path, operation, params, json, data, headers)
         )

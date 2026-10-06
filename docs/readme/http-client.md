@@ -28,8 +28,9 @@ if is_permanent_failure(response.status): ...
 ```
 
 - **`User-Agent`** is required. `get_user_agent()` returns `HTTP_USER_AGENT`, or `<project-name>/<VERSION>` when that is blank. WAFs often refuse the library default.
-- **A status never raises.** The client reads it: `response.ok`, `is_permanent_failure(status)`, `response.json_or_none()` for a body that may be an HTML error page.
-- **`HttpTransportError` means no status came back.** Its message is `<operation>: <exception class>` and never the URL, so a token in a path stays out of logs and Sentry. `request_sent` says whether the server may have seen the request.
+- **A status never raises.** The caller reads it: `response.ok`, `is_permanent_failure(status)`, `response.json_or_none()` for a body that may be an HTML error page.
+- **Redirects are not followed.** A 3xx comes back as a status: following it would re-send the body and any custom key header to the host the `Location` names.
+- **`HttpTransportError` means no status came back.** Its message is `<operation>: <exception class>` and never the URL, so a token in a path stays out of logs and Sentry. `request_sent` says whether the server may have seen the request; a deadline that runs out, waiting for a pooled connection included, counts as sent.
 - **Closing.** Every client opened in the process is closed by `close_http_clients()` at API and worker shutdown, so an integration has no shutdown hook of its own.
 
 ## Choosing a retry policy

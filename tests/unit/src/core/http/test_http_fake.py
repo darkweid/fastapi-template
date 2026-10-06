@@ -1,6 +1,7 @@
 import pytest
 
 from src.core.http.errors import HttpTransportError
+from src.core.http.retry import RETRY_IDEMPOTENT
 from tests.fakes.http import FakeHttpClient, fake_response
 
 
@@ -28,3 +29,17 @@ async def test_the_fake_raises_a_queued_error() -> None:
 
     with pytest.raises(HttpTransportError):
         await http.request("GET", "/", operation="x")
+
+
+async def test_the_fake_refuses_a_relative_path_like_the_client() -> None:
+    """The fake is the only HTTP an integration's tests see: a call the real
+    client refuses must fail there too, not first in production."""
+    with pytest.raises(ValueError):
+        await FakeHttpClient().request("POST", "sendMessage", operation="x")
+
+
+async def test_the_fake_refuses_a_post_under_a_repeating_policy() -> None:
+    with pytest.raises(ValueError, match="idempotent"):
+        await FakeHttpClient().request(
+            "POST", "/", operation="x", retry=RETRY_IDEMPOTENT
+        )

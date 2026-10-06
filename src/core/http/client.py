@@ -4,6 +4,7 @@ import random
 import time
 
 import aiohttp
+from multidict import CIMultiDict
 from yarl import URL
 
 from loggers import get_logger
@@ -30,7 +31,23 @@ async def close_http_clients() -> None:
     """Shutdown hook of the API and the worker: closes every session a client
     opened in this process."""
     for client in list(_open_clients):
-        await client.aclose()
+        # One failing close must not keep the other sessions open, nor skip
+        # the shutdown steps that follow this hook.
+        try:
+            await client.aclose()
+        except Exception:
+            logger.exception("Closing HTTP client %s failed", client.name)
+
+
+def validate_request(
+    method: str, path: str, operation: str, policy: RetryPolicy | None
+) -> None:
+    """The checks every `HttpRequester` runs before sending, so a test fake
+    refuses what the real client refuses."""
+    if not path.startswith("/"):
+        raise ValueError(f"{operation}: the path must start with '/'")
+    if policy is not None:
+        policy.ensure_allows(method)
 
 
 def _transport_error(operation: str, error: Exception) -> HttpTransportError:
@@ -73,10 +90,13 @@ class HttpClient:
     ) -> None:
         if not user_agent.strip():
             raise ValueError("an HTTP client needs a User-Agent")
-        self._name = name
+        self.name = name
         self._base_url = base_url.rstrip("/")
         self._host = URL(self._base_url).host or ""
-        self._headers = {**(headers or {}), "User-Agent": user_agent}
+        # Case-insensitive, so a `user-agent` in `headers` is replaced, never
+        # sent beside the configured one.
+        self._headers = CIMultiDict(headers or {})
+        self._headers["User-Agent"] = user_agent
         self._timeout = timeout
         self._limits = limits
         self._retry = retry
@@ -127,11 +147,8 @@ class HttpClient:
         timeout: HttpTimeout | None = None,  # noqa: ASYNC109
         retry: RetryPolicy | ClientDefault | None = CLIENT_DEFAULT,
     ) -> HttpResponse:
-        if not path.startswith("/"):
-            raise ValueError(f"{operation}: the path must start with '/'")
         policy = self._retry if isinstance(retry, ClientDefault) else retry
-        if policy is not None:
-            policy.ensure_allows(method)
+        validate_request(method, path, operation, policy)
         started = self._clock()
         attempt = 1
         while True:
@@ -220,6 +237,9 @@ class HttpClient:
                 data=data,
                 headers=headers,
                 timeout=timeout.to_aiohttp(),
+                # A redirect would re-send the body and any custom key header
+                # (aiohttp strips only Authorization) to the host it names.
+                allow_redirects=False,
             ) as response:
                 body = await self._read_body(response, operation)
         except (aiohttp.ClientError, TimeoutError) as error:

@@ -28,5 +28,6 @@ class HttpResponse:
         failure class."""
         try:
             return self.json()
-        except ValueError:
+        # A deeply nested body exhausts the parser's recursion instead.
+        except (ValueError, RecursionError):
             return None

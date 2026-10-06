@@ -69,3 +69,8 @@ def test_a_transport_error_without_a_classification_is_never_repeated() -> None:
     error = HttpTransportError("telegram.send")
 
     assert (error.request_sent, error.transient) == (True, False)
+
+
+def test_a_deeply_nested_body_is_none_for_the_lenient_reader() -> None:
+    """A hostile proxy page must not crash the reader meant to survive it."""
+    assert _response(502, b"[" * 100_000).json_or_none() is None

@@ -69,12 +69,6 @@ def statuses(
     return handler, calls
 
 
-@pytest.fixture(autouse=True)
-async def _close_clients() -> AsyncIterator[None]:
-    yield
-    await close_http_clients()
-
-
 async def test_requests_carry_the_configured_user_agent_only() -> None:
     """A WAF in front of a provider refuses aiohttp's own `Python/x aiohttp/x`."""
     seen: list[list[str]] = []
@@ -364,3 +358,56 @@ async def test_no_retry_starts_past_the_elapsed_budget() -> None:
         await client.request("GET", "/", operation="test.get")
 
     assert (calls[0], sleeps.calls) == (2, [0.5])
+
+
+async def test_a_redirect_comes_back_as_a_status() -> None:
+    """Following it would re-send the body and any custom key header (aiohttp
+    strips only Authorization) to whatever host the Location names."""
+    elsewhere, elsewhere_calls = statuses(200)
+
+    async with serve(elsewhere) as other:
+
+        async def redirect(request: web.Request) -> web.Response:
+            raise web.HTTPTemporaryRedirect(str(other.make_url("/land")))
+
+        async with serve(redirect) as server:
+            client = client_for(server, headers={"X-Api-Key": "secret"})
+            response = await client.request("POST", "/", operation="test.post")
+
+    assert response.status == 307
+    assert elsewhere_calls[0] == 0
+
+
+async def test_a_user_agent_in_any_spelling_is_replaced_not_doubled() -> None:
+    """Two User-Agent headers make a strict server answer 400."""
+    seen: list[list[str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen.append(request.headers.getall("User-Agent"))
+        return web.Response()
+
+    async with serve(handler) as server:
+        client = client_for(server, headers={"user-agent": "other/1"})
+        await client.request("GET", "/", operation="test.get")
+
+    assert seen == [[USER_AGENT]]
+
+
+async def test_one_failing_close_does_not_keep_the_others_open() -> None:
+    """The shutdown hooks after close_http_clients (broker, cache, Redis)
+    must run whatever one provider session does on close."""
+    handler, _ = statuses(200)
+
+    async with serve(handler) as server:
+        broken, healthy = client_for(server), client_for(server)
+        await broken.request("GET", "/", operation="test.get")
+        await healthy.request("GET", "/", operation="test.get")
+
+        async def fail() -> None:
+            raise RuntimeError("close failed")
+
+        broken.aclose = fail  # type: ignore[method-assign]
+        await close_http_clients()
+        broken.aclose = HttpClient.aclose.__get__(broken)  # type: ignore[method-assign]
+
+        assert healthy._session is None  # noqa: SLF001
