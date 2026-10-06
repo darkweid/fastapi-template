@@ -11,7 +11,13 @@ from yarl import URL
 
 from loggers import get_logger
 from src.core.http.errors import HttpTransportError
-from src.core.http.interface import CLIENT_DEFAULT, ClientDefault
+from src.core.http.interface import (
+    CLIENT_DEFAULT,
+    ClientDefault,
+    QueryParams,
+    RequestData,
+    validate_request,
+)
 from src.core.http.options import (
     DEFAULT_LIMITS,
     DEFAULT_TIMEOUT,
@@ -25,6 +31,9 @@ from src.core.utils.datetime_utils import get_utc_now
 logger = get_logger(__name__)
 
 READ_CHUNK_BYTES = 64 * 1024
+# A process talks to a handful of providers. Far more open clients means a
+# factory runs per call instead of once per process.
+OPEN_CLIENTS_WARNING = 50
 
 _open_clients: set["HttpClient"] = set()
 
@@ -39,23 +48,6 @@ async def close_http_clients() -> None:
             await client.aclose()
         except Exception:
             logger.exception("Closing HTTP client %s failed", client.name)
-
-
-def validate_request(
-    method: str,
-    path: str,
-    operation: str,
-    policy: RetryPolicy | None,
-    headers: Mapping[str, str] | None = None,
-) -> None:
-    """The checks every `HttpRequester` runs before sending, so a test fake
-    refuses what the real client refuses."""
-    if not path.startswith("/"):
-        raise ValueError(f"{operation}: the path must start with '/'")
-    if headers is not None and "User-Agent" in CIMultiDict(headers):
-        raise ValueError(f"{operation}: the User-Agent is set on the client only")
-    if policy is not None:
-        policy.ensure_allows(method)
 
 
 def is_transient(error: Exception) -> bool:
@@ -121,13 +113,18 @@ class HttpClient:
     ) -> None:
         if not user_agent.strip():
             raise ValueError("an HTTP client needs a User-Agent")
+        self._headers = CIMultiDict(headers or {})
+        if "User-Agent" in self._headers:
+            raise ValueError("pass the User-Agent as user_agent, not in headers")
+        self._headers["User-Agent"] = user_agent
+        url = URL(base_url)
+        if url.scheme not in ("http", "https") or not url.host:
+            raise ValueError("base_url needs an http(s) scheme and a host")
+        if url.query_string or url.fragment:
+            raise ValueError("base_url cannot carry a query or a fragment")
         self.name = name
         self._base_url = base_url.rstrip("/")
-        self._host = URL(self._base_url).host or ""
-        # Case-insensitive, so a `user-agent` in `headers` is replaced, never
-        # sent beside the configured one.
-        self._headers = CIMultiDict(headers or {})
-        self._headers["User-Agent"] = user_agent
+        self._host = url.host
         self._timeout = timeout
         self._limits = limits
         self._retry = retry
@@ -142,11 +139,15 @@ class HttpClient:
         if self._session is not None and not self._session.closed:
             if self._loop is loop:
                 return self._session
-            # Only the loop that opened a session can close it; replacing it
-            # here would leak its connection pool.
-            raise RuntimeError(
-                f"HTTP client {self.name} is open in another event loop; "
-                "close it there first (close_http_clients)"
+            if self._loop is not None and not self._loop.is_closed():
+                # Only the loop that opened a session can close it; replacing
+                # it here would leak its connection pool.
+                raise RuntimeError(
+                    f"HTTP client {self.name} is open in another running event "
+                    "loop; close it there first (close_http_clients)"
+                )
+            logger.warning(
+                "HTTP client %s dropped a session of a closed event loop", self.name
             )
         trace = TraceConfig()
         trace.on_request_headers_sent.append(_mark_headers_sent)
@@ -163,6 +164,11 @@ class HttpClient:
         )
         self._loop = loop
         _open_clients.add(self)
+        if len(_open_clients) % OPEN_CLIENTS_WARNING == 0:
+            logger.warning(
+                "%d HTTP clients open; build each client once per process",
+                len(_open_clients),
+            )
         return self._session
 
     async def aclose(self) -> None:
@@ -170,8 +176,14 @@ class HttpClient:
         session, loop = self._session, self._loop
         self._session = None
         self._loop = None
-        if session is not None and loop is asyncio.get_running_loop():
+        if session is None or session.closed:
+            return
+        if loop is asyncio.get_running_loop():
             await session.close()
+        else:
+            logger.warning(
+                "HTTP client %s dropped a session of another event loop", self.name
+            )
 
     async def request(
         self,
@@ -179,16 +191,24 @@ class HttpClient:
         path: str,
         *,
         operation: str,
-        params: Mapping[str, str] | None = None,
+        params: QueryParams | None = None,
         json: object = None,
-        data: Mapping[str, str] | bytes | None = None,
+        data: RequestData | None = None,
         headers: Mapping[str, str] | None = None,
         # Per-phase socket timeouts handed to aiohttp, not a deadline.
         timeout: HttpTimeout | None = None,  # noqa: ASYNC109
         retry: RetryPolicy | ClientDefault | None = CLIENT_DEFAULT,
     ) -> HttpResponse:
         policy = self._retry if isinstance(retry, ClientDefault) else retry
-        validate_request(method, path, operation, policy, headers)
+        validate_request(
+            method,
+            path,
+            operation,
+            policy=policy,
+            headers=headers,
+            json=json,
+            data=data,
+        )
         started = self._clock()
         attempt = 1
         while True:
@@ -264,9 +284,9 @@ class HttpClient:
         path: str,
         operation: str,
         *,
-        params: Mapping[str, str] | None,
+        params: QueryParams | None,
         json: object,
-        data: Mapping[str, str] | bytes | None,
+        data: RequestData | None,
         headers: Mapping[str, str] | None,
         timeout: HttpTimeout,  # noqa: ASYNC109
     ) -> HttpResponse:

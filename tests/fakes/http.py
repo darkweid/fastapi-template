@@ -4,8 +4,13 @@ import json as jsonlib
 
 from multidict import CIMultiDict, CIMultiDictProxy
 
-from src.core.http.client import validate_request
-from src.core.http.interface import CLIENT_DEFAULT, ClientDefault
+from src.core.http.interface import (
+    CLIENT_DEFAULT,
+    ClientDefault,
+    QueryParams,
+    RequestData,
+    validate_request,
+)
 from src.core.http.options import HttpTimeout
 from src.core.http.response import HttpResponse
 from src.core.http.retry import RetryPolicy
@@ -16,10 +21,12 @@ class RecordedRequest:
     method: str
     path: str
     operation: str
-    params: Mapping[str, str] | None
+    params: QueryParams | None
     json: object
-    data: Mapping[str, str] | bytes | None
+    data: RequestData | None
     headers: Mapping[str, str] | None
+    timeout: HttpTimeout | None
+    retry: RetryPolicy | ClientDefault | None
 
 
 def fake_response(
@@ -56,9 +63,9 @@ class FakeHttpClient:
         path: str,
         *,
         operation: str,
-        params: Mapping[str, str] | None = None,
+        params: QueryParams | None = None,
         json: object = None,
-        data: Mapping[str, str] | bytes | None = None,
+        data: RequestData | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: HttpTimeout | None = None,  # noqa: ASYNC109
         retry: RetryPolicy | ClientDefault | None = CLIENT_DEFAULT,
@@ -67,11 +74,15 @@ class FakeHttpClient:
             method,
             path,
             operation,
-            self.retry if isinstance(retry, ClientDefault) else retry,
-            headers,
+            policy=self.retry if isinstance(retry, ClientDefault) else retry,
+            headers=headers,
+            json=json,
+            data=data,
         )
         self.requests.append(
-            RecordedRequest(method, path, operation, params, json, data, headers)
+            RecordedRequest(
+                method, path, operation, params, json, data, headers, timeout, retry
+            )
         )
         answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if isinstance(answer, Exception):

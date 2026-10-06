@@ -1,6 +1,8 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from enum import Enum, auto
 from typing import Protocol
+
+from multidict import CIMultiDict
 
 from src.core.http.options import HttpTimeout
 from src.core.http.response import HttpResponse
@@ -16,6 +18,33 @@ class ClientDefault(Enum):
 
 CLIENT_DEFAULT = ClientDefault.POLICY
 
+# A sequence of pairs carries a repeated key (`?id=1&id=2`).
+QueryParams = Mapping[str, str | int] | Sequence[tuple[str, str | int]]
+# A mapping is sent as an urlencoded form; bytes and str as they are.
+RequestData = Mapping[str, str] | bytes | str
+
+
+def validate_request(
+    method: str,
+    path: str,
+    operation: str,
+    *,
+    policy: RetryPolicy | None,
+    headers: Mapping[str, str] | None,
+    json: object,
+    data: RequestData | None,
+) -> None:
+    """The checks every `HttpRequester` runs before sending, so a test fake
+    refuses what the real client refuses."""
+    if not path.startswith("/"):
+        raise ValueError(f"{operation}: the path must start with '/'")
+    if headers is not None and "User-Agent" in CIMultiDict(headers):
+        raise ValueError(f"{operation}: the User-Agent is set on the client only")
+    if json is not None and data is not None:
+        raise ValueError(f"{operation}: send either json or data, not both")
+    if policy is not None:
+        policy.ensure_allows(method)
+
 
 class HttpRequester(Protocol):
     async def request(
@@ -24,9 +53,9 @@ class HttpRequester(Protocol):
         path: str,
         *,
         operation: str,
-        params: Mapping[str, str] | None = None,
+        params: QueryParams | None = None,
         json: object = None,
-        data: Mapping[str, str] | bytes | None = None,
+        data: RequestData | None = None,
         headers: Mapping[str, str] | None = None,
         # Per-phase socket timeouts handed to aiohttp, not a deadline.
         timeout: HttpTimeout | None = None,  # noqa: ASYNC109

@@ -13,6 +13,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
 import pytest
 
+from src.core.http import client as client_module
 from src.core.http.client import HttpClient, close_http_clients, is_transient
 from src.core.http.errors import HttpTransportError
 from src.core.http.options import HttpLimits, HttpTimeout
@@ -384,19 +385,32 @@ async def test_a_redirect_comes_back_as_a_status() -> None:
     assert elsewhere_calls[0] == 0
 
 
-async def test_a_user_agent_in_any_spelling_is_replaced_not_doubled() -> None:
-    """Two User-Agent headers make a strict server answer 400."""
-    seen: list[list[str]] = []
+def test_a_user_agent_among_the_default_headers_is_refused() -> None:
+    """The agent has one source; a second spelling would be dropped silently
+    or sent twice, which a strict server answers with 400."""
+    with pytest.raises(ValueError, match="User-Agent"):
+        HttpClient(
+            name="test",
+            base_url="http://x",
+            user_agent=USER_AGENT,
+            headers={"user-agent": "other/1"},
+        )
 
-    async def handler(request: web.Request) -> web.Response:
-        seen.append(request.headers.getall("User-Agent"))
-        return web.Response()
 
-    async with serve(handler) as server:
-        client = client_for(server, headers={"user-agent": "other/1"})
-        await client.request("GET", "/", operation="test.get")
-
-    assert seen == [[USER_AGENT]]
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "notify.eskiz.uz/api",
+        "ftp://files.example",
+        "https:///api",
+        "https://api.example/?key=1",
+        "https://api.example/#top",
+    ],
+)
+def test_a_base_url_that_cannot_prefix_a_path_is_refused(base_url: str) -> None:
+    """Caught where the client is built, not on the first send in production."""
+    with pytest.raises(ValueError, match="base_url"):
+        HttpClient(name="test", base_url=base_url, user_agent=USER_AGENT)
 
 
 async def test_one_failing_close_does_not_keep_the_others_open() -> None:
@@ -445,9 +459,10 @@ def test_a_session_open_in_another_loop_is_refused_not_dropped() -> None:
 async def test_a_request_that_never_left_the_pool_counts_as_not_sent() -> None:
     """A deadline spent waiting for a pooled connection sent nothing, so a
     connect-only policy may repeat it, POST included."""
-    release = asyncio.Event()
+    arrived, release = asyncio.Event(), asyncio.Event()
 
     async def held(request: web.Request) -> web.Response:
+        arrived.set()
         await release.wait()
         return web.Response()
 
@@ -456,7 +471,7 @@ async def test_a_request_that_never_left_the_pool_counts_as_not_sent() -> None:
             server, limits=HttpLimits(connections=1, connections_per_host=1)
         )
         holder = asyncio.create_task(client.request("GET", "/", operation="test.hold"))
-        await asyncio.sleep(0.05)
+        await arrived.wait()
         with pytest.raises(HttpTransportError) as caught:
             await client.request(
                 "POST",
@@ -487,19 +502,20 @@ async def test_a_compressed_answer_is_capped_after_decoding() -> None:
     assert caught.value.reason == "ResponseTooLarge"
 
 
-async def test_a_retry_after_date_sets_the_pause() -> None:
+async def test_a_retry_after_date_sets_the_pause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sleeps = Sleeps()
-    moment = get_utc_now().astimezone(UTC) + timedelta(seconds=3)
-    handler, _ = statuses(
-        503, 200, headers={"Retry-After": format_datetime(moment, usegmt=True)}
-    )
+    now = get_utc_now().astimezone(UTC).replace(microsecond=0)
+    monkeypatch.setattr(client_module, "get_utc_now", lambda: now)
+    moment = format_datetime(now + timedelta(seconds=3), usegmt=True)
+    handler, _ = statuses(503, 200, headers={"Retry-After": moment})
 
     async with serve(handler) as server:
         client = client_for(server, retry=RETRY_IDEMPOTENT, sleep=sleeps)
         await client.request("GET", "/", operation="test.get")
 
-    assert len(sleeps.calls) == 1
-    assert 1.0 <= sleeps.calls[0] <= 3.0
+    assert sleeps.calls == [3.0]
 
 
 async def test_an_unreadable_retry_after_falls_back_to_backoff() -> None:
@@ -572,3 +588,46 @@ def test_only_a_failure_a_retry_cannot_fix_is_permanent(
     error = error_class.__new__(error_class)
 
     assert is_transient(error) is transient
+
+
+async def test_repeated_and_numeric_query_keys_are_sent() -> None:
+    """Provider APIs take `?id=1&id=2`; a mapping of strings cannot say it."""
+    seen: list[list[str]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen.append(request.query.getall("id"))
+        return web.Response()
+
+    async with serve(handler) as server:
+        await client_for(server).request(
+            "GET", "/", operation="test.get", params=[("id", 1), ("id", "2")]
+        )
+
+    assert seen == [["1", "2"]]
+
+
+def test_a_session_whose_loop_has_closed_is_dropped_and_reopened(
+    client_log: Records,
+) -> None:
+    """Two `asyncio.run` calls in a script share a cached client; the first
+    loop is gone, so its session can only be dropped, and that is logged."""
+    client = refused_client()
+    with asyncio.Runner() as first, pytest.raises(HttpTransportError):
+        first.run(client.request("GET", "/", operation="test.get"))
+
+    with asyncio.Runner() as second:
+        with pytest.raises(HttpTransportError):
+            second.run(client.request("GET", "/", operation="test.get"))
+        second.run(client.aclose())
+
+    assert any("closed event loop" in line for line in client_log.lines)
+
+
+async def test_many_open_clients_are_reported(client_log: Records) -> None:
+    """A factory run per request instead of once per process opens a session
+    per call; the registry keeps each until shutdown."""
+    clients = [refused_client() for _ in range(client_module.OPEN_CLIENTS_WARNING)]
+    for client in clients:
+        client._http()  # noqa: SLF001
+
+    assert any("HTTP clients open" in line for line in client_log.lines)

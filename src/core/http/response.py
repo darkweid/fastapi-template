@@ -20,7 +20,8 @@ class HttpResponse:
         return self.body.decode("utf-8", errors="replace")
 
     def json(self) -> object:
-        """Raises ValueError on a body that is not JSON."""
+        """Raises ValueError on a body that is not JSON, RecursionError on one
+        nested past the parser's depth."""
         return jsonlib.loads(self.body)
 
     def json_or_none(self) -> object:

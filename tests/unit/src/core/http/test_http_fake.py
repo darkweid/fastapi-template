@@ -1,6 +1,7 @@
 import pytest
 
 from src.core.http.errors import HttpTransportError
+from src.core.http.options import HttpTimeout
 from src.core.http.retry import RETRY_IDEMPOTENT
 from tests.fakes.http import FakeHttpClient, fake_response
 
@@ -57,3 +58,20 @@ async def test_the_fake_checks_its_client_policy_too() -> None:
     send in production; the fake built with that policy fails the same way."""
     with pytest.raises(ValueError, match="idempotent"):
         await FakeHttpClient(retry=RETRY_IDEMPOTENT).request("POST", "/", operation="x")
+
+
+async def test_the_fake_refuses_json_and_data_together_like_the_client() -> None:
+    with pytest.raises(ValueError, match="json"):
+        await FakeHttpClient().request(
+            "POST", "/", operation="x", json={"a": 1}, data={"b": "2"}
+        )
+
+
+async def test_the_fake_records_the_retry_and_timeout_of_a_call() -> None:
+    """An integration chooses both per call; its tests have to see the choice."""
+    http = FakeHttpClient()
+    deadline = HttpTimeout(total_seconds=2)
+
+    await http.request("GET", "/", operation="x", retry=None, timeout=deadline)
+
+    assert (http.requests[0].retry, http.requests[0].timeout) == (None, deadline)
