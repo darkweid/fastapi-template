@@ -98,6 +98,18 @@ def test_a_retry_after_date_in_the_past_means_now() -> None:
     assert parse_retry_after(header, now) == 0.0
 
 
-@pytest.mark.parametrize("value", [None, "", "soon", "-1", "1.5", "²"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        "soon",
+        "-1",
+        "1.5",
+        "²",
+        "Sun, 06 Nov 999999999999 08:49:37 GMT",
+        "Sun, 06 Nov 10000 08:49:37 GMT",
+    ],
+)
 def test_an_unreadable_retry_after_is_ignored(value: str | None) -> None:
     assert parse_retry_after(value, get_utc_now()) is None

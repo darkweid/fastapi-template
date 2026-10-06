@@ -95,7 +95,8 @@ def parse_retry_after(value: str | None, now: datetime) -> float | None:
         return float(value)
     try:
         moment = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
+    # A year past datetime's range overflows instead of failing to parse.
+    except (TypeError, ValueError, OverflowError):
         return None
     if moment.tzinfo is None:
         return None
