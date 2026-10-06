@@ -10,6 +10,7 @@ from src.core.cache.redis_cache import RedisCache
 from src.core.cache.runtime import reset_cache, set_cache
 from src.core.cache.serializer import JsonSerializer
 import src.core.email_service.tasks  # noqa: F401
+from src.core.http.client import close_http_clients
 import src.core.outbox.tasks  # noqa: F401
 from src.main.config import config
 from src.main.event_subscribers import register_event_subscribers
@@ -46,6 +47,7 @@ async def on_worker_startup(_: TaskiqState) -> None:
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def on_worker_shutdown(_: TaskiqState) -> None:
     reset_cache()
+    await close_http_clients()
     await close_tasks_redis_client()
 
 

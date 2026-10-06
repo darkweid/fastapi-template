@@ -61,3 +61,11 @@ def test_a_transport_error_names_the_operation_and_the_class_only() -> None:
 
     assert error.message == "telegram.send: ClientConnectorError"
     assert (error.request_sent, error.transient) == (False, True)
+
+
+def test_a_transport_error_without_a_classification_is_never_repeated() -> None:
+    """A retry policy reads these flags; an unclassified failure must not
+    send a request twice."""
+    error = HttpTransportError("telegram.send")
+
+    assert (error.request_sent, error.transient) == (True, False)

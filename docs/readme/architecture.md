@@ -32,6 +32,7 @@ Benefits:
 
 ### Core Components (extended)
 - **Storage (S3):** Async adapter in `src/core/storage/s3` with presigned URLs, UploadFile support, and paginated listings. Use via DI (`src/core/storage/s3/dependencies.get_s3_adapter`).
+- **Outgoing HTTP:** `src/core/http` - the client every third-party integration builds on; see [http-client.md](http-client.md).
 
 ### UseCase vs Service (Formalization)
 **UseCase (Application Service)**
@@ -174,6 +175,7 @@ escape hatch for roles that may reach another user's object.
 │   │   ├── database/                    # Database connection, UoW and ORM setup
 │   │   ├── email_service/               # Email service functionality
 │   │   ├── errors/                      # Error handling
+│   │   ├── http/                        # Outgoing HTTP client, retry policies, User-Agent
 │   │   ├── limiter/                     # Rate limiting functionality
 │   │   ├── outbox/                      # Transactional outbox for taskiq enqueue
 │   │   ├── pagination/                  # PaginationParams and ListQueryParams

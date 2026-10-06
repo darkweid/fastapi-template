@@ -36,6 +36,9 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     async def cache_shutdown() -> None:
         calls.append("cache_shutdown")
 
+    async def http_shutdown() -> None:
+        calls.append("http_shutdown")
+
     monkeypatch.setattr(
         lifespan_module,
         "init_sentry",
@@ -47,6 +50,7 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     monkeypatch.setattr(lifespan_module.FastAPILimiter, "close", limiter_close)
     monkeypatch.setattr(lifespan_module, "on_cache_startup", cache_startup)
     monkeypatch.setattr(lifespan_module, "on_cache_shutdown", cache_shutdown)
+    monkeypatch.setattr(lifespan_module, "close_http_clients", http_shutdown)
 
     yield calls
 
@@ -67,6 +71,7 @@ async def test_lifespan_initializes_and_shutdowns(
         "redis_startup",
         "limiter_startup",
         "cache_startup",
+        "http_shutdown",
         "cache_shutdown",
         "limiter_shutdown",
         "redis_shutdown",

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from loggers import get_logger
 from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
+from src.core.http.client import close_http_clients
 from src.core.limiter import FastAPILimiter
 from src.core.redis.lifecycle import on_redis_shutdown, on_redis_startup
 from src.core.storage.s3.dependencies import build_s3_adapter
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
         yield
 
+    await close_http_clients()
     if not broker.is_worker_process:
         await broker.shutdown()
     await on_cache_shutdown()
