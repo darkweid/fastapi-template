@@ -276,7 +276,9 @@ jobs:
   # documentation-only change - would leave that commit without a build, and
   # every later pull request would report "No base build found". The report of
   # the nearest first-parent commit whose tree was tested is this commit's
-  # coverage: the trees match, or only documentation changed since.
+  # coverage only while every commit walked past is documentation-only; one
+  # code change without a report of its own (a cancelled or failed run) ends
+  # the walk with no upload rather than a stale build.
   carry-coverage:
     name: Carry coverage
     needs: [changes, unit-tests]
@@ -293,14 +295,19 @@ jobs:
         with:
           fetch-depth: 20
 
+      # Best effort like the upload: an API hiccup leaves one commit without a
+      # Coveralls build, it must not turn the push red.
       - name: Find the nearest tested tree's report
         id: report
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           found=false
-          for tree in $(git log --first-parent --format=%T -n 20 HEAD); do
+          for commit in $(git rev-list --first-parent -n 20 HEAD); do
+            tree="$(git rev-parse "${commit}^{tree}")"
             # Only this repository's own runs, as in the `changes` gate.
             run_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=coverage-${tree}&per_page=100" \
               --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | last | .workflow_run.id // empty')"
@@ -311,9 +318,20 @@ jobs:
               found=true
               break
             fi
+            # Walk past this commit only if it changed documentation alone, by
+            # the classifier the `changes` gate uses (same diff flags).
+            if ! git cat-file -e "${commit}^" 2>/dev/null; then
+              break
+            fi
+            verdict="$(git -c core.quotePath=false diff --no-renames --name-only "${commit}^" "${commit}" \
+              | python3 scripts/ops/docs_only_change.py)"
+            if [ "${verdict}" != "true" ]; then
+              echo "::warning::Commit ${commit} changed code and has no coverage report; Coveralls gets no build for this commit."
+              break
+            fi
           done
           if [ "${found}" = false ]; then
-            echo "::warning::No coverage report within 20 commits; Coveralls gets no build for this commit."
+            echo "::warning::No coverage report to carry; Coveralls gets no build for this commit."
           fi
           echo "found=${found}" >> "$GITHUB_OUTPUT"
 
