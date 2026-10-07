@@ -150,12 +150,11 @@ escape hatch for roles that may reach another user's object.
 │   │   ├── Dockerfile                   # Dockerfile for PostgreSQL
 │   │   └── postgresql.conf              # PostgreSQL configuration
 │   ├── redis.conf                       # Redis configuration
-│   ├── requirements/                    # Python deps (pip-tools: *.in sources → *.txt lockfiles)
-│   │   ├── base.txt                     # Base dependencies used in all environments
-│   │   ├── dev.txt                      # Development environment dependencies
-│   │   ├── prod.txt                     # Production environment dependencies
-│   │   └── security.txt                 # CI security tooling (bandit, pip-audit)
-│   └── requirements.txt                 # Convenience wrapper (installs dev deps by default)
+│   └── requirements/                    # Python deps (pip-tools: *.in sources → *.txt lockfiles)
+│       ├── base.txt                     # Base dependencies used in all environments
+│       ├── dev.txt                      # Development environment dependencies
+│       ├── prod.txt                     # Production environment dependencies
+│       └── security.txt                 # CI security tooling (bandit, pip-audit)
 │
 ├── migrations/                          # Alembic migrations for database schema management
 │   ├── versions/                        # Migration version files
