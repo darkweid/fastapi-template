@@ -142,8 +142,9 @@ jobs:
           echo "image=${image_lower}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
-      # known_hosts comes from a secret (`ssh-keyscan <host>` once, by hand):
-      # keyscanning inside the job would trust whatever answers, which is the
+      # known_hosts comes from a secret: the SSH_KNOWN_HOSTS lines `make
+      # server-provision` prints, read from the box over a verified connection.
+      # Keyscanning inside the job would trust whatever answers, which is the
       # same hole as StrictHostKeyChecking=no.
       - name: Set up SSH
         if: steps.built.outputs.image != 'false'
@@ -185,14 +186,28 @@ jobs:
           # executed on the runner, while an expanded variable's contents are not
           # re-evaluated.
           APP_DIR: ${{ vars.APP_DIR }}
+          # Some providers hand a box over on another port (22022 at Spaceship).
+          # Read through env and validated below, like APP_DIR.
+          SSH_PORT: ${{ vars.SSH_PORT }}
         run: |
           if [ -z "$APP_DIR" ]; then
             echo "::error::APP_DIR is not set for the ${{ inputs.environment }} environment (Settings -> Environments -> Variables)."
             exit 1
           fi
+          ssh_port="${SSH_PORT:-22}"
+          case "$ssh_port" in
+            ''|*[!0-9]*)
+              echo "::error::SSH_PORT must be a port number, got '$ssh_port' (Settings -> Environments -> Variables)."
+              exit 1
+              ;;
+          esac
+          if [ "$ssh_port" -lt 1 ] || [ "$ssh_port" -gt 65535 ]; then
+            echo "::error::SSH_PORT must be between 1 and 65535, got '$ssh_port'."
+            exit 1
+          fi
           # shellcheck disable=SC2087  # the heredoc expands here on purpose: the
           # image tag and the secrets come from this runner, not from the server.
-          ssh -i ~/.ssh/id_deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+          ssh -p "$ssh_port" -i ~/.ssh/id_deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" bash -s <<EOF
           set -euo pipefail
           cd "$APP_DIR"
