@@ -20,8 +20,8 @@ What a provisioned server has:
 - sshd on `sshd_port` with keys only, no root login, `AllowUsers ops deploy`.
 - ufw allowing SSH, 80 and 443, plus a `DOCKER-USER` chain that drops everything
   forwarded to a container except 80/443 and Docker's own bridges. Docker
-  publishes ports past ufw; this chain is what filters them, and it is in place
-  before Docker starts at boot.
+  publishes ports past ufw; this chain is what filters them. It is in place
+  before Docker starts at boot, and Docker does not start when it cannot be applied.
 - Docker CE from Docker's repository (key shipped in `roles/docker/files`),
   `local` log driver with rotation, `live-restore`.
 - Security updates installed by `unattended-upgrades`, never an automatic reboot;

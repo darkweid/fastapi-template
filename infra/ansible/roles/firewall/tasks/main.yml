@@ -120,6 +120,22 @@
     mode: "0644"
   notify: Restart the DOCKER-USER rules
 
+- name: Create the Docker unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Keep Docker down unless the DOCKER-USER rules are in place
+  ansible.builtin.copy:
+    src: docker-requires-docker-user.conf
+    dest: /etc/systemd/system/docker.service.d/10-docker-user-firewall.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Enable the DOCKER-USER unit
   ansible.builtin.systemd_service:
     name: docker-user-firewall
