@@ -113,6 +113,17 @@ done
 sudo docker info >/dev/null 2>&1 || fail "dockerd did not come back after a crash"
 check_chain "a dockerd crash"
 
+# Fail closed: rules that cannot be applied keep Docker down, rather than letting
+# it publish ports through an empty DOCKER-USER.
+sudo mv /etc/default/docker-user-firewall /etc/default/docker-user-firewall.ci
+if sudo systemctl restart docker; then
+    sudo mv /etc/default/docker-user-firewall.ci /etc/default/docker-user-firewall
+    fail "docker started although the DOCKER-USER rules failed"
+fi
+sudo mv /etc/default/docker-user-firewall.ci /etc/default/docker-user-firewall
+sudo systemctl restart docker
+check_chain "a failed apply and a restart"
+
 echo "== app_checkout"
 sudo test -d /srv/app/.git || fail "/srv/app is not a clone"
 [ "$(sudo stat -c '%U %a' /srv/app)" = "deploy 750" ] || fail "/srv/app is not deploy-owned 0750"
