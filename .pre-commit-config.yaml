@@ -108,8 +108,9 @@ repos:
         args: [ -q ]
         files: ^(src|scripts|migrations)/
 
-  # deploy.sh is the single deploy path and firewall rules run as root; nothing
-  # else in this pipeline reads a shell script.
+  # deploy.sh is the single deploy path and the DOCKER-USER rules
+  # (infra/ansible/roles/firewall/files) run as root; nothing else in this
+  # pipeline reads a shell script.
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1-1
     hooks:

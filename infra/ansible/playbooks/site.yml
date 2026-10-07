@@ -41,3 +41,8 @@
     - name: Install Docker
       ansible.builtin.import_role:
         name: docker
+
+    # After Docker: the DOCKER-USER unit is ordered around docker.service.
+    - name: Close the host
+      ansible.builtin.import_role:
+        name: firewall

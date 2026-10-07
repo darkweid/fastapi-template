@@ -1,0 +1,95 @@
+---
+# Some provider images ship IPV6=no, which leaves IPv6 INPUT open.
+- name: Filter IPv6 as well
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^IPV6='
+    line: IPV6=yes
+  notify: Reload ufw
+
+- name: Deny incoming traffic by default
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: Allow outgoing traffic by default
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+
+- name: Allow SSH
+  ansible.builtin.import_tasks: ssh_rule.yml
+
+- name: Allow the public web ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+    proto: tcp
+    comment: "web {{ firewall_rule_comment }}"
+  loop: "{{ firewall_public_tcp_ports }}"
+
+# Runs after site.yml has logged in on the new port, so the way back exists
+# until the new way is proven.
+- name: Close SSH ports left behind by a port change
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+    proto: tcp
+    delete: true
+  loop: "{{ firewall_retired_ssh_ports }}"
+
+# No `ufw --force reset`: it leaves a moment with no rules at all, and rules
+# added by hand are the operator's to keep.
+- name: Enable ufw
+  community.general.ufw:
+    state: enabled
+
+- name: Read every ufw rule
+  ansible.builtin.command: ufw status numbered
+  register: firewall_ufw_status
+  changed_when: false
+  check_mode: false
+
+- name: Show every ufw rule, hand-added ones included
+  ansible.builtin.debug:
+    var: firewall_ufw_status.stdout_lines
+
+- name: Install the DOCKER-USER rules script
+  ansible.builtin.copy:
+    src: docker-user-rules.sh
+    dest: /usr/local/sbin/docker-user-rules.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart the DOCKER-USER rules
+
+- name: Write the DOCKER-USER settings
+  ansible.builtin.template:
+    src: docker-user-firewall.env.j2
+    dest: /etc/default/docker-user-firewall
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the DOCKER-USER rules
+
+- name: Install the DOCKER-USER unit
+  ansible.builtin.copy:
+    src: docker-user-firewall.service
+    dest: /etc/systemd/system/docker-user-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the DOCKER-USER rules
+
+- name: Enable the DOCKER-USER unit
+  ansible.builtin.systemd_service:
+    name: docker-user-firewall
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply changed DOCKER-USER rules now
+  ansible.builtin.meta: flush_handlers
+
+- name: Check DOCKER-USER
+  ansible.builtin.import_tasks: verify.yml

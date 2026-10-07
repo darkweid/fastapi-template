@@ -37,7 +37,7 @@ def test_the_tracked_documentation_surface_counts_as_documentation() -> None:
             "README.md",
             "docs/readme/bootstrap.md",
             "tests/TEST_GUIDE.md",
-            "infra/firewall/README.md",
+            "infra/ansible/README.md",
             "LICENSE",
         ]
     )

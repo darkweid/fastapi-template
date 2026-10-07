@@ -1,0 +1,10 @@
+---
+- name: Reload ufw
+  community.general.ufw:
+    state: reloaded
+
+- name: Restart the DOCKER-USER rules
+  ansible.builtin.systemd_service:
+    name: docker-user-firewall
+    state: restarted
+    daemon_reload: true

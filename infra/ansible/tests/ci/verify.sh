@@ -72,4 +72,42 @@ grep -q 'Signed-By: /etc/apt/keyrings/docker.asc' /etc/apt/sources.list.d/docker
 [ "$(sudo docker info --format '{{.LiveRestoreEnabled}}')" = "true" ] || fail "live-restore is off"
 sudo docker compose version >/dev/null || fail "docker compose is missing"
 
+echo "== firewall"
+sudo ufw status | grep -q '^Status: active' || fail "ufw is not active"
+sudo ufw status verbose | grep -q 'Default: deny (incoming), allow (outgoing)' || fail "ufw defaults are wrong"
+for rule in 22022/tcp 80/tcp 443/tcp; do
+    sudo ufw status | grep -qE "^${rule} +ALLOW" || fail "ufw does not allow $rule"
+done
+if sudo ufw status | grep -qE '^22/tcp '; then fail "22/tcp is still allowed"; fi
+grep -qx 'IPV6=yes' /etc/default/ufw || fail "ufw leaves IPv6 unfiltered"
+[ "$(systemctl is-enabled docker-user-firewall)" = "enabled" ] || fail "docker-user-firewall is not enabled"
+
+expected_chain="$(printf '%s\n' \
+    '-N DOCKER-USER' \
+    '-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN' \
+    '-A DOCKER-USER -i docker0 -j RETURN' \
+    '-A DOCKER-USER -i br-+ -j RETURN' \
+    '-A DOCKER-USER -p tcp -m multiport --dports 80,443 -j RETURN' \
+    '-A DOCKER-USER -j DROP')"
+check_chain() {
+    local family actual
+    for family in iptables ip6tables; do
+        actual="$(sudo "$family" -S DOCKER-USER)"
+        [ "$actual" = "$expected_chain" ] || fail "$family DOCKER-USER after $1 is:
+$actual"
+    done
+}
+check_chain "provisioning"
+sudo systemctl restart docker-user-firewall
+check_chain "a second apply"
+sudo systemctl restart docker
+check_chain "systemctl restart docker"
+sudo pkill -9 -x dockerd
+for _ in $(seq 1 30); do
+    sudo docker info >/dev/null 2>&1 && break
+    sleep 2
+done
+sudo docker info >/dev/null 2>&1 || fail "dockerd did not come back after a crash"
+check_chain "a dockerd crash"
+
 echo "OK"
