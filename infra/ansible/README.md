@@ -108,8 +108,8 @@ Then:
   `CHECK=1` shows what it would change, a port move included when
   `CURRENT_SSH_PORT` is given too.
 - `make server-reboot ENV=production` - reboot, then wait until `DOCKER-USER` is
-  in place and every service with a healthcheck is healthy. A provisioning run
-  says so when a reboot is due.
+  in place and every service with a restart policy is running, and healthy where
+  it has a healthcheck. A provisioning run says so when a reboot is due.
 - Working in the checkout: `sudo -iu deploy`.
 - `~/.ssh/config` for the server:
 

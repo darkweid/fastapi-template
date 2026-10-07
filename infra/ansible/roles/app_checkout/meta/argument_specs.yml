@@ -20,7 +20,7 @@ argument_specs:
         type: str
         default: main
   stack_health:
-    short_description: Wait until every service with a healthcheck is healthy
+    short_description: Wait until every service with a restart policy is running and, with a healthcheck, healthy
     options:
       app_checkout_dir:
         type: path
