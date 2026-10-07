@@ -3,6 +3,10 @@
 # cloud-init's 50-cloud-init.conf. List keywords (Port, AllowUsers) add up across
 # files instead; the role checks the effective result with sshd -T.
 Port {{ sshd_port }}
+{% if sshd_previous_port | int != sshd_port | int %}
+# Only until this run has logged in on {{ sshd_port }}: the way back if it cannot.
+Port {{ sshd_previous_port }}
+{% endif %}
 PermitRootLogin no
 PasswordAuthentication no
 KbdInteractiveAuthentication no

@@ -1,3 +1,6 @@
 ---
 sshd_port: 22
+# The port sshd listens on besides sshd_port while a run moves it; site.yml
+# sets it, and removes it again once ops has logged in on the new port.
+sshd_previous_port: "{{ sshd_port }}"
 sshd_login_grace_time: 30

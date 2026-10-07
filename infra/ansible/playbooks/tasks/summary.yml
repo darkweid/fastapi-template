@@ -41,12 +41,15 @@
       - "{{ app_checkout_public_key }}"
   when: app_checkout_clone_pending
 
+# Only once the clone exists: git refuses to clone into a directory holding .env.
 - name: Show how to put .env in place
   ansible.builtin.debug:
     msg: >-
       {{ app_checkout_dir }}/.env is missing: scp it to ops@<host>, then
-      sudo install -o deploy -g deploy -m 0600 .env {{ app_checkout_dir }}/.env
-  when: not app_checkout_env.stat.exists
+      sudo install -o deploy -g deploy -m 0600 .env {{ app_checkout_dir }}/.env && rm .env
+  when:
+    - not app_checkout_env.stat.exists
+    - not app_checkout_clone_pending
 
 - name: Show whether a reboot is due
   ansible.builtin.debug:

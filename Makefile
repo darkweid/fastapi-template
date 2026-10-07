@@ -217,10 +217,12 @@ server-bootstrap: ## Prepare a fresh box: make server-bootstrap ENV=production [
 		$(if $(ASK_BECOME),--ask-become-pass)
 
 .PHONY: server-provision
-server-provision: ## Converge a box: make server-provision ENV=production [CHECK=1]
+server-provision: ## Converge a box: make server-provision ENV=production [CURRENT_SSH_PORT=22022] [CHECK=1]
 	@test -n "$(ENV)" || { echo "ENV is required: make server-provision ENV=production"; exit 1; }
 	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
-	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/site.yml $(if $(CHECK),--check --diff)
+	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/site.yml \
+		$(if $(CURRENT_SSH_PORT),-e bootstrap_port=$(CURRENT_SSH_PORT)) \
+		$(if $(CHECK),--check --diff)
 
 .PHONY: server-reboot
 server-reboot: ## Reboot a box and wait for the stack: make server-reboot ENV=production

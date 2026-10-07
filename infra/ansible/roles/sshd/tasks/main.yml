@@ -52,7 +52,9 @@
 - name: Require exactly the declared settings
   ansible.builtin.assert:
     that:
-      - sshd_effective_ops.stdout_lines | select('match', '^port ') | list == ['port ' ~ sshd_port]
+      - >-
+        sshd_effective_ops.stdout_lines | select('match', '^port ') | list
+        == ['port ' ~ sshd_port] + ([] if sshd_previous_port | int == sshd_port | int else ['port ' ~ sshd_previous_port])
       - sshd_effective_ops.stdout_lines | select('match', '^allowusers ') | list == ['allowusers ops', 'allowusers deploy']
       - "'permitrootlogin no' in sshd_effective_ops.stdout_lines"
       - "'passwordauthentication no' in sshd_effective_ops.stdout_lines"

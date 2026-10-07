@@ -47,14 +47,18 @@
          docker_packages | map('regex_replace', '^(docker-ce|docker-ce-cli)$', '\1=' ~ docker_version) | list }}
     state: present
     update_cache: true
+    # A changed pin moves packages the previous run held, in either direction.
+    allow_change_held_packages: "{{ docker_version | length > 0 }}"
+    allow_downgrade: "{{ docker_version | length > 0 }}"
 
-# Otherwise a manual `apt upgrade` moves them past the pin.
+# Otherwise a manual `apt upgrade` moves them past the pin; an emptied pin
+# releases them. Only the pinned two: containerd.io and the plugins follow
+# whatever the pinned engine depends on.
 - name: Hold the pinned Docker packages
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
-    selection: hold
-  loop: "{{ docker_packages }}"
-  when: docker_version | length > 0
+    selection: "{{ 'hold' if docker_version else 'install' }}"
+  loop: [docker-ce, docker-ce-cli]
 
 - name: Configure the Docker daemon
   ansible.builtin.template:

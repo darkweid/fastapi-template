@@ -28,15 +28,27 @@
     comment: "web {{ firewall_rule_comment }}"
   loop: "{{ firewall_public_tcp_ports }}"
 
+- name: Read the rules given to ufw
+  ansible.builtin.command: ufw show added
+  register: firewall_ufw_added
+  changed_when: false
+  check_mode: false
+
 # Runs after site.yml has logged in on the new port, so the way back exists
-# until the new way is proven.
+# until the new way is proven. Every SSH port this role opened goes, not only
+# the stock 22 and the one bootstrap came in on.
 - name: Close SSH ports left behind by a port change
   community.general.ufw:
     rule: allow
     port: "{{ item | string }}"
     proto: tcp
     delete: true
-  loop: "{{ firewall_retired_ssh_ports }}"
+  loop: >-
+    {{ (firewall_retired_ssh_ports
+        + (firewall_ufw_added.stdout_lines
+           | select('match', '^ufw allow \d+/tcp comment .ssh ' ~ firewall_rule_comment ~ '.$')
+           | map('regex_replace', '^ufw allow (\d+)/tcp .*$', '\1') | list))
+       | map('int') | reject('equalto', firewall_ssh_port | int) | unique | list }}
 
 # No `ufw --force reset`: it leaves a moment with no rules at all, and rules
 # added by hand are the operator's to keep.
@@ -53,6 +65,20 @@
 - name: Show every ufw rule, hand-added ones included
   ansible.builtin.debug:
     var: firewall_ufw_status.stdout_lines
+
+# A value iptables-restore rejects would fail the unit, and Docker would then
+# start at the next boot with an empty, open DOCKER-USER.
+- name: Refuse DOCKER-USER settings iptables would reject
+  ansible.builtin.assert:
+    that:
+      - firewall_public_tcp_ports | length >= 1
+      - firewall_public_tcp_ports | length <= 15
+      - firewall_public_tcp_ports | map('int') | select('ge', 1) | select('le', 65535) | list | length == firewall_public_tcp_ports | length
+      - firewall_trusted_interfaces | select('match', '^[A-Za-z0-9_.-]{1,15}$') | list | length == firewall_trusted_interfaces | length
+    fail_msg: >-
+      firewall_public_tcp_ports takes 1 to 15 port numbers (an iptables multiport
+      limit); firewall_trusted_interfaces takes exact interface names, no wildcards.
+    quiet: true
 
 - name: Install the DOCKER-USER rules script
   ansible.builtin.copy:

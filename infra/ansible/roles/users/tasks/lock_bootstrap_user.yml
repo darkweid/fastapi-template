@@ -1,5 +1,6 @@
 ---
-# The password stays, so the provider's web console remains a way back in.
+# The password stays, so where the image set one, the provider's web console
+# remains a way back in.
 - name: Look up the bootstrap user
   ansible.builtin.getent:
     database: passwd

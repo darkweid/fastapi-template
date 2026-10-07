@@ -85,8 +85,9 @@ on the box. Add it to the repository as a read-only deploy key (GitHub: Settings
 
 Then:
 
-1. Put `.env` in place: `scp .env ops@<host>:` and on the box
-   `sudo install -o deploy -g deploy -m 0600 .env /srv/<app_name>/.env`.
+1. Put `.env` in place once the clone exists: `scp -P <sshd_port> .env ops@<host>:`
+   and on the box
+   `sudo install -o deploy -g deploy -m 0600 .env /srv/<app_name>/.env && rm .env`.
 2. Copy the values the summary printed into the GitHub environment: `SSH_USER`,
    `SERVER_IP`, `SSH_KNOWN_HOSTS` as secrets, `SSH_PORT` and `APP_DIR` as
    variables. `SSH_KNOWN_HOSTS` comes from the box over the connection you already
@@ -122,16 +123,24 @@ Then:
 ## Changing the SSH port
 
 Set the new `sshd_port`, make sure the provider's own firewall allows it, and run
-`make server-provision`. The run opens the new port in ufw, moves sshd, logs in
-again on the new port and only then closes the old one. Update `SSH_PORT` and
-`SSH_KNOWN_HOSTS` in the GitHub environment from the summary.
+`make server-provision ENV=production CURRENT_SSH_PORT=<the port sshd listens on
+now>`. The run opens the new port in ufw and has sshd listen on both, logs in on
+the new port, and only then drops the old one from sshd and from ufw. If the new
+port cannot be reached from where you are, the run fails at that login and the
+old port keeps working; a later run without `CURRENT_SSH_PORT` puts things back.
+Update `SSH_PORT` and `SSH_KNOWN_HOSTS` in the GitHub environment from the
+summary.
 
 ## Locked out
 
-If a run or a hand edit leaves you unable to log in, use the provider's web
-console (the provider account's password still works there), remove
-`/etc/ssh/sshd_config.d/00-hardening.conf`, run `systemctl restart ssh`, fix the
-inventory and provision again.
+If a run or a hand edit leaves you unable to log in, get a root shell through the
+provider: its web console where the account has a password (images that log in by
+key alone often have none, so set one before bootstrap if you want this way in),
+otherwise its rescue system. Then remove
+`/etc/ssh/sshd_config.d/00-hardening.conf`, run `systemctl daemon-reload` and
+`systemctl restart ssh.socket ssh.service` (plain `systemctl restart ssh` where
+sshd is not socket-activated: `systemctl is-enabled ssh.socket`), fix the inventory
+and provision again.
 
 ## Tests
 
@@ -139,7 +148,8 @@ The `Ansible` workflow runs only when `infra/ansible/` (outside its markdown),
 `infra/requirements/ansible.*` or the workflow change. It lints with
 `ansible-lint --profile production`, then converges a GitHub-hosted runner as if
 it were a fresh box: bootstrap, a second run that must change nothing, and the
-checks in `tests/ci/verify.sh`. It moves sshd from 22 to 22022 on the way. It
+checks in `tests/ci/verify.sh`. It moves sshd from 22 to 22022 on the way, and
+later through `tests/ci/port_change.sh` to a port it cannot reach and back. It
 never runs on a self-hosted runner: it hardens the machine it runs on
 (`tests/unit/test_ansible_workflow.py`).
 

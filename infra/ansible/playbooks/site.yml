@@ -19,9 +19,14 @@
       ansible.builtin.import_role:
         name: users
 
-    - name: Harden sshd
+    # A port move happens in two passes. The first keeps sshd on the port this
+    # run came in on as well, so a new port the operator cannot reach (an egress
+    # filter, a provider firewall) fails the run instead of locking them out.
+    - name: Harden sshd, still listening on the current port
       ansible.builtin.import_role:
         name: sshd
+      vars:
+        sshd_previous_port: "{{ bootstrap_port | default(sshd_port) }}"
 
     - name: Apply the SSH configuration now
       ansible.builtin.meta: flush_handlers
@@ -36,6 +41,21 @@
       ansible.builtin.meta: reset_connection
 
     - name: Log in again against the hardened sshd
+      ansible.builtin.ping:
+
+    - name: Stop listening on the previous port
+      ansible.builtin.import_role:
+        name: sshd
+      vars:
+        sshd_previous_port: "{{ sshd_port }}"
+
+    - name: Apply the single-port configuration now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Drop the connection to the restarted sshd
+      ansible.builtin.meta: reset_connection
+
+    - name: Log in on the configured port alone
       ansible.builtin.ping:
 
     - name: Install Docker
