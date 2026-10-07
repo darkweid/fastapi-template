@@ -14,7 +14,9 @@ if output="$(.venv/bin/ansible-playbook -i tests/ci/inventory playbooks/site.yml
     exit 1
 fi
 printf '%s\n' "$output"
-for expected in "ssh-ed25519 " "read-only deploy key" "[127.0.0.1]:22022 ssh-ed25519 "; do
+# "Permission denied" is git's own answer: the summary shows why access failed,
+# since a network or host key problem looks the same from the outside.
+for expected in "ssh-ed25519 " "read-only deploy key" "[127.0.0.1]:22022 ssh-ed25519 " "Permission denied"; do
     grep -qF "$expected" <<<"$output" || {
         echo "FAIL: the output lacks '$expected'" >&2
         exit 1
