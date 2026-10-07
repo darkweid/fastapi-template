@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSH_PORT="${SSH_PORT:-22}"
+ENV_FILE=/etc/default/docker-user-firewall
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "This script must run as root" >&2
@@ -29,6 +30,19 @@ ufw allow 443/tcp comment 'https'
 ufw --force enable
 
 /usr/local/sbin/docker-user-rules.sh
+
+# The unit re-applies the Docker rules on every boot and Docker restart without
+# this shell's environment, so the settings of this run are kept where it reads
+# them. Written only after the rules applied: a value they reject must not reach
+# the unit, whose failure at boot would leave every published port open.
+# Rewritten on every run: a setting left out goes back to its default.
+install -m 0644 /dev/null "$ENV_FILE"
+if [ -n "${PUBLIC_TCP_PORTS:-}" ]; then
+    printf 'PUBLIC_TCP_PORTS=%s\n' "$PUBLIC_TCP_PORTS" >> "$ENV_FILE"
+fi
+if [ -n "${PUBLIC_INTERFACE:-}" ]; then
+    printf 'PUBLIC_INTERFACE=%s\n' "$PUBLIC_INTERFACE" >> "$ENV_FILE"
+fi
 
 systemctl daemon-reload
 # Re-applies the Docker rules on boot and whenever the daemon is restarted,

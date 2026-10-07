@@ -18,7 +18,18 @@ unit, so the Docker part of the policy survives reboots and daemon restarts.
 
 Both scripts read their settings from the environment: `SSH_PORT` for a non-default
 SSH port, `PUBLIC_TCP_PORTS` (default `80,443`) for the container ports the internet
-may reach, and `PUBLIC_INTERFACE` when the public interface cannot be detected.
+may reach, and `PUBLIC_INTERFACE` when the public interface cannot be detected. Pass
+them on the sudo command line, since sudo drops the caller's environment:
+
+```bash
+ssh <host> 'sudo PUBLIC_TCP_PORTS=80,443,8443 bash /tmp/firewall/harden-host.sh'
+```
+
+`harden-host.sh` records `PUBLIC_TCP_PORTS` and `PUBLIC_INTERFACE` in
+`/etc/default/docker-user-firewall`, which the unit reads, so a reboot or a Docker
+restart re-applies the same policy. The file is written only after the rules applied, so a run that fails keeps the
+previous settings, and it is rewritten on every successful run: re-running without
+a setting returns it to its default.
 
 ## Why two layers
 
