@@ -15,13 +15,21 @@ APP_CONTAINER = app
 
 # Requirements management
 REQ_DIR = infra/requirements
-REQ_NAMES = base dev prod security
+REQ_NAMES = ansible base dev prod security
 REQ_DEV_TXT = $(REQ_DIR)/dev.txt
 REQ_PROD_TXT = $(REQ_DIR)/prod.txt
 REQ_COMPILE_IMAGE ?= python:3.13-slim-bookworm
 REQ_COMPILE_PLATFORM ?= linux/amd64
 REQ_COMPILE_USER = $(shell id -u):$(shell id -g)
 REQ_COMPILE_FLAGS ?=
+
+# Server provisioning (infra/ansible). Ansible lives in its own virtualenv:
+# `make req-sync-dev` would uninstall it from the dev one.
+ANSIBLE_DIR = infra/ansible
+ANSIBLE_VENV = $(ANSIBLE_DIR)/.venv
+ANSIBLE_BIN = $(ANSIBLE_VENV)/bin
+ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG=$(ANSIBLE_DIR)/ansible.cfg $(ANSIBLE_BIN)/ansible-playbook -i $(ANSIBLE_DIR)/inventory/$(ENV)
+BOOTSTRAP_USER ?= root
 
 .DEFAULT_GOAL := help
 
@@ -181,6 +189,25 @@ req-sync-dev: ## Install the dev lockfile into the active environment
 .PHONY: req-sync-prod
 req-sync-prod: ## Install the prod lockfile into the active environment
 	python -m piptools sync $(REQ_PROD_TXT)
+
+##@ Server
+
+.PHONY: ansible-deps
+ansible-deps: ## Create the Ansible virtualenv and install the pinned collections
+	python3 -m venv $(ANSIBLE_VENV)
+	$(ANSIBLE_BIN)/python -m pip install --quiet --upgrade pip
+	$(ANSIBLE_BIN)/python -m pip install --quiet -r $(REQ_DIR)/ansible.txt
+	cd $(ANSIBLE_DIR) && .venv/bin/ansible-galaxy collection install -r requirements.yml
+
+.PHONY: ansible-lint
+ansible-lint: ## Lint the playbooks and roles (profile: production)
+	cd $(ANSIBLE_DIR) && PATH="$$PWD/.venv/bin:$$PATH" ansible-lint
+
+.PHONY: server-provision
+server-provision: ## Converge a box: make server-provision ENV=production [CHECK=1]
+	@test -n "$(ENV)" || { echo "ENV is required: make server-provision ENV=production"; exit 1; }
+	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
+	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/site.yml $(if $(CHECK),--check --diff)
 
 ##@ Help
 

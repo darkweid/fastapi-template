@@ -1,0 +1,4 @@
+# Controller-side tooling for infra/ansible. Installed into its own virtualenv by
+# `make ansible-deps`, never into the dev environment or the application image.
+ansible-core
+ansible-lint

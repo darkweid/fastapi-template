@@ -1,0 +1,16 @@
+---
+argument_specs:
+  main:
+    short_description: Baseline of every application server
+    options:
+      base_supported_releases:
+        type: list
+        elements: str
+        default: ["24.04", "26.04"]
+  assert_os:
+    short_description: Refuse an unsupported operating system
+    options:
+      base_supported_releases:
+        type: list
+        elements: str
+        default: ["24.04", "26.04"]

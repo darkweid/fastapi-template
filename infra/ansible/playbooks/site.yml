@@ -1,0 +1,12 @@
+---
+- name: Provision the application servers
+  hosts: app_servers
+  become: true
+  force_handlers: true
+  tasks:
+    - name: Guard CI mode
+      ansible.builtin.import_tasks: tasks/ci_guard.yml
+
+    - name: Apply the baseline
+      ansible.builtin.import_role:
+        name: base

@@ -473,6 +473,7 @@ jobs:
             infra/requirements/dev.txt
             infra/requirements/prod.txt
             infra/requirements/security.txt
+            infra/requirements/ansible.txt
 
       - name: Install pip-audit
         shell: bash
@@ -482,11 +483,13 @@ jobs:
 
       - name: Audit pinned dependencies
         shell: bash
+        # ansible.txt is audited too: the operator runs it with root on production.
         run: |
           pip-audit \
             -r infra/requirements/base.txt \
             -r infra/requirements/dev.txt \
-            -r infra/requirements/prod.txt
+            -r infra/requirements/prod.txt \
+            -r infra/requirements/ansible.txt
 
   # Never skipped by the tree gate: it scans commits, not the tree - the pushed
   # range on a push, the pull request's commits on a pull request - and a push
