@@ -39,6 +39,8 @@
     msg:
       - "Add this as a read-only deploy key of the repository, then run make server-provision again:"
       - "{{ app_checkout_public_key }}"
+      - "git said, in case the cause is not the key (network, host key, an HTTPS URL):"
+      - "{{ app_checkout_access.stderr | trim }}"
   when: app_checkout_clone_pending
 
 # Only once the clone exists: git refuses to clone into a directory holding .env.

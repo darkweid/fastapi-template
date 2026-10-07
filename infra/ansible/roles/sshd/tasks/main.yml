@@ -19,6 +19,15 @@
     group: root
     mode: "0755"
 
+# Read before the drop-in: force_handlers runs the restart even when a later
+# task fails, and the restart needs this. A command, not systemd_service: the module fails on a server without ssh.socket.
+- name: Read whether sshd is socket-activated
+  ansible.builtin.command: systemctl is-enabled ssh.socket  # noqa: command-instead-of-module
+  register: sshd_socket
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: Write the hardening drop-in
   ansible.builtin.template:
     src: 00-hardening.conf.j2
@@ -27,6 +36,7 @@
     group: root
     mode: "0644"
     validate: /usr/sbin/sshd -t -f %s
+  register: sshd_dropin
   notify:
     - Reload systemd units for sshd
     - Restart sshd
@@ -67,11 +77,5 @@
       The effective sshd configuration differs from 00-hardening.conf: another file
       in /etc/ssh/sshd_config.d or sshd_config overrides or adds to it.
     quiet: true
-
-# A command, not systemd_service: the module fails on a box without ssh.socket.
-- name: Read whether sshd is socket-activated
-  ansible.builtin.command: systemctl is-enabled ssh.socket  # noqa: command-instead-of-module
-  register: sshd_socket
-  changed_when: false
-  failed_when: false
-  check_mode: false
+  # A preview (--check) does not write the drop-in, so sshd still reports the old one.
+  when: not (ansible_check_mode and sshd_dropin is changed)
