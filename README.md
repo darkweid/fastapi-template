@@ -148,7 +148,8 @@ its locks and its connection indefinitely. Values are seconds; `0` turns a limit
 Migrations run with neither.
 
 ## Response Caching
-`GET /v1/users/{user_id}` (requires the `VIEW_USERS` permission) is the template's
+`GET /v1/users/{user_id}` (the caller's own record, or any record with the `VIEW_USERS`
+permission) is the template's
 one live example of route caching (`@cached_route`, `src/core/cache/decorators.py`).
 A client should expect and can rely on:
 - `Cache-Control: public, max-age=60` — the response is safe for a shared cache to
@@ -194,7 +195,7 @@ Redis increment however many entries carry it.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
 
 ## After the Fork
-Renaming the compose project, the containers, the image tags and both volume
+Renaming the compose project, the containers, the image tags and the three volume
 names is a one-time job with an exact checklist -
 [docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
 walks the whole path from a fresh clone to the first deploy: renaming, secrets,
@@ -275,7 +276,7 @@ for `app.conf` once the certificate is in place.
 - `make test-cov` — tests with coverage report
 - `make test-integration` — integration suite against a throwaway PostgreSQL; `make test-all` — both suites
 - `make deploy-prod` — deploy on the box, building the image there
-- `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (what CD runs)
+- `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (the same `BUILD=0` path CD runs through `infra/deploy/deploy.sh`)
 - Both run `infra/deploy/deploy.sh`, which rolls the app without downtime: the new container starts beside the serving one, nginx moves to it once it is healthy, and the old one drains its requests before it stops. One that never turns healthy is removed and the old one keeps serving (`docs/readme/infra.md`).
 - `make backup` — dump the database to `backups/<UTC timestamp>.dump`
 - `make restore f=backups/<file>.dump` — restore the database from a dump

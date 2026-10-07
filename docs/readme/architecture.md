@@ -18,10 +18,14 @@ Implementations:
 
 ### Main Module Architecture
 `src/main/` wires the app and isolates bootstrapping concerns.
-- `config.py`: Pydantic settings for DB, Redis, JWT, etc. `.env` is used by default; `.env.test` is used when `TESTING=true`. `SENTRY_ENABLED` gates Sentry even if DSN is set; Sentry is skipped in DEBUG/TESTING.
+- `config.py`: Pydantic settings for DB, Redis, JWT, etc. `.env` is used by default; `.env.test` is used when `TESTING=true`.
+- `docs.py`: interactive API docs, open under DEBUG and behind HTTP Basic otherwise.
+- `event_subscribers.py`: `EVENT_SUBSCRIBERS`, registered by both entry points at import.
 - `lifespan.py`: startup/shutdown lifecycle (init/cleanup external resources).
+- `openapi.py`: Swagger UI parameters.
 - `presentation.py`: API assembly, versioning, exception handlers.
 - `route_logging.py`: logs routes grouped by method/tag for debugging.
+- `sentry.py`: Sentry init; `SENTRY_ENABLED` gates it even if the DSN is set, and it is skipped in DEBUG/TESTING.
 - `web.py`: FastAPI app factory with middleware, CORS, Sentry, routers.
 
 Benefits:
@@ -74,7 +78,7 @@ class ArticleRepository(SoftDeleteRepository[Article]):
 
 - **Word-by-word search:** the search is split on whitespace, and every word (at most `MAX_SEARCH_WORDS` distinct ones, letter case ignored, `ё` read as `е` on both sides through `searchable_text`) must be a substring of some searchable column, in any order: `Ada Lovelace` finds the row whose `first_name` holds one word and `last_name` the other. Text a row shows from a parent table is opted in by overriding `_related_search` with a `RelatedSearch(target, onclause, columns)`; `get_paginated_list` adds that `LEFT OUTER JOIN` to the page and its count only while a search is active, so a plain page read pays nothing. The join must reach at most one row per model row, or the page and its count multiply. A repository paging by hand passes its page and count statements through `_apply_list_filters`, which reads the hook once: two reads would build two aliases of an `aliased()` target and cross join them. `ILIKE '%word%'` uses no btree index; a table that grows with its users wants a `pg_trgm` GIN index over `searchable_text(column)` of its searchable columns - the same expression, or the planner cannot match it.
 - **Construction-time validation:** `BaseRepository.__init__` runs `_assert_list_query_fields()`, which checks that every declared `sortable_fields` / `default_order_by` attribute resolves to a real column (not a hybrid property or a relationship — neither is orderable, and both would otherwise pass and crash at query time instead) and that `searchable_fields` are text columns (`String`, not `Enum`). A misdeclared column raises when the repository is constructed, not when a request supplies a bad field — a developer-time error, not a client-triggered one.
-- **HTTP side:** endpoints declare `Annotated[ListQueryParams, Query()]` (`src/core/pagination/schemas.py`) and translate it with `params.to_list_query(date_field=..., conditions=...)` into a `ListQuery`. Both `date_field` and `conditions` are chosen by the server — the client only supplies `search`, `order_by`, `order`, `date_from`, `date_to`. `ListQueryParams` inherits `extra="forbid"`, so an unlisted query parameter (an analytics tag, a cache-buster, an ad-hoc filter) is rejected with 422 rather than silently ignored; a route that needs extra filters subclasses `ListQueryParams` instead of declaring them alongside it.
+- **HTTP side:** endpoints declare `Annotated[ListQueryParams, Query()]` (`src/core/pagination/schemas.py`) and translate it with `params.to_list_query(date_field=..., conditions=...)` into a `ListQuery`. Both `date_field` and `conditions` are chosen by the server — the client only supplies `search`, `order_by`, `order`, `date_from`, `date_to`. `ListQueryParams` inherits `extra="forbid"`, so an unlisted query parameter (an analytics tag, a cache-buster, an ad-hoc filter) is rejected with 422 rather than silently ignored; a route that needs extra filters subclasses `ListQueryParams` (or `SortableListQueryParams` when its repository declares no `searchable_fields`, so `search` is not published) instead of declaring them alongside it.
 
 ```python
 @router.get("/articles")
@@ -124,23 +128,30 @@ in the UseCase, compare the field against the caller, raise
 ownership is visible right in the path. Every endpoint that takes a foreign
 identifier must carry a test proving "foreign object → 404".
 
-`src/note/` (`policies.ensure_note_access`, used by the update/delete
-UseCases and by `GET /v1/notes/{note_id}`) is the worked example of the
-`owner_id` variant: same 404-on-mismatch rule, an optional `has_permission`
-escape hatch for roles that may reach another user's object.
+`src/note/` (`policies.ensure_note_view_access`, used by
+`GET /v1/notes/{note_id}`, and `policies.ensure_note_manage_access`, used by the
+update/delete UseCases) is the worked example of the `owner_id` variant: same
+404-on-mismatch rule, with the role permissions `VIEW_NOTES` / `MANAGE_NOTES` as
+the escape hatch for roles that may reach another user's object.
 
 ---
 ## Project Layout
 ```
+├── .github/                             # CI/CD workflows, docs-only-change action, dependabot
+├── docs/                                # Project documentation (docs/readme/*.md)
 ├── infra/                               # Infrastructure and deployment assets
+│   ├── deploy/
+│   │   └── deploy.sh                    # Single deploy path: migrations, zero-downtime app roll
 │   ├── docker/                          # Docker configuration files
 │   │   ├── Dockerfile                   # Production Dockerfile (multi-stage build)
 │   │   └── dev.Dockerfile               # Development Dockerfile with hot-reload (dependabot-discoverable name)
 │   ├── docker-compose.override.yml      # Docker Compose overrides for development
 │   ├── docker-compose.test.yml          # Throwaway PostgreSQL for the integration suite
 │   ├── docker-compose.yml               # Docker Compose configuration
+│   ├── firewall/                        # UFW + DOCKER-USER host hardening (harden-host.sh, systemd unit)
 │   ├── nginx/                           # Nginx configuration
 │   │   ├── app.conf                     # App reverse-proxy server (http)
+│   │   ├── entrypoint.sh                # Writes the app upstream before nginx starts
 │   │   ├── main.conf                    # Top-level nginx settings
 │   │   ├── error_pages.inc              # JSON bodies for the errors nginx answers itself
 │   │   ├── proxy.inc                    # Shared proxy settings and allowed methods
@@ -162,14 +173,20 @@ escape hatch for roles that may reach another user's object.
 │   ├── script.py.mako                   # Alembic migration script template
 │   └── README                           # Instructions for migrations
 │
-├── scripts/                             # Utility scripts for the application
-│   ├── __init__.py                      # Package initialization
-│   ├── check_env.py                     # Environment validation script
-│   ├── sort_requirements_in.py          # Sort entries in requirements *.in files
-│   └── sync_precommit_mypy_deps.py      # Sync mypy pre-commit deps with pinned requirements
+├── scripts/                             # Utility scripts
+│   ├── app/                             # Application scripts
+│   │   └── create_admin.py              # Bootstrap/promote the first admin (make create-admin)
+│   └── ops/                             # Tooling and CI scripts
+│       ├── check_env.py                 # Environment validation (the deploy gate)
+│       ├── check_migration_heads.py     # Alembic single-head check
+│       ├── count_code_lines.py          # make count-code-lines
+│       ├── docs_only_change.py          # Docs-only diff classifier for the CI gate
+│       ├── sort_requirements_in.py      # Sort entries in requirements *.in files
+│       └── sync_precommit_deps.py       # Sync mypy/bandit pre-commit pins with the lockfiles
 │
 ├── src/                                 # Application source code
 │   ├── core/                            # Core components shared across the application
+│   │   ├── auth/                        # Realm-agnostic auth: tokens, sessions, CSRF, cookies
 │   │   ├── cache/                       # Cache protocol, key builders, route caching
 │   │   ├── database/                    # Database connection, UoW and ORM setup
 │   │   ├── email_service/               # Email service functionality
@@ -178,13 +195,13 @@ escape hatch for roles that may reach another user's object.
 │   │   ├── limiter/                     # Rate limiting functionality
 │   │   ├── outbox/                      # Transactional outbox for taskiq enqueue
 │   │   ├── pagination/                  # PaginationParams and ListQueryParams
-│   │   ├── patterns/                    # Design patterns
 │   │   ├── redis/                       # Redis clients + limiter init
 │   │   ├── storage/                     # Storage adapters (S3)
 │   │   ├── utils/                       # Utility functions
 │   │   ├── middleware.py                # Application middleware setup
 │   │   ├── proxy_headers.py             # TrustedProxyHeadersMiddleware (X-Forwarded-* handling)
 │   │   ├── request_context.py           # Request-id ContextVar shared by middleware and logging
+│   │   ├── request_ip.py                # Client IP resolution
 │   │   ├── schemas.py                   # Core data validation schemas
 │   │   ├── services.py                  # Core services shared across modules
 │   │   └── validations.py               # Data validation utilities
@@ -192,21 +209,31 @@ escape hatch for roles that may reach another user's object.
 │   ├── event_log/                       # Append-only audit log: model, writer, read endpoint
 │   │   ├── actor.py                     # Who acted, one named constructor per auth realm
 │   │   ├── changes.py                   # Old/new pairs for an update payload, secrets dropped
+│   │   ├── dependencies.py              # Event log DI providers
+│   │   ├── enums.py                     # ActorType, ObjectType
 │   │   ├── events.py                    # DomainEvent base; each module declares its own catalog
 │   │   ├── models.py                    # EventLog (ORM), no FK and no unique constraint
-│   │   └── repositories.py              # record(): SAVEPOINT-isolated append that cannot fail the action
+│   │   ├── repositories.py              # record(): SAVEPOINT-isolated append that cannot fail the action
+│   │   ├── routers.py                   # GET /v1/event-logs/
+│   │   ├── schemas.py                   # View model and list filters
+│   │   └── services.py                  # Event log read service
 │   │
 │   ├── main/                            # Application entry points
 │   │   ├── config.py                    # Application configuration settings
+│   │   ├── docs.py                      # Interactive API docs (HTTP Basic outside DEBUG)
+│   │   ├── event_subscribers.py         # EVENT_SUBSCRIBERS registry
 │   │   ├── lifespan.py                  # Application lifecycle management
+│   │   ├── openapi.py                   # Swagger UI parameters
 │   │   ├── presentation.py              # API presentation layer
 │   │   ├── route_logging.py             # Utility for logging routes summary
+│   │   ├── sentry.py                    # Sentry initialization
 │   │   └── web.py                       # FastAPI application setup
 │   │
 │   ├── note/                            # Reference flat domain module - copy this to start a new one
 │   │   ├── dependencies.py              # Note DI providers
+│   │   ├── events.py                    # Note event catalog
 │   │   ├── models.py                    # Note data model (ORM)
-│   │   ├── policies.py                  # Pure ownership rule (ensure_note_access)
+│   │   ├── policies.py                  # Pure ownership rules (ensure_note_view_access / ensure_note_manage_access)
 │   │   ├── repositories.py              # Note data repository layer
 │   │   ├── routers.py                   # Note API endpoints
 │   │   ├── schemas.py                   # Note Pydantic schemas
@@ -215,14 +242,19 @@ escape hatch for roles that may reach another user's object.
 │   │
 │   ├── system/                          # System-level functionality
 │   │   ├── dependencies.py              # System DI providers
+│   │   ├── repositories.py              # Probe queries
 │   │   ├── routers.py                   # System API endpoints (live, ready, health, time)
 │   │   ├── schemas.py                   # System Pydantic schemas
-│   │   └── services.py                  # Health check service
+│   │   └── services.py                  # Readiness and health check services
 │   │
 │   └── user/                            # Auth infrastructure (accounts, sessions, permissions)
 │       ├── auth/                        # Authentication logic for regular users
+│       ├── cache_keys.py                # User route cache keys
 │       ├── dependencies.py              # User dependencies
+│       ├── enums.py                     # UserRole
+│       ├── events.py                    # User event catalog
 │       ├── models.py                    # User data models (ORM)
+│       ├── policies.py                  # Account state rules (blocked / not verified)
 │       ├── repositories.py              # User data repository layer
 │       ├── routers.py                   # User API endpoints
 │       ├── schemas.py                   # User Pydantic schemas
@@ -236,8 +268,15 @@ escape hatch for roles that may reach another user's object.
 │   ├── factories/                       # Test data factories
 │   ├── fakes/                           # In-memory fakes for external systems
 │   ├── helpers/                         # Test helpers and dependency overrides
+│   ├── integration/                     # Real-PostgreSQL suite (make test-integration)
+│   │   ├── conftest.py                  # migrated_database, integration_engine, db_session, scratch_database
+│   │   └── src/                         # Mirrors src/ layout (core, event_log)
 │   └── unit/                            # Unit tests
-│       ├── test_nginx_security_config.py # Nginx security config check
+│       ├── conftest.py                  # Config env isolation for the unit suite
+│       ├── test_*.py                    # Repo guards (nginx, compose, deploy script, models registration, action pins...)
+│       ├── fakes/                       # Tests of the fakes themselves
+│       ├── loggers/                     # Logging config tests
+│       ├── scripts/                     # scripts/app and scripts/ops tests
 │       ├── taskiq_worker/               # taskiq worker tests
 │       └── src/                         # Mirrors src/ layout
 │           ├── core/                    # Core component tests
@@ -250,6 +289,7 @@ escape hatch for roles that may reach another user's object.
 ├── taskiq_worker/                       # taskiq broker, scheduler and worker DI
 ├── loggers/                             # Logging configurations
 ├── models/                              # Shared data models and models package initialization
+├── LICENSE                              # License
 ├── Makefile                             # Makefile with predefined commands
 ├── alembic.ini                          # Alembic configuration file
 ├── pytest.ini                           # PyTest configuration
@@ -270,7 +310,8 @@ every step below lives outside the module itself and is easy to forget:
    produces an *empty* autogenerated migration with no error anywhere. A unit
    guard (`tests/unit/test_models_registration.py`) fails if a `src/**/models.py`
    module is missing here.
-2. **Unit of Work** - add a cached property for the new repository on
+2. **Unit of Work** - add a `@property` returning
+   `self._get_repository(<Repository>)` (one instance per UoW) on
    `ApplicationUnitOfWork` (`src/core/database/uow/application.py`).
 3. **Router** - mount the module router under `/v1` in `src/main/presentation.py`.
 4. **Permissions** - add `Permission` enum members and grants in

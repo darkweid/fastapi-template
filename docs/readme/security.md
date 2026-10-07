@@ -54,7 +54,7 @@ All authentication endpoints return **identical responses** regardless of whethe
 
 `src/core/utils/security.py` — `mask_email()`
 
-All authentication flows log emails in masked form: `ab***@cd***`. Used consistently across login, register, reset, verify, and token refresh flows.
+All authentication flows log emails in masked form: `ab***@cd***`. Used across the login, password-reset, resend-verification and email-verification flows; registration logs the username, and token refresh logs the subject id and never sees an email.
 
 **Why it matters:** Unmasked emails in logs create a secondary data breach vector. Log aggregation systems, crash reporters, and monitoring dashboards are often less strictly access-controlled than the primary database.
 
@@ -65,7 +65,7 @@ All authentication flows log emails in masked form: `ab***@cd***`. Used consiste
 Redis-backed **fixed window** counter via Lua script:
 - Configurable per-endpoint limits (requests, time window); the counter and its
   TTL are set together, so a window never outlives its own limit.
-- Key structure: `{prefix}:{client_ip}:{request_path}:{endpoint}`.
+- Key structure: `{prefix}:{identifier}:{endpoint_module}.{endpoint_qualname}`. The identifier is the client IP by default, or a user id for a user-scoped limiter; the request path is deliberately not part of the key, since it carries ids and would give a caller a fresh budget per object.
 - Lua script ensures atomic increment-or-reject.
 - Sensitive auth routes carry their own budgets — login is a loose 5/min per IP
   (CGNAT puts many users behind one address) backed by a per-email soft throttle
@@ -102,7 +102,7 @@ another realm's session invalidation.
 `src/user/auth/permissions/`
 
 Three-tier model:
-- `Permission` enum — 28 granular permissions (view, create, edit, delete per resource).
+- `Permission` enum — granular permissions (view, create, edit, delete per resource).
 - `UserRole` enum — `ADMIN`, `EDITOR`, `VIEWER`.
 - `ROLE_PERMISSIONS` matrix — maps each role to its allowed permissions.
 - `require_permission()` — FastAPI dependency that checks RBAC only; account admission (active + verified) is enforced by `get_current_user`.
@@ -122,11 +122,11 @@ Three-tier model:
 
 ## SQL Injection Prevention
 
-`src/core/database/repositories.py`, `src/core/database/filters.py`
+`src/core/database/repositories.py`, `src/core/database/filters.py`, `src/core/database/query.py`
 
 - All database access goes through SQLAlchemy ORM — no raw SQL with user input.
 - `FilterCondition` validates that filter columns exist on the model before building queries.
-- `_escape_like_literal()` escapes `\`, `%`, `_` before LIKE/ILIKE operations.
+- `escape_like_literal()` (`src/core/database/query.py`) escapes `\`, `%`, `_` before LIKE/ILIKE operations.
 
 **Why it matters:** ORM parameterization prevents classic SQL injection. LIKE escaping prevents a secondary vector where `%` or `_` in user input alter query semantics (e.g., `%admin%` matching unintended rows).
 
@@ -334,8 +334,9 @@ enforce, instead of every call site assembling its own key string.
   API's own Redis entry, which is shared by every permitted viewer by design.
 
   `GET /v1/users/{user_id}` (`src/user/routers.py`) does this deliberately: it
-  requires the `VIEW_USERS` permission, but the response body is identical for
-  every caller who holds that permission — there is nothing in it that varies by
+  is open to the user themself or to any caller holding the `VIEW_USERS`
+  permission (`require_self_or_permission`), but the response body is identical
+  for every caller allowed to see it — there is nothing in it that varies by
   who is asking, so one shared cache entry per `user_id` is the intended behavior,
   not a leak. The template ships no CDN or shared caching proxy in front of the
   API, so today `PUBLIC` only affects `RedisCache`, which nothing outside this
@@ -361,9 +362,9 @@ another" once a shared cache sits on the request path.
 `src/user/auth/tasks.py`, `taskiq_worker/app.py`
 
 - Tasks receive only email addresses, not full user objects or tokens — tokens are created inside the task.
-- Redis connections (`get_tasks_redis_client`) are created and destroyed per task run.
+- The worker's Redis client (`get_tasks_redis_client`) is one per worker process, shared across task runs and closed at worker shutdown (`close_tasks_redis_client`).
 - Failed tasks clean up throttle keys and invalidate tokens before re-raising.
-- `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) up to a bounded number of times, with no delay between attempts - the Redis Streams broker has no delayed delivery, so retries fire back-to-back; idempotence-free tasks stay out.
+- `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) up to 3 times, about 60 s apart with jitter: each retry is written to a Redis schedule source (`ListRedisScheduleSource`, `taskiq_worker/broker.py`) and fired by the scheduler process, so delayed retries need the scheduler running; idempotence-free tasks stay out.
 - Redis Streams delivery is at-least-once: a worker XACKs a message only after the task finishes, so a worker crash between sending the email and acking can redeliver the task and duplicate the send — an accepted trade-off, not a defect.
 - `infra/redis.conf` enables AOF (`appendfsync everysec`) alongside the RDB snapshots, since this Redis now also holds the task stream: an RDB-only setup can lose queued jobs written since the last snapshot on a crash.
 - `taskiq_worker/broker.py`'s `STREAM_MAXLEN` bounds stream growth (acked entries are never otherwise removed), sized well above any realistic backlog for this workload — `XADD MAXLEN` trims oldest-first regardless of ack state, so a cap sized too close to real traffic could discard unacknowledged work.

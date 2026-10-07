@@ -21,8 +21,8 @@ for the hooks, `pip-tools` and the occasional script.
 
 ## 2. Rename the template
 
-The compose project name, every container name, every image tag and both volume
-names carry `template-` / `fastapi-template`. Two stacks forked from this
+The compose project name, every container name, every image tag and all three
+volume names carry `template-` / `fastapi-template`. Two stacks forked from this
 template on one machine collide on all of them.
 
 Pick a slug — lowercase, no spaces — and replace:
@@ -35,8 +35,8 @@ Pick a slug — lowercase, no spaces — and replace:
 | Dev image tag `template-app-dev-image:latest` | `infra/docker-compose.override.yml` | `myapp-app-dev-image:latest` |
 | Postgres image tag `template-postgres:18` | `infra/docker-compose.yml:23` | `myapp-postgres:18` |
 | Test Postgres tag `template-postgres-test:18` | `infra/docker-compose.test.yml:26` | `myapp-postgres-test:18` |
-| Volume names `template-postgres-data`, `template-redis-data`, `template-nginx-upstream` | `infra/docker-compose.yml:225,227,229` | `myapp-postgres-data`, `myapp-redis-data`, `myapp-nginx-upstream` |
-| Integration-suite project prefix `template-test-$$` | `Makefile:145` | `myapp-test-$$` |
+| Volume names `template-postgres-data`, `template-redis-data`, `template-nginx-upstream` | `infra/docker-compose.yml:227,229,231` | `myapp-postgres-data`, `myapp-redis-data`, `myapp-nginx-upstream` |
+| Integration-suite project prefix `template-test-$$` | `Makefile:143` | `myapp-test-$$` |
 
 If the stack has already run once, tear it down **before** renaming. `make down`
 resolves the project name from `infra/docker-compose.yml`, so after the rename it
@@ -73,7 +73,7 @@ then drop the volumes, assuming nothing in them is worth keeping:
 
 ```bash
 docker compose -p fastapi-template -f infra/docker-compose.yml down
-docker volume rm template-postgres-data template-redis-data
+docker volume rm template-postgres-data template-redis-data template-nginx-upstream
 ```
 
 **The Docker network is deliberately not renamed by the command above.**
@@ -270,7 +270,8 @@ The layer rules (Router → UseCase → Service → Repository) live in
 
 CI needs no setup. *CI (prod)* authenticates to GHCR with the automatic
 `GITHUB_TOKEN` and pushes `ghcr.io/<owner>/<repo>` as `sha-<12>` plus `latest`
-on every push to `main`. The package is private by default.
+on every push to `main` that changes code (a documentation-only push builds
+nothing, see below). The package is private by default.
 
 *CI (stage)* is the same pipeline bound to a `stage` branch, tagging `stage`
 instead of `latest`. That branch does not exist here, so the workflow stays
@@ -300,7 +301,8 @@ Details, including how to mint `PRECOMMIT_BOT_TOKEN`, are in
 ### Documentation-only changes skip the pipeline
 
 A change where every path is documentation runs the `changes` gate, `lint`
-and `gitleaks`, and nothing else, and does not deploy. `lint` stays because
+and `gitleaks`, and nothing else (a push also carries the last coverage report
+forward, or runs `unit-tests` when none can be carried), and does not deploy. `lint` stays because
 `make lint` runs pre-commit over every file and several of its hooks apply to
 markdown: gating it would let a documentation PR merge a violation that then
 fails the next code PR, on a commit that did not cause it. The `changes` job in `_ci.yml`
@@ -353,7 +355,8 @@ On the target box:
 6. `make deploy-prod` — the bootstrap path, which builds the image on the box
    because no registry image exists yet.
 
-From then on CD runs `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>`
+From then on CD runs `BUILD=0 APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12> bash infra/deploy/deploy.sh`
+(what `make deploy-image` wraps)
 and the production box never compiles.
 
 `infra/deploy/deploy.sh` validates `.env` before anything starts, brings up

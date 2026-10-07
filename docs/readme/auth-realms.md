@@ -66,7 +66,8 @@ Follow `src/user/auth/` as the worked example throughout.
    # ... one alias per RealmAuth field the module's router needs, following
    # src/user/auth/dependencies.py's list verbatim.
    ```
-   This file stays under thirty lines, same as the user realm's.
+   This file stays short, like the user realm's, whose only addition to the
+   aliases is its `get_user_actor` helper.
 
 5. **Write the router.** Login and any realm-specific flows (register, email
    verification, password reset, ...) are the module's own scenarios - build
@@ -77,12 +78,16 @@ Follow `src/user/auth/` as the worked example throughout.
    `src/core/auth/usecases/` and give each a thin provider module next to the
    realm's other usecases - `src/<module>/auth/usecases/refresh_access.py`
    and `src/<module>/auth/usecases/logout.py`, mirroring
-   `src/user/auth/usecases/refresh_access.py` / `logout.py`. Each file is a
-   single `get_*_use_case(redis_client: Annotated[Redis, Depends(get_redis_client)])`
-   that builds the core UseCase with the realm and an admission callable;
-   the router only imports the provider and depends on it, the same way it
-   depends on every other UseCase. Writing a new UseCase
-   class here would be exactly the copy this factoring was meant to avoid.
+   `src/user/auth/usecases/refresh_access.py` / `logout.py`.
+   `get_refresh_access_use_case` takes
+   `redis_client: Annotated[Redis, Depends(get_redis_client)]` and builds
+   `RefreshAccessUseCase` with the realm and an admission callable. The logout
+   provider builds `LogoutUseCase(redis_client, realm=...)`, which takes no
+   admission; the user realm wraps it in `UserLogoutUseCase` only to record a
+   sign-out event through the unit of work, so its provider also depends on
+   `get_unit_of_work`. The router only imports the provider and depends on it,
+   the same way it depends on every other UseCase. Copying the core UseCase
+   into the realm is exactly what this factoring was meant to avoid.
 
 6. **Mount the router.** Add it to `src/main/presentation.py` under `/v1`,
    then check that the mounted path matches the `refresh_cookie_path`

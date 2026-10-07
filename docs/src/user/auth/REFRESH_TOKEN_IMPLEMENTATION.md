@@ -56,7 +56,10 @@ identify a session. Every other endpoint rejects an expired token, but logout ca
 afford to: the refresh cookie is scoped to the refresh route and never reaches
 `/logout`, and a browser cannot drop an httponly cookie on its own — so a rejected
 logout would leave the client holding a session it can neither use nor clear. The
-session the token names must still be live (its refresh or access key exists): a signature
+token must be the newest access token of a live session: its `jti` must equal the
+session's `user:latest-access:<user_id>:<session_id>` key, which rotation rewrites and
+every wipe deletes (a session issued before that key existed is accepted while its
+refresh or access key exists, until its next refresh). A signature
 outlives its session, and an old token must not be able to order a wipe of the
 sessions its subject opened since. A request whose token is missing, forged or names
 an ended session still gets its cookies expired; it simply revokes nothing
@@ -86,7 +89,7 @@ storage:
     the refresh token arrives in the `Authorization` header.
 - `TokenCookieResponder.verify_csrf` recomputes the HMAC from the refresh token
   actually presented and compares it against the header with `hmac.compare_digest`.
-  A missing or mismatched header raises `AccessForbiddenException` (403); both
+  A missing or mismatched header raises `CsrfFailedError` (403, `csrf_failed`); both
   failure modes produce the same message, so a caller can't learn which half of the
   pair was wrong.
 - Binding the signature to the specific refresh token means rotation automatically
@@ -102,7 +105,7 @@ headers to cross-site requests, so there is nothing for a forged request to repl
 
 **Status codes on refresh:** no refresh credentials found at all (no cookie, no
 `Authorization` header) → 401 (`UnauthorizedException`); credentials present but the
-CSRF check fails → 403 (`AccessForbiddenException`).
+CSRF check fails → 403 (`CsrfFailedError`, `csrf_failed`).
 
 ## 1) Token issuance (login)
 - `LoginUserUseCase` calls `issue_session_pair` (`src/core/auth/session_issuance.py`),
@@ -116,7 +119,7 @@ CSRF check fails → 403 (`AccessForbiddenException`).
 
 ## 2) Incoming refresh request
 - Endpoint `POST /v1/users/auth/login/refresh` resolves the refresh token via `get_refresh_credentials` (cookie first, `Authorization` header second — see "Transport: cookie vs body" above), runs the CSRF gate (`verify_csrf`) when the token came from the cookie, then uses `get_access_by_refresh_token` to decode the token.
-- Dependency order on the route matters and is pinned by a test. `verify_csrf` is declared as a route-level dependency *between* the IP-based rate limiter and the user-scoped one, because the user-scoped limiter's identifier (`get_user_id_from_token`) reads and verifies the refresh cookie. Were CSRF checked later, a forged cross-site request would consume the victim's refresh budget — and could reach reuse detection — before being rejected with 403.
+- Dependency order on the route matters and is pinned by a test. `verify_csrf` is declared as a route-level dependency *between* the IP-based rate limiter and the user-scoped one, because the user-scoped limiter's identifier (`get_user_id_from_refresh_token`) reads and verifies the refresh cookie. Were CSRF checked later, a forged cross-site request would consume the victim's refresh budget — and could reach reuse detection — before being rejected with 403.
 - `verify_jti` (`src/core/auth/credentials.py`):
   - Strips `Bearer` prefix if present and decodes JWT with the realm's secret (`JWT_USER_SECRET_KEY` for this realm).
   - Extracts `jti`, `mode`, `sub` (user_id), `session_id`.
@@ -141,10 +144,10 @@ CSRF check fails → 403 (`AccessForbiddenException`).
 - `rotate_session_tokens` (`src/core/auth/tokens.py`):
   - `validate_token_structure` ensures `sub`, `session_id` and `jti` are present; on failure invalidates all sessions.
   - Signs the replacement pair first - a refresh and an access token for the same `session_id`, each with a new `jti`, both naming the old token's subject.
-  - `execute_token_rotation` runs one Lua script over `user:refresh:<user_id>:<session_id>`, `user:used:<user_id>:<jti>`, `user:access:<user_id>:<session_id>` and `user:sessions:<user_id>`.
+  - `execute_token_rotation` runs one Lua script over `user:refresh:<user_id>:<session_id>`, `user:used:<user_id>:<jti>`, `user:access:<user_id>:<session_id>`, `user:sessions:<user_id>` and `user:latest-access:<user_id>:<session_id>`.
     - If `used` exists and is older than the grace window (or unreadable) → invalidate all sessions, error “Token reuse detected”; within the window → plain 401 without a wipe.
     - If stored JTI mismatch or missing → invalidate all sessions, error “Token invalidated or expired”.
-    - Otherwise: set `user:used:<user_id>:<jti>` to the rotation instant (Redis server clock), store the new refresh and access jtis with their TTLs, refresh the session's entry in the index, and return `OK`.
+    - Otherwise: set `user:used:<user_id>:<jti>` to the rotation instant (Redis server clock), store the new refresh and access jtis with their TTLs, record the access jti as `user:latest-access:<user_id>:<session_id>` (TTL: the longer of the two lifetimes), refresh the session's entry in the index, and return `OK`.
     - The marker TTL equals `REFRESH_TOKEN_EXPIRE_MINUTES * 60`: the marker must cover the rotated-out token's whole possible lifetime, so there is no separate knob.
   - Registering the new pair inside the script is what makes a session wipe (password change, logout everywhere) reliable: a wipe either finds the new keys in the index or leaves the old refresh key gone, so the rotation answers `INVALID`. Written in later round-trips, the pair could land after the wipe and survive it.
 
@@ -152,4 +155,4 @@ CSRF check fails → 403 (`AccessForbiddenException`).
 - The use case returns both new tokens (`TokenModel`); the router then passes them through `TokenCookieResponder.apply` with the resolved transport, which either writes the refresh cookie and strips it from the body (`cookie`) or leaves the body untouched (`body`).
 
 ## 6) Invalidation helpers
-- `invalidate_all_sessions` (`src/core/auth/token_helpers.py`) walks the realm's `user:sessions:<user_id>` index (ZSET scored by refresh expiry) and deletes every indexed session's `user:access:`/`user:refresh:` keys; `user:used:*` markers are left to their TTL - the refresh keys are gone, so a replay cannot rotate. Used when reuse/invalid structure is detected or when rotation fails the invariants. It is realm-generic: it takes the realm's key namespace as an argument, so it can wipe a session index for any realm, not only this one.
+- `invalidate_all_sessions` (`src/core/auth/token_helpers.py`) walks the realm's `user:sessions:<user_id>` index (ZSET scored by refresh expiry) and deletes every indexed session's `user:access:`, `user:refresh:` and `user:latest-access:` keys; `user:used:*` markers are left to their TTL - the refresh keys are gone, so a replay cannot rotate. Used when reuse/invalid structure is detected or when rotation fails the invariants. It is realm-generic: it takes the realm's key namespace as an argument, so it can wipe a session index for any realm, not only this one.
