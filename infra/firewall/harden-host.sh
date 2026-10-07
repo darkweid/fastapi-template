@@ -17,6 +17,19 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Checked before anything changes, and narrow enough that the values need no
+# escaping: systemd re-parses them from $ENV_FILE at boot, where a quote or a
+# backslash would name a different interface than the one applied now.
+if [ -n "${PUBLIC_TCP_PORTS:-}" ] \
+    && ! [[ "$PUBLIC_TCP_PORTS" =~ ^[0-9]+(:[0-9]+)?(,[0-9]+(:[0-9]+)?)*$ ]]; then
+    echo "PUBLIC_TCP_PORTS must be a comma-separated list of ports or port:port ranges" >&2
+    exit 1
+fi
+if [ -n "${PUBLIC_INTERFACE:-}" ] && ! [[ "$PUBLIC_INTERFACE" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+    echo "PUBLIC_INTERFACE may contain only letters, digits and . _ @ -" >&2
+    exit 1
+fi
+
 install -m 0755 "${SCRIPT_DIR}/docker-user-rules.sh" /usr/local/sbin/docker-user-rules.sh
 install -m 0644 "${SCRIPT_DIR}/docker-user-firewall.service" \
     /etc/systemd/system/docker-user-firewall.service

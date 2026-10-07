@@ -25,7 +25,8 @@ them on the sudo command line, since sudo drops the caller's environment:
 ssh <host> 'sudo PUBLIC_TCP_PORTS=80,443,8443 bash /tmp/firewall/harden-host.sh'
 ```
 
-`harden-host.sh` records `PUBLIC_TCP_PORTS` and `PUBLIC_INTERFACE` in
+`harden-host.sh` refuses a malformed port list or interface name before it changes
+anything, then records `PUBLIC_TCP_PORTS` and `PUBLIC_INTERFACE` in
 `/etc/default/docker-user-firewall`, which the unit reads, so a reboot or a Docker
 restart re-applies the same policy. The file is written only after the rules applied, so a run that fails keeps the
 previous settings, and it is rewritten on every successful run: re-running without
