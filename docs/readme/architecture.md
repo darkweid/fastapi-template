@@ -19,7 +19,7 @@ Implementations:
 ### Main Module Architecture
 `src/main/` wires the app and isolates bootstrapping concerns.
 - `config.py`: Pydantic settings for DB, Redis, JWT, etc. `.env` is used by default; `.env.test` is used when `TESTING=true`.
-- `docs.py`: interactive API docs, open under DEBUG and behind HTTP Basic otherwise.
+- `docs.py`: interactive API docs: open under DEBUG, behind HTTP Basic when `DOCS_USERNAME` and `DOCS_PASSWORD` are both set, not published at all otherwise.
 - `event_subscribers.py`: `EVENT_SUBSCRIBERS`, registered by both entry points at import.
 - `lifespan.py`: startup/shutdown lifecycle (init/cleanup external resources).
 - `openapi.py`: Swagger UI parameters.
@@ -220,7 +220,7 @@ the escape hatch for roles that may reach another user's object.
 │   │
 │   ├── main/                            # Application entry points
 │   │   ├── config.py                    # Application configuration settings
-│   │   ├── docs.py                      # Interactive API docs (HTTP Basic outside DEBUG)
+│   │   ├── docs.py                      # Interactive API docs (DEBUG, HTTP Basic, or unpublished)
 │   │   ├── event_subscribers.py         # EVENT_SUBSCRIBERS registry
 │   │   ├── lifespan.py                  # Application lifecycle management
 │   │   ├── openapi.py                   # Swagger UI parameters
