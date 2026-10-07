@@ -96,8 +96,8 @@ an update payload. Call it before the repository `update()`, which overwrites
 the values in place. It drops fields whose value did not change, so an empty
 result means the request changed nothing and there is nothing to log.
 
-It also drops any field whose name contains `password`, `token`, `secret` or
-`api_key`, matched as a substring: an audit row outlives the account, so a hash
+It also drops any field whose name contains `password`, `token`, `secret`,
+`api_key` or `apikey`, matched as a substring: an audit row outlives the account, so a hash
 or a token in one is a leak with no expiry. Anything written by hand is subject
 to the same rule - the helper only guards the path that goes through it.
 

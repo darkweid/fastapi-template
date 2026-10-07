@@ -107,6 +107,8 @@ Core fixtures live in `tests/conftest.py`.
 - `fake_redis` - in-memory Redis
 - `fake_s3` - in-memory S3
 - `mock_mailer` / `email_service` - test mailer
+- `email_dispatcher` - AsyncMock dispatcher behind `email_service`
+- `cache` (autouse) - in-memory cache installed for every test
 - `fake_session` - fake async DB session
 - `fake_uow` - fake UnitOfWork
 - `app_with_fakes` - app with overridden dependencies
@@ -119,9 +121,12 @@ Also available:
 
 Current application test layout:
 - `tests/unit/src/core/...`
+- `tests/unit/src/event_log/...`
 - `tests/unit/src/main/...`
+- `tests/unit/src/note/...`
 - `tests/unit/src/system/...`
 - `tests/unit/src/user/...`
+- `tests/integration/src/...` (real PostgreSQL, section 6)
 
 ## 6) Integration suite (real PostgreSQL)
 
