@@ -62,4 +62,14 @@ forward_output="$(timeout 20 ssh -p "$port" -i "$keys/deploy" -o BatchMode=yes -
     -W "127.0.0.1:$port" deploy@127.0.0.1 </dev/null 2>&1 || true)"
 grep -q "administratively prohibited" <<<"$forward_output" || fail "deploy may open a forward"
 
+echo "== docker"
+for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; do
+    dpkg -s "$package" >/dev/null 2>&1 || fail "package $package is missing"
+done
+if dpkg -l 'moby-*' 2>/dev/null | grep -q '^ii'; then fail "moby packages are still installed"; fi
+grep -q 'Signed-By: /etc/apt/keyrings/docker.asc' /etc/apt/sources.list.d/docker.sources || fail "the Docker source is not signed by the shipped key"
+[ "$(sudo docker info --format '{{.LoggingDriver}}')" = "local" ] || fail "the log driver is not local"
+[ "$(sudo docker info --format '{{.LiveRestoreEnabled}}')" = "true" ] || fail "live-restore is off"
+sudo docker compose version >/dev/null || fail "docker compose is missing"
+
 echo "OK"

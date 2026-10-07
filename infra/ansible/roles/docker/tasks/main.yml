@@ -1,0 +1,72 @@
+---
+- name: Remove packages that conflict with Docker CE
+  ansible.builtin.apt:
+    name: "{{ docker_conflicting_packages }}"
+    state: absent
+
+# deb822_repository needs python3-debian on the box.
+- name: Install python3-debian
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+
+- name: Create the APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Shipped in the repository and pinned by tests/check_docker_key.sh, so a wrong
+# key never lands here.
+- name: Install Docker's APT key
+  ansible.builtin.copy:
+    src: docker.asc
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add Docker's APT repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: https://download.docker.com/linux/ubuntu
+    suites: ["{{ ansible_facts['distribution_release'] }}"]
+    components: [stable]
+    architectures: ["{{ docker_apt_architecture }}"]
+    signed_by: /etc/apt/keyrings/docker.asc
+
+# deb822_repository cannot refresh the cache itself, and the base role's cache may
+# predate the repository, hence update_cache without cache_valid_time.
+- name: Install Docker Engine
+  ansible.builtin.apt:
+    name: >-
+      {{ docker_packages if not docker_version else
+         docker_packages | map('regex_replace', '^(docker-ce|docker-ce-cli)$', '\\1=' ~ docker_version) | list }}
+    state: present
+    update_cache: true
+
+# Otherwise a manual `apt upgrade` moves them past the pin.
+- name: Hold the pinned Docker packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ docker_packages }}"
+  when: docker_version | length > 0
+
+- name: Configure the Docker daemon
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart docker
+
+- name: Start Docker on boot
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started

@@ -1,0 +1,28 @@
+---
+# An exact apt version of docker-ce (`apt-cache madison docker-ce`), e.g.
+# "5:28.5.1-1~ubuntu.24.04~noble". Empty installs the current release once and
+# never upgrades it; set it to upgrade deliberately.
+docker_version: ""
+docker_log_max_size: 20m
+docker_log_max_file: 5
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+docker_conflicting_packages:
+  - docker.io
+  - docker-doc
+  - docker-compose
+  - docker-compose-v2
+  - podman-docker
+  - containerd
+  - runc
+  - moby-engine
+  - moby-cli
+  - moby-buildx
+  - moby-compose
+  - moby-containerd
+  - moby-runc
+docker_apt_architecture: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"

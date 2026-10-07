@@ -46,6 +46,9 @@ jobs:
       - name: Lint
         run: make ansible-lint
 
+      - name: Check the Docker APT key
+        run: infra/ansible/tests/check_docker_key.sh
+
   converge:
     name: Converge (${{ matrix.os }})
     needs: lint

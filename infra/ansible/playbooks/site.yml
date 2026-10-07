@@ -37,3 +37,7 @@
 
     - name: Log in again against the hardened sshd
       ansible.builtin.ping:
+
+    - name: Install Docker
+      ansible.builtin.import_role:
+        name: docker
