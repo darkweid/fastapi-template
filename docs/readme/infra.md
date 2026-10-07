@@ -30,6 +30,38 @@ Configs live in `infra/` (compose, nginx, dockerfiles, redis/postgres, requireme
 - **Nginx:** Reverse proxy to app with template security headers.
 - **Redis:** Cache backend with password; also the taskiq broker (Streams), the retry schedule source for delayed retries, and storage for `IdempotencyReceiver` dedup markers — no task result backend.
 
+## Redis, not Valkey
+The template runs Redis 8 from the official image, unmodified. Redis 8 is
+available under AGPLv3 next to RSALv2 and SSPLv1. The AGPL obligations attach
+to modifying the server and offering it over a network, or to redistributing
+it; running the stock image as a backing service does neither.
+
+Valkey (the BSD-3 Linux Foundation fork of Redis 7.2) is protocol-compatible
+with everything the application does: `redis-py`, `taskiq-redis`, the Lua
+scripts (`redis.call` works unchanged), `INFO memory` behind `/health/`. Valkey
+9.1 is still not a drop-in swap here:
+
+- It refuses to start on `aof-load-corrupt-tail-max-size` in
+  `infra/redis.conf` and has no equivalent setting. Without it a host crash
+  that leaves a malformed command at the AOF tail keeps the instance down, and
+  the app and worker with it, until someone repairs the file by hand.
+- That repair is harder than the server's error message suggests:
+  `valkey-check-aof --fix` on the manifest misreads the Valkey RDB base file as
+  broken and repairs nothing (9.1.2 and 9.2.0-rc1). It works only when run on
+  the newest `*.incr.aof` file directly.
+- It cannot load an RDB written by Redis 8 (`Can't handle RDB format version`),
+  so the choice is made when a project starts: a volume written by one does not
+  load in the other.
+
+Switching is worth revisiting once Valkey gains a corrupt-tail setting. It then
+means `valkey/valkey` as the image, `valkey-server` in the compose `command:`
+(the image's entrypoint drops root only for that name; started as
+`redis-server` the server runs as root) and the directive above removed. The
+image's `redis-cli` symlink keeps the healthcheck and `make redis-cli` working,
+`REDISCLI_AUTH` stays (valkey-cli reads it, and
+`tests/unit/test_docker_compose_config.py` pins it), and the application code,
+the `REDIS_*` settings and the `redis://` URLs stay as they are.
+
 ## Cache Operations
 The cache layer (`src/core/cache/`) has no dedicated Redis connection — it runs on
 `app.state.redis_client`, the application client created in
