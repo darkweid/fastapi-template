@@ -228,19 +228,24 @@ when UFW reports the port as blocked.
 
 **The remaining public ports (Nginx, `80`/`443`):** these are the intended front
 door and are published on `0.0.0.0` by design. Because of the bypass above, UFW
-alone will not govern them. `infra/firewall/` ships the policy that does: it
-combines UFW for host listeners with a `DOCKER-USER` chain for container traffic
-(Docker evaluates `DOCKER-USER` before every rule of its own), installed as a
-systemd unit so it survives reboots and daemon restarts.
+alone will not govern them. The `firewall` role in `infra/ansible` ships the
+policy that does: UFW for host listeners, plus a `DOCKER-USER` chain for container
+traffic (Docker evaluates `DOCKER-USER` before every rule of its own). The chain
+names no external interface - iptables accepts an interface name that does not
+exist, so a renamed NIC would silently void an interface-bound rule - and drops
+everything forwarded to a container except the public ports and Docker's own
+bridges. Its systemd unit fills the chain before Docker starts, so containers
+restarted at boot are never reachable unfiltered, and re-applies it whenever
+Docker restarts.
 
-```bash
-scp -r infra/firewall <host>:/tmp/firewall
-ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'
-```
+The result: the SSH port, `80` and `443` reachable from the internet, everything
+else through an SSH tunnel only. `firewall_public_tcp_ports` narrows or widens
+the container side, `firewall_trusted_interfaces` admits a provider's private
+network. See [`infra/ansible/README.md`](../../infra/ansible/README.md).
 
-The result: `22`, `80` and `443` reachable from the internet, everything else
-through an SSH tunnel only. `PUBLIC_TCP_PORTS` narrows or widens the container
-side, `SSH_PORT` covers a non-default SSH port. See `infra/firewall/README.md`.
+The same provisioning closes SSH to keys only, without root, for two accounts:
+`ops` for people (sudo) and `deploy` for CD (no sudo, no pty, no forwarding). The
+CD key is still a root key in effect, because `deploy` is in the `docker` group.
 
 [`ufw-docker`](https://github.com/chaifeng/ufw-docker) solves the same problem by
 wiring Docker traffic through UFW's `route` rules, if you would rather manage the

@@ -60,9 +60,10 @@ CI and Release need none of these: both authenticate to GHCR with the automatic 
 Everything the deploy itself reads is an **environment** secret or variable, under `Settings -> Environments -> production` (and `staging`) — one set per box, so a staging key cannot reach production. The two gates are the exception and stay repository variables.
 
 - PROD_DEPLOY_ENABLED, STAGE_DEPLOY_ENABLED — repository *variables* (`Settings -> Secrets and variables -> Actions -> Variables`), set to `true` to arm that contour's CD.
-- APP_DIR — environment *variable*: the deploy directory on that box, e.g. `/root/app`. CD fails with a named error if it is unset.
+- APP_DIR — environment *variable*: the deploy directory on that box, e.g. `/srv/app`. CD fails with a named error if it is unset.
+- SSH_PORT — environment *variable*, optional: the box's SSH port when it is not 22.
 - SSH_PRIVATE_KEY, SERVER_IP, SSH_USER — environment secrets, server access.
-- SSH_KNOWN_HOSTS — environment secret, the output of `ssh-keyscan <server-ip>`, generated once by hand and verified against the host's own key.
+- SSH_KNOWN_HOSTS — environment secret, the lines `make server-provision` prints, read from the box over a connection the operator verified.
 - ALERT_BOT_TOKEN, ALERT_CHAT_ID — environment secrets, Telegram notifications. The alert names its contour, so both environments may share a chat.
 - GITLEAKS_LICENSE (optional) — repository secret, needed only when the repository is owned by an organization; without it `gitleaks-action` exits before scanning.
 - PRECOMMIT_BOT_TOKEN (optional but recommended) — repository secret, token for creating autoupdate PRs so downstream workflows can run reliably.

@@ -289,8 +289,9 @@ before the environment resolves and would read an environment variable as empty.
 | --- | --- | --- |
 | `PROD_DEPLOY_ENABLED` | Repository variable | Set to `true` to arm production CD. Until then CD (prod) is skipped. |
 | `STAGE_DEPLOY_ENABLED` | Repository variable | Same for CD (stage). Leave unset if the project has no staging box. |
-| `APP_DIR` | Environment variable | Deploy directory on that environment's box, e.g. `/root/app`. CD fails with a named error if it is unset. |
-| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_USER`, `SERVER_IP` | Environment secret | Access to that environment's box. Per environment, so a staging key cannot reach production. `SSH_KNOWN_HOSTS` is `ssh-keyscan <server-ip>`, verified by hand against the host key. |
+| `APP_DIR` | Environment variable | Deploy directory on that environment's box, e.g. `/srv/app`. CD fails with a named error if it is unset. |
+| `SSH_PORT` | Environment variable | The box's SSH port, when it is not 22 (some providers hand boxes over on 22022). |
+| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_USER`, `SERVER_IP` | Environment secret | Access to that environment's box. Per environment, so a staging key cannot reach production. `SSH_USER` is `deploy`; `SERVER_IP` and `SSH_KNOWN_HOSTS` are printed by `make server-provision`, read from the box over a connection you verified. |
 | `ALERT_BOT_TOKEN`, `ALERT_CHAT_ID` | Environment secret | Telegram deploy notifications. |
 | `GITLEAKS_LICENSE` | Repository secret, optional | Only needed when the repository is owned by an organization. |
 | `PRECOMMIT_BOT_TOKEN` | Repository secret, optional | Lets the pre-commit autoupdate workflow open PRs that trigger CI. |
@@ -322,14 +323,21 @@ to `tests/unit/scripts/ops/test_docs_only_change.py` in the same commit.
 
 ## 9. First deploy
 
-On the target box:
+Provision the box from your machine with Ansible - any provider, Ubuntu 24.04 or
+26.04. [`infra/ansible/README.md`](../../infra/ansible/README.md) has the details;
+in short:
 
-1. Install Docker and Compose, clone the repository.
-2. Put a filled `.env` there by hand — it is never committed and CD never
-   uploads one.
-3. Close the host: `scp -r infra/firewall <host>:/tmp/firewall` then
-   `ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'`. Docker-published ports
-   bypass UFW, which is why this installs a `DOCKER-USER` chain as well.
+1. `make ansible-deps`, then copy `infra/ansible/inventory/example` to
+   `inventory/production` and fill in the address, `sshd_port`, your key, the CD
+   key and the repository URL.
+2. `make server-bootstrap ENV=production` (`BOOTSTRAP_USER=ubuntu`,
+   `BOOTSTRAP_PORT=22022`, `ASK_PASS=1` for the providers that need them). It
+   creates `ops` and `deploy`, closes root and password login, installs Docker,
+   closes the firewall - ufw plus a `DOCKER-USER` chain, since Docker-published
+   ports bypass ufw - and prints a deploy key.
+3. Add the deploy key to the repository (read-only), run
+   `make server-provision ENV=production` to clone, put `.env` in place as the
+   README shows, and copy the printed CD values into the environment.
 4. Put the API's hostname into `server_name` in `infra/nginx/app.conf` (and in
    `tls.conf.example`, in place of `api.example.com`). The default server drops
    every request for a name it does not list, so a box reached by a name missing
@@ -352,8 +360,8 @@ On the target box:
    renew through certbot, and declare `certbot-webroot` under `volumes:` in the
    same file. Without the certificate mount Nginx cannot start and the first
    deploy fails at the last step.
-6. `make deploy-prod` — the bootstrap path, which builds the image on the box
-   because no registry image exists yet.
+6. The first deploy builds the image on the box, because no registry image exists
+   yet: `sudo -iu deploy bash -c 'cd /srv/<app> && bash infra/deploy/deploy.sh'`.
 
 From then on CD runs `BUILD=0 APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12> bash infra/deploy/deploy.sh`
 (what `make deploy-image` wraps)
@@ -385,5 +393,5 @@ hardening in [security.md](security.md).
 [ ] make lint && make test green
 [ ] src/note copied for the first domain, then deleted
 [ ] production environment holds the CD secrets and APP_DIR; PROD_DEPLOY_ENABLED=true (when a server exists)
-[ ] API hostname in nginx server_name, host hardened, TLS in place, first make deploy-prod done
+[ ] API hostname in nginx server_name, box provisioned (make server-provision), TLS in place, first deploy done
 ```

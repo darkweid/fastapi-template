@@ -140,6 +140,7 @@ the escape hatch for roles that may reach another user's object.
 ├── .github/                             # CI/CD workflows, docs-only-change action, dependabot
 ├── docs/                                # Project documentation (docs/readme/*.md)
 ├── infra/                               # Infrastructure and deployment assets
+│   ├── ansible/                         # Server provisioning: bootstrap/site/reboot playbooks and roles
 │   ├── deploy/
 │   │   └── deploy.sh                    # Single deploy path: migrations, zero-downtime app roll
 │   ├── docker/                          # Docker configuration files
@@ -148,7 +149,6 @@ the escape hatch for roles that may reach another user's object.
 │   ├── docker-compose.override.yml      # Docker Compose overrides for development
 │   ├── docker-compose.test.yml          # Throwaway PostgreSQL for the integration suite
 │   ├── docker-compose.yml               # Docker Compose configuration
-│   ├── firewall/                        # UFW + DOCKER-USER host hardening (harden-host.sh, systemd unit)
 │   ├── nginx/                           # Nginx configuration
 │   │   ├── app.conf                     # App reverse-proxy server (http)
 │   │   ├── entrypoint.sh                # Writes the app upstream before nginx starts
