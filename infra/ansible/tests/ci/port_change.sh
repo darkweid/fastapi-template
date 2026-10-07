@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Moving sshd on a provisioned box, the way README.md describes it. A new port the
+# Moving sshd on a provisioned server, the way README.md describes it. A new port the
 # operator cannot reach must leave the old one working; a move that succeeds must
 # close the old port in ufw.
 set -euo pipefail

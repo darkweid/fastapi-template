@@ -1,5 +1,5 @@
 ---
-- name: Read the box's SSH host keys
+- name: Read the server's SSH host keys
   ansible.builtin.shell: cat /etc/ssh/ssh_host_*_key.pub
   register: summary_host_keys
   changed_when: false

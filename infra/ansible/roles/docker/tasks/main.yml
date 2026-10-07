@@ -4,7 +4,7 @@
     name: "{{ docker_conflicting_packages }}"
     state: absent
 
-# deb822_repository needs python3-debian on the box.
+# deb822_repository needs python3-debian on the server.
 - name: Install python3-debian
   ansible.builtin.apt:
     name: python3-debian

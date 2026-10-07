@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Makes a GitHub-hosted runner look like a fresh box: no swap, sshd on 22, keys for
+# Makes a GitHub-hosted runner look like a fresh server: no swap, sshd on 22, keys for
 # ops and deploy, its own host keys trusted, and an authorized_keys of its own so
 # the bootstrap user's lock is observable.
 set -euo pipefail
@@ -12,7 +12,7 @@ fi
 keys="${RUNNER_TEMP:?}/ansible-ci"
 mkdir -p "$keys"
 
-# The base role creates swap only on a box with none at all.
+# The base role creates swap only on a server with none at all.
 sudo swapoff -a
 sudo sed -i '/\sswap\s/d' /etc/fstab
 sudo rm -f /mnt/swapfile /swapfile

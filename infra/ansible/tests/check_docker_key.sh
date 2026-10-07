@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Docker APT key ships in the repository instead of being fetched on the box;
+# The Docker APT key ships in the repository instead of being fetched on the server;
 # this pins it to the fingerprint Docker publishes.
 set -euo pipefail
 

@@ -1,8 +1,8 @@
 ---
-# Once per box. Connection settings are play vars, which beat the inventory's
+# Once per server. Connection settings are play vars, which beat the inventory's
 # ansible_user: ops. Never pass -e ansible_user=...: extra vars would override
 # every play below, the ops check included.
-- name: Prepare the box as the provider's user
+- name: Prepare the server as the provider's user
   hosts: app_servers
   become: true
   vars:

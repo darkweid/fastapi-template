@@ -1,5 +1,5 @@
 ---
-# The GitHub-hosted runner stands in for a fresh box; keys come from
+# The GitHub-hosted runner stands in for a fresh server; keys come from
 # tests/ci/prepare_runner.sh.
 ci_mode: true
 ci_keys: "{{ lookup('ansible.builtin.env', 'RUNNER_TEMP') }}/ansible-ci"

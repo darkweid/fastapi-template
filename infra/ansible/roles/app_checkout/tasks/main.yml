@@ -15,7 +15,7 @@
     group: deploy
     mode: "0700"
 
-# Generated here and never copied anywhere: only its public half leaves the box.
+# Generated here and never copied anywhere: only its public half leaves the server.
 - name: Generate the repository deploy key
   community.crypto.openssh_keypair:
     path: "{{ app_checkout_key_path }}"

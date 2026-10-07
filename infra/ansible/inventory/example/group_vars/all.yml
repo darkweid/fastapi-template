@@ -5,11 +5,11 @@ ansible_port: "{{ sshd_port }}"
 
 app_name: app
 
-# The port the provider hands the box over on is usually the one to keep
+# The port the provider hands the server over on is usually the one to keep
 # (22, or 22022 at Spaceship). A different value moves sshd during provisioning.
 sshd_port: 22
 
-# Granting a key here grants root on the box: review changes to this file.
+# Granting a key here grants root on the server: review changes to this file.
 users_ops_authorized_keys:
   - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyReplaceWithYourOwnKey operator@laptop
 # The key CD logs in with (the SSH_PRIVATE_KEY environment secret's public half).

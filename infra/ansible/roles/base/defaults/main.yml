@@ -9,7 +9,7 @@ base_packages:
   - python3
   - ufw
   - unattended-upgrades
-# 0 disables it. Created only on a box with no active swap at all, since some
+# 0 disables it. Created only on a server with no active swap at all, since some
 # providers give a swap partition.
 base_swap_size_mb: 2048
 base_swap_file: /swapfile

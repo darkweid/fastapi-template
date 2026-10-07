@@ -62,7 +62,7 @@ shell: ## Open a bash shell inside the app container
 ##@ Deploy
 
 .PHONY: deploy-prod
-deploy-prod: ## Deploy on the box, building the image locally
+deploy-prod: ## Deploy on the server, building the image locally
 	bash infra/deploy/deploy.sh
 
 .PHONY: deploy-image
@@ -207,7 +207,7 @@ ansible-lint: ## Lint the playbooks and roles (profile: production)
 	cd $(ANSIBLE_DIR) && PATH="$$PWD/.venv/bin:$$PATH" ansible-lint
 
 .PHONY: server-bootstrap
-server-bootstrap: ## Prepare a fresh box: make server-bootstrap ENV=production [BOOTSTRAP_USER=root] [BOOTSTRAP_PORT=22022] [ASK_PASS=1] [ASK_BECOME=1]
+server-bootstrap: ## Prepare a fresh server: make server-bootstrap ENV=production [BOOTSTRAP_USER=root] [BOOTSTRAP_PORT=22022] [ASK_PASS=1] [ASK_BECOME=1]
 	@test -n "$(ENV)" || { echo "ENV is required: make server-bootstrap ENV=production"; exit 1; }
 	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
 	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/bootstrap.yml \
@@ -217,7 +217,7 @@ server-bootstrap: ## Prepare a fresh box: make server-bootstrap ENV=production [
 		$(if $(ASK_BECOME),--ask-become-pass)
 
 .PHONY: server-provision
-server-provision: ## Converge a box: make server-provision ENV=production [CURRENT_SSH_PORT=22022] [CHECK=1]
+server-provision: ## Converge a server: make server-provision ENV=production [CURRENT_SSH_PORT=22022] [CHECK=1]
 	@test -n "$(ENV)" || { echo "ENV is required: make server-provision ENV=production"; exit 1; }
 	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
 	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/site.yml \
@@ -225,7 +225,7 @@ server-provision: ## Converge a box: make server-provision ENV=production [CURRE
 		$(if $(CHECK),--check --diff)
 
 .PHONY: server-reboot
-server-reboot: ## Reboot a box and wait for the stack: make server-reboot ENV=production
+server-reboot: ## Reboot a server and wait for the stack: make server-reboot ENV=production
 	@test -n "$(ENV)" || { echo "ENV is required: make server-reboot ENV=production"; exit 1; }
 	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
 	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/reboot.yml

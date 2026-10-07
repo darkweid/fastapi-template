@@ -5,7 +5,7 @@
   changed_when: false
   check_mode: false
 
-- name: Add a swap file to a box with no swap
+- name: Add a swap file to a server with no swap
   when: base_active_swap.stdout | trim in ['', base_swap_file]
   block:
     - name: Allocate the swap file

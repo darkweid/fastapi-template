@@ -21,7 +21,7 @@
          | rejectattr('Health', 'equalto', 'healthy') | list | length == 0)
   when: app_checkout_stack_env.stat.exists
 
-- name: Report a box with nothing deployed
+- name: Report a server with nothing deployed
   ansible.builtin.debug:
     msg: "{{ app_checkout_dir }}/.env is missing; there is no stack to wait for."
   when: not app_checkout_stack_env.stat.exists

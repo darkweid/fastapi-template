@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A repository the box cannot read yet: the run must print the deploy key and the
-# summary, and still fail, so nobody mistakes it for a finished box.
+# A repository the server cannot read yet: the run must print the deploy key and the
+# summary, and still fail, so nobody mistakes it for a finished server.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."

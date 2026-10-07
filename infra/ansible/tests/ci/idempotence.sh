@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# site.yml again: anything it changes on a converged box is a role that is not
+# site.yml again: anything it changes on a converged server is a role that is not
 # idempotent.
 set -euo pipefail
 

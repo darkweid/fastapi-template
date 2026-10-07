@@ -5,6 +5,6 @@
       - ansible_facts['distribution'] == 'Ubuntu'
       - ansible_facts['distribution_version'] in base_supported_releases
     fail_msg: >-
-      Supported: Ubuntu {{ base_supported_releases | join(', ') }}; this box runs
+      Supported: Ubuntu {{ base_supported_releases | join(', ') }}; this server runs
       {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
     quiet: true

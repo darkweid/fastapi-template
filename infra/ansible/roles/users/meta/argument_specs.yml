@@ -7,7 +7,7 @@ argument_specs:
         type: list
         elements: str
         required: true
-        description: Public keys of the people who administer the box. Each one grants root.
+        description: Public keys of the people who administer the server. Each one grants root.
       users_deploy_authorized_keys:
         type: list
         elements: str
