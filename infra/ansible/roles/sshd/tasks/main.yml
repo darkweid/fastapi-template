@@ -28,6 +28,26 @@
   failed_when: false
   check_mode: false
 
+# A Docker-published port or any other daemon on sshd_port would take the
+# connection the run moves to; a port sshd already holds is the move resuming.
+- name: Read what listens on the SSH port
+  ansible.builtin.command: ss -Hltnp "sport = :{{ sshd_port }}"
+  register: sshd_port_listeners
+  changed_when: false
+  check_mode: false
+
+- name: Refuse a port another service holds
+  ansible.builtin.assert:
+    that:
+      - >-
+        sshd_port_listeners.stdout_lines
+        | reject('search', '"(sshd|systemd)",pid=')
+        | list == []
+    fail_msg: >-
+      Port {{ sshd_port }} is taken by another service
+      ({{ sshd_port_listeners.stdout_lines | join('; ') }}). Pick another sshd_port.
+    quiet: true
+
 - name: Write the hardening drop-in
   ansible.builtin.template:
     src: 00-hardening.conf.j2
@@ -37,6 +57,19 @@
     mode: "0644"
     validate: /usr/sbin/sshd -t -f %s
   register: sshd_dropin
+  notify:
+    - Reload systemd units for sshd
+    - Restart sshd
+
+# After the drop-in, so a drop-in that fails validation leaves sshd on the
+# provider's port. OpenSSH adds up Port lines across files rather than keeping
+# the first, so a provider's Port in sshd_config would stay open beside sshd_port.
+- name: Leave the port to the drop-in
+  ansible.builtin.replace:
+    path: /etc/ssh/sshd_config
+    regexp: '^(Port\s.*)$'
+    replace: '# \1  # set in sshd_config.d/00-hardening.conf'
+  register: sshd_main_port
   notify:
     - Reload systemd units for sshd
     - Restart sshd
@@ -78,4 +111,4 @@
       in /etc/ssh/sshd_config.d or sshd_config overrides or adds to it.
     quiet: true
   # A preview (--check) does not write the drop-in, so sshd still reports the old one.
-  when: not (ansible_check_mode and sshd_dropin is changed)
+  when: not (ansible_check_mode and (sshd_dropin is changed or sshd_main_port is changed))

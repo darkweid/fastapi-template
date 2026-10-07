@@ -1,0 +1,22 @@
+---
+# ssh files host keys per [host]:port, so the key the operator accepted on the
+# provider's port does not cover the new one. Read over the connection already
+# verified, never scanned from the network.
+- name: Read the SSH host keys over the verified connection
+  ansible.builtin.shell: cat /etc/ssh/ssh_host_*_key.pub
+  register: trust_ssh_port_host_keys
+  changed_when: false
+
+# Under delegate_to, ansible_host names the delegated host, not this one.
+- name: Name the server as ssh will look it up
+  ansible.builtin.set_fact:
+    trust_ssh_port_name: "[{{ ansible_host | default(inventory_hostname) }}]:{{ sshd_port }}"
+
+- name: Add the host keys under the configured SSH port
+  ansible.builtin.known_hosts:
+    name: "{{ trust_ssh_port_name }}"
+    key: "{{ trust_ssh_port_name }} {{ item.split()[0] }} {{ item.split()[1] }}"
+    state: present
+  loop: "{{ trust_ssh_port_host_keys.stdout_lines }}"
+  delegate_to: localhost
+  become: false

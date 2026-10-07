@@ -32,6 +32,12 @@
     - name: Apply the SSH configuration now
       ansible.builtin.meta: flush_handlers
 
+    - name: Trust the host keys on the configured SSH port
+      ansible.builtin.import_tasks: tasks/trust_ssh_port.yml
+      when:
+        - not ansible_check_mode
+        - ansible_port | int != sshd_port | int
+
     - name: Connect on the configured SSH port from now on
       ansible.builtin.set_fact:
         ansible_port: "{{ sshd_port }}"
