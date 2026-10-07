@@ -197,7 +197,10 @@ ansible-deps: ## Create the Ansible virtualenv and install the pinned collection
 	python3 -m venv $(ANSIBLE_VENV)
 	$(ANSIBLE_BIN)/python -m pip install --quiet --upgrade pip
 	$(ANSIBLE_BIN)/python -m pip install --quiet -r $(REQ_DIR)/ansible.txt
-	cd $(ANSIBLE_DIR) && .venv/bin/ansible-galaxy collection install -r requirements.yml
+	@# Galaxy drops connections now and then; three tries before giving up.
+	cd $(ANSIBLE_DIR) && for attempt in 1 2 3; do \
+		.venv/bin/ansible-galaxy collection install -r requirements.yml && exit 0; sleep 10; \
+	done; exit 1
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint the playbooks and roles (profile: production)
