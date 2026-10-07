@@ -1,0 +1,20 @@
+---
+argument_specs:
+  main:
+    short_description: Docker CE from Docker's repository
+    options:
+      docker_version:
+        type: str
+        default: ""
+      docker_log_max_size:
+        type: str
+        default: 20m
+      docker_log_max_file:
+        type: int
+        default: 5
+      docker_packages:
+        type: list
+        elements: str
+      docker_conflicting_packages:
+        type: list
+        elements: str

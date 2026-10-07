@@ -208,11 +208,13 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 `infra/docker-compose.yml`, `infra/docker-compose.override.yml`
 
 **Why UFW does not protect Docker-published ports:** the short port syntax
-`ports: "host:container"` binds `0.0.0.0` (all interfaces), and Docker inserts
-its own rules into the `DOCKER` iptables chain — which is evaluated *before* the
-`INPUT` chain that UFW manages. As a result, a `ufw deny <port>` rule has **no
-effect** on a container-published port: it is reachable from the internet even
-when UFW reports the port as blocked.
+`ports: "host:container"` binds `0.0.0.0` (all interfaces), and Docker rewrites
+the destination of such traffic to the container in the `nat` table's
+`PREROUTING` chain. The packet is then forwarded through the `FORWARD` chain,
+where Docker's own rules accept it, and never reaches the `INPUT` chain that UFW
+filters. As a result, a `ufw deny <port>` rule has **no effect** on a
+container-published port: it is reachable from the internet even when UFW
+reports the port as blocked.
 
 **What the template does:**
 - The base (production) compose file publishes **only Nginx (`80` and `443`)** on
@@ -228,19 +230,24 @@ when UFW reports the port as blocked.
 
 **The remaining public ports (Nginx, `80`/`443`):** these are the intended front
 door and are published on `0.0.0.0` by design. Because of the bypass above, UFW
-alone will not govern them. `infra/firewall/` ships the policy that does: it
-combines UFW for host listeners with a `DOCKER-USER` chain for container traffic
-(Docker evaluates `DOCKER-USER` before every rule of its own), installed as a
-systemd unit so it survives reboots and daemon restarts.
+alone will not govern them. The `firewall` role in `infra/ansible` ships the
+policy that does: UFW for host listeners, plus a `DOCKER-USER` chain for container
+traffic (Docker evaluates `DOCKER-USER` before every rule of its own). The chain
+names no external interface - iptables accepts an interface name that does not
+exist, so a renamed NIC would silently void an interface-bound rule - and drops
+everything forwarded to a container except the public ports and Docker's own
+bridges. Its systemd unit fills the chain before Docker starts, so containers
+restarted at boot are never reachable unfiltered, and re-applies it whenever
+Docker restarts.
 
-```bash
-scp -r infra/firewall <host>:/tmp/firewall
-ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'
-```
+The result: the SSH port, `80` and `443` reachable from the internet, everything
+else through an SSH tunnel only. `firewall_public_tcp_ports` narrows or widens
+the container side, `firewall_trusted_interfaces` admits a provider's private
+network. See [`infra/ansible/README.md`](../../infra/ansible/README.md).
 
-The result: `22`, `80` and `443` reachable from the internet, everything else
-through an SSH tunnel only. `PUBLIC_TCP_PORTS` narrows or widens the container
-side, `SSH_PORT` covers a non-default SSH port. See `infra/firewall/README.md`.
+The same provisioning closes SSH to keys only, without root, for two accounts:
+`ops` for people (sudo) and `deploy` for CD (no sudo, no pty, no forwarding). The
+CD key is still a root key in effect, because `deploy` is in the `docker` group.
 
 [`ufw-docker`](https://github.com/chaifeng/ufw-docker) solves the same problem by
 wiring Docker traffic through UFW's `route` rules, if you would rather manage the
@@ -352,7 +359,7 @@ enforce, instead of every call site assembling its own key string.
 that pickle-based caches carry. Version counters remove an entire class of
 invalidation bugs — a partial purge, a tag set that drifted out of sync with the
 entries it was supposed to name — because nothing is enumerated: an entry that
-resolves a bumped counter is simply no longer addressable. The `PUBLIC`/`PRIVATE`
+resolves a bumped counter is no longer addressable. The `PUBLIC`/`PRIVATE`
 distinction is what stands between "one cache
 entry serves every permitted viewer" and "one user's cached response leaks to
 another" once a shared cache sits on the request path.

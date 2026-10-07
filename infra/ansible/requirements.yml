@@ -1,0 +1,10 @@
+---
+# Exact versions: a version pin is not an integrity pin (Galaxy does not sign
+# community collections), but it keeps every operator on the same code.
+collections:
+  - name: ansible.posix
+    version: "2.2.2"
+  - name: community.general
+    version: "13.5.0"
+  - name: community.crypto
+    version: "3.5.0"

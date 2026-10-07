@@ -1,0 +1,56 @@
+---
+- name: Check for .env
+  ansible.builtin.stat:
+    path: "{{ app_checkout_dir }}/.env"
+  register: app_checkout_stack_env
+
+# The services meant to stay up are the ones with a restart policy; app-builder
+# is a one-shot without one. Taken from the compose file, since a service whose
+# container never came back is missing from `ps` altogether.
+- name: Read the services that should be running
+  ansible.builtin.command:
+    cmd: docker compose --env-file .env -f infra/docker-compose.yml config --format json
+    chdir: "{{ app_checkout_dir }}"
+  register: app_checkout_stack_config
+  changed_when: false
+  check_mode: false
+  when: app_checkout_stack_env.stat.exists
+
+- name: Name the services to wait for
+  ansible.builtin.set_fact:
+    app_checkout_stack_expected: >-
+      {{ (app_checkout_stack_config.stdout | from_json).services | dict2items
+         | selectattr('value.restart', 'defined')
+         | rejectattr('value.restart', 'equalto', 'no')
+         | map(attribute='key') | list }}
+  when: app_checkout_stack_env.stat.exists
+
+# Every expected service has a running container, and every one of its
+# containers is running and, where it has a healthcheck, healthy.
+- name: Wait for every long-running service to be up and healthy
+  ansible.builtin.command:
+    cmd: docker compose --env-file .env -f infra/docker-compose.yml ps --all --format json
+    chdir: "{{ app_checkout_dir }}"
+  register: app_checkout_stack
+  changed_when: false
+  check_mode: false
+  retries: "{{ (app_checkout_health_timeout_seconds | int / 10) | round(0, 'ceil') | int }}"
+  delay: 10
+  until: >-
+    app_checkout_stack_expected
+    | difference(app_checkout_stack.stdout_lines | map('from_json')
+                 | selectattr('State', 'equalto', 'running') | map(attribute='Service') | list)
+    | length == 0
+    and app_checkout_stack.stdout_lines | map('from_json')
+        | selectattr('Service', 'in', app_checkout_stack_expected)
+        | rejectattr('State', 'equalto', 'running') | list | length == 0
+    and app_checkout_stack.stdout_lines | map('from_json')
+        | selectattr('Service', 'in', app_checkout_stack_expected)
+        | rejectattr('Health', 'equalto', '') | rejectattr('Health', 'equalto', 'healthy')
+        | list | length == 0
+  when: app_checkout_stack_env.stat.exists
+
+- name: Report a server with nothing deployed
+  ansible.builtin.debug:
+    msg: "{{ app_checkout_dir }}/.env is missing; there is no stack to wait for."
+  when: not app_checkout_stack_env.stat.exists

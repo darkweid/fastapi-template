@@ -1,0 +1,30 @@
+---
+# The GitHub-hosted runner stands in for a fresh server; keys come from
+# tests/ci/prepare_runner.sh.
+ci_mode: true
+ci_keys: "{{ lookup('ansible.builtin.env', 'RUNNER_TEMP') }}/ansible-ci"
+
+ansible_user: ops
+ansible_port: "{{ sshd_port }}"
+ansible_ssh_private_key_file: "{{ ci_keys }}/ops"
+
+app_name: app
+# The runner's sshd starts on 22; provisioning moves it, the hardest path.
+sshd_port: 22022
+
+# Two operators: a loop with exclusive: true would keep only the second.
+users_ops_authorized_keys:
+  - "{{ lookup('ansible.builtin.file', ci_keys ~ '/ops.pub') }}"
+  - "{{ lookup('ansible.builtin.file', ci_keys ~ '/ops2.pub') }}"
+users_deploy_authorized_keys:
+  - "{{ lookup('ansible.builtin.file', ci_keys ~ '/deploy.pub') }}"
+
+# HTTPS with the job's token, since a deploy key cannot be registered from CI;
+# works for a private fork too. The token dies with the job.
+app_checkout_repo_url: "{{ lookup('ansible.builtin.env', 'CI_REPO_URL') }}"
+app_checkout_repo_host_keys:
+  - github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+  # yamllint disable-line rule:line-length
+  - github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+  # yamllint disable-line rule:line-length
+  - github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=

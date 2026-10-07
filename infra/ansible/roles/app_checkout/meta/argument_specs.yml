@@ -1,0 +1,29 @@
+---
+argument_specs:
+  main:
+    short_description: The application checkout CD deploys from
+    options:
+      app_name:
+        type: str
+        required: true
+      app_checkout_repo_url:
+        type: str
+        required: true
+      app_checkout_repo_host_keys:
+        type: list
+        elements: str
+        required: true
+        description: '"<host> <type> <key>" lines for the git server.'
+      app_checkout_dir:
+        type: path
+      app_checkout_branch:
+        type: str
+        default: main
+  stack_health:
+    short_description: Wait until every service with a restart policy is running and, with a healthcheck, healthy
+    options:
+      app_checkout_dir:
+        type: path
+      app_checkout_health_timeout_seconds:
+        type: int
+        default: 300

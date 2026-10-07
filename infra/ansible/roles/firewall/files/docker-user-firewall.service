@@ -1,0 +1,17 @@
+# Installed by infra/ansible/roles/firewall.
+[Unit]
+Description=Filter internet access to Docker-published ports (DOCKER-USER)
+# Docker creates DOCKER-USER only when it is missing and never flushes it, so
+# rules in place before it starts cover the first container restarted at boot.
+Before=docker.service
+# An explicit `systemctl restart docker` re-applies the rules.
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/default/docker-user-firewall
+ExecStart=/usr/local/sbin/docker-user-rules.sh
+
+[Install]
+WantedBy=multi-user.target docker.service

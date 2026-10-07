@@ -1,0 +1,10 @@
+---
+# CI converges the runner it runs on. On a self-hosted runner that would lock out
+# root, replace Docker and enable ufw on a machine other jobs share.
+- name: Refuse CI mode outside a GitHub-hosted runner
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.env', 'RUNNER_ENVIRONMENT') == 'github-hosted'
+    fail_msg: ci_mode is set, but this is not a GitHub-hosted runner.
+    quiet: true
+  when: ci_mode | default(false) | bool

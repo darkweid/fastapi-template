@@ -1,0 +1,18 @@
+---
+# The password stays, so where the image set one, the provider's web console
+# remains a way back in.
+- name: Look up the bootstrap user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ bootstrap_user }}"
+  when:
+    - users_lock_bootstrap_user | bool
+    - bootstrap_user not in ['ops', 'deploy']
+
+- name: Remove the bootstrap user's SSH keys
+  ansible.builtin.file:
+    path: "{{ ansible_facts['getent_passwd'][bootstrap_user][4] }}/.ssh/authorized_keys"
+    state: absent
+  when:
+    - users_lock_bootstrap_user | bool
+    - bootstrap_user not in ['ops', 'deploy']

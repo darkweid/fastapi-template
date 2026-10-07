@@ -157,3 +157,7 @@ cython_debug/
 # that survives in a fresh clone, where those local directories do not exist yet.
 docs/superpowers/
 .superpowers/
+
+# Ansible controller environment and installed collections (make ansible-deps)
+infra/ansible/.venv/
+infra/ansible/collections/

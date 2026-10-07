@@ -29,7 +29,7 @@ The goal is simple: write solid tests quickly and consistently, without tying th
 - commit/rollback
 - state changes
 7. Run the relevant tests.
-8. Make sure style and naming match project conventions.
+8. Check that style and naming match project conventions.
 
 ## 3) Structure and naming
 

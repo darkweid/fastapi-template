@@ -1,0 +1,20 @@
+---
+# On 24.04 sshd-socket-generator derives ssh.socket's ListenStream from sshd -T.
+- name: Reload systemd units for sshd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Restarting ssh.socket alone is refused while ssh.service runs. Open sessions
+# survive both forms: ssh.service has KillMode=process.
+- name: Restart socket-activated sshd
+  ansible.builtin.command: systemctl restart ssh.socket ssh.service  # noqa: command-instead-of-module
+  listen: Restart sshd
+  when: sshd_socket.stdout == 'enabled'
+  changed_when: true
+
+- name: Restart sshd as a service
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: restarted
+  listen: Restart sshd
+  when: sshd_socket.stdout != 'enabled'

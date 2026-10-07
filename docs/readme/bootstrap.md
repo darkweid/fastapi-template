@@ -3,8 +3,9 @@
 Everything on this page is done **once**, on a fresh fork. When you reach the
 end, the daily loop is the README *Quick Start* and nothing here comes back.
 
-Order matters in one place only: rename before the first `make run`, or you
-inherit a set of volumes named after this template.
+Order matters in two places: rename before the first `make run`, or you
+inherit a set of volumes named after this template; and commit the nginx changes
+of section 9 before the server clones the repository.
 
 ---
 
@@ -281,16 +282,17 @@ dormant until you create it; a project with no staging contour deletes
 CD stays skipped until you arm it. Everything the deploy reads belongs to a
 GitHub Environment — create `production` (and `staging`, if you run one) under
 *Settings → Environments* and put the secrets and `APP_DIR` there, one set per
-box. The two `*_DEPLOY_ENABLED` gates are the exception: they live in *Settings
+server. The two `*_DEPLOY_ENABLED` gates are the exception: they live in *Settings
 → Secrets and variables → Actions → Variables*, because a job-level `if` runs
 before the environment resolves and would read an environment variable as empty.
 
 | Name | Where | What it is |
 | --- | --- | --- |
 | `PROD_DEPLOY_ENABLED` | Repository variable | Set to `true` to arm production CD. Until then CD (prod) is skipped. |
-| `STAGE_DEPLOY_ENABLED` | Repository variable | Same for CD (stage). Leave unset if the project has no staging box. |
-| `APP_DIR` | Environment variable | Deploy directory on that environment's box, e.g. `/root/app`. CD fails with a named error if it is unset. |
-| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_USER`, `SERVER_IP` | Environment secret | Access to that environment's box. Per environment, so a staging key cannot reach production. `SSH_KNOWN_HOSTS` is `ssh-keyscan <server-ip>`, verified by hand against the host key. |
+| `STAGE_DEPLOY_ENABLED` | Repository variable | Same for CD (stage). Leave unset if the project has no staging server. |
+| `APP_DIR` | Environment variable | Deploy directory on that environment's server, e.g. `/srv/app`. CD fails with a named error if it is unset. |
+| `SSH_PORT` | Environment variable | The server's SSH port, when it is not 22 (some providers hand servers over on 22022). |
+| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `SSH_USER`, `SERVER_IP` | Environment secret | Access to that environment's server. Per environment, so a staging key cannot reach production. `SSH_USER` is `deploy`; `SERVER_IP` and `SSH_KNOWN_HOSTS` are printed by `make server-provision`, read from the server over a connection you verified. |
 | `ALERT_BOT_TOKEN`, `ALERT_CHAT_ID` | Environment secret | Telegram deploy notifications. |
 | `GITLEAKS_LICENSE` | Repository secret, optional | Only needed when the repository is owned by an organization. |
 | `PRECOMMIT_BOT_TOKEN` | Repository secret, optional | Lets the pre-commit autoupdate workflow open PRs that trigger CI. |
@@ -322,26 +324,27 @@ to `tests/unit/scripts/ops/test_docs_only_change.py` in the same commit.
 
 ## 9. First deploy
 
-On the target box:
+These steps are for a VPS. On Kubernetes or a PaaS, deploy the image CI pushes
+with your platform's tooling and delete `infra/ansible` (its README says what
+else goes with it).
 
-1. Install Docker and Compose, clone the repository.
-2. Put a filled `.env` there by hand — it is never committed and CD never
-   uploads one.
-3. Close the host: `scp -r infra/firewall <host>:/tmp/firewall` then
-   `ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'`. Docker-published ports
-   bypass UFW, which is why this installs a `DOCKER-USER` chain as well.
-4. Put the API's hostname into `server_name` in `infra/nginx/app.conf` (and in
+Provision the server from your machine with Ansible - any provider, Ubuntu 24.04 or
+26.04. [`infra/ansible/README.md`](../../infra/ansible/README.md) has the details.
+The server clones the repository once and the first deploy runs from that clone,
+so the nginx changes in steps 1 and 2 are pushed before the clone in step 5. In
+short:
+
+1. Put the API's hostname into `server_name` in `infra/nginx/app.conf` (and in
    `tls.conf.example`, in place of `api.example.com`). The default server drops
-   every request for a name it does not list, so a box reached by a name missing
+   every request for a name it does not list, so a server reached by a name missing
    from there answers nothing at all.
-5. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
+2. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
    the exact steps, and swapping the config file is only the first of them: the
    server block reads `/etc/nginx/certs/fullchain.pem`, and the `nginx` service
-   currently mounts the configuration directory only. Put the certificate and
-   key under `infra/nginx/certs/`, replace the content of `app.conf` with
-   `tls.conf.example` (the whole `infra/nginx` directory is nginx's `conf.d`, so
-   a second server file beside `app.conf` would clash with it), and add the
-   mounts those paths need:
+   currently mounts the configuration directory only. Replace the content of
+   `app.conf` with `tls.conf.example` (the whole `infra/nginx` directory is
+   nginx's `conf.d`, so a second server file beside `app.conf` would clash with
+   it), and add the mounts those paths need:
 
    ```yaml
    - ./nginx/certs:/etc/nginx/certs:ro
@@ -350,14 +353,27 @@ On the target box:
 
    The second one belongs to the ACME challenge location; keep it only if you
    renew through certbot, and declare `certbot-webroot` under `volumes:` in the
-   same file. Without the certificate mount Nginx cannot start and the first
-   deploy fails at the last step.
-6. `make deploy-prod` — the bootstrap path, which builds the image on the box
-   because no registry image exists yet.
+   same file. Commit and push both changes.
+3. `make ansible-deps`, then copy `infra/ansible/inventory/example` to
+   `inventory/production` and fill in the address, `sshd_port`, your key, the CD
+   key, `app_name` and the repository URL.
+4. `make server-bootstrap ENV=production` (`BOOTSTRAP_USER=ubuntu`,
+   `BOOTSTRAP_PORT=22022`, `ASK_PASS=1` for the providers that need them). It
+   creates `ops` and `deploy`, closes root and password login, installs Docker,
+   closes the firewall - ufw plus a `DOCKER-USER` chain, since Docker-published
+   ports bypass ufw - and prints a deploy key.
+5. Add the deploy key to the repository (read-only), run
+   `make server-provision ENV=production` to clone, put `.env` in place as the
+   README shows, and copy the printed CD values into the environment.
+6. Copy the certificate and key into `/srv/<app_name>/infra/nginx/certs/` on the
+   server (git-ignored, so the clone has none), owned by `deploy`. Without them
+   Nginx cannot start and the first deploy fails at the last step.
+7. The first deploy builds the image on the server, because no registry image exists
+   yet: `sudo -iu deploy bash -c 'cd /srv/<app_name> && bash infra/deploy/deploy.sh'`.
 
 From then on CD runs `BUILD=0 APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12> bash infra/deploy/deploy.sh`
 (what `make deploy-image` wraps)
-and the production box never compiles.
+and the production server never compiles.
 
 `infra/deploy/deploy.sh` validates `.env` before anything starts, brings up
 Postgres and Redis, applies migrations, and only then rolls `app`, `worker` and
@@ -385,5 +401,5 @@ hardening in [security.md](security.md).
 [ ] make lint && make test green
 [ ] src/note copied for the first domain, then deleted
 [ ] production environment holds the CD secrets and APP_DIR; PROD_DEPLOY_ENABLED=true (when a server exists)
-[ ] API hostname in nginx server_name, host hardened, TLS in place, first make deploy-prod done
+[ ] API hostname in nginx server_name and TLS config pushed, server provisioned (make server-provision), certificates copied, first deploy done
 ```

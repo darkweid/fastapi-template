@@ -1,0 +1,70 @@
+---
+- name: Read the server's SSH host keys
+  ansible.builtin.shell: cat /etc/ssh/ssh_host_*_key.pub
+  register: summary_host_keys
+  changed_when: false
+  check_mode: false
+
+- name: Check whether a reboot is due
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: summary_reboot_required
+
+- name: Ask needrestart what still runs old code
+  ansible.builtin.command: needrestart -b
+  register: summary_needrestart
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Read over the connection the operator already verified, so SSH_KNOWN_HOSTS
+# needs no ssh-keyscan. ssh looks a non-22 port up as [host]:port.
+- name: Show the CD values for this environment
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['GitHub -> Settings -> Environments -> <environment>:',
+          'SSH_USER=deploy',
+          'SERVER_IP=' ~ (ansible_host | default(inventory_hostname)),
+          'SSH_PORT=' ~ sshd_port,
+          'APP_DIR=' ~ app_checkout_dir,
+          'SSH_KNOWN_HOSTS:']
+         + (summary_host_keys.stdout_lines
+            | map('regex_replace', '^(\S+) (\S+).*$', summary_known_hosts_host ~ ' \1 \2')
+            | list) }}
+  vars:
+    summary_known_hosts_host: >-
+      {{ (ansible_host | default(inventory_hostname)) if sshd_port | int == 22
+         else '[' ~ (ansible_host | default(inventory_hostname)) ~ ']:' ~ sshd_port }}
+
+- name: Show the deploy key to add
+  ansible.builtin.debug:
+    msg:
+      - "Add this as a read-only deploy key of the repository, then run make server-provision again:"
+      - "{{ app_checkout_public_key }}"
+      - "git said, in case the cause is not the key (network, host key, an HTTPS URL):"
+      - "{{ app_checkout_access.stderr | trim }}"
+  when: app_checkout_clone_pending
+
+# Only once the clone exists: git refuses to clone into a directory holding .env.
+- name: Show how to put .env in place
+  ansible.builtin.debug:
+    msg: >-
+      {{ app_checkout_dir }}/.env is missing: scp it to ops@<host>, then
+      sudo install -o deploy -g deploy -m 0600 .env {{ app_checkout_dir }}/.env && rm .env
+  when:
+    - not app_checkout_env.stat.exists
+    - not app_checkout_clone_pending
+
+- name: Show whether a reboot is due
+  ansible.builtin.debug:
+    msg: >-
+      A reboot is due ({{ summary_needrestart.stdout_lines | select('match', '^NEEDRESTART-(KSTA|SVC)')
+      | join('; ') }}): make server-reboot ENV=<environment>
+  when: >-
+    summary_reboot_required.stat.exists
+    or summary_needrestart.stdout_lines | select('match', '^NEEDRESTART-KSTA: [23]') | list | length > 0
+
+- name: Stop until the deploy key is added
+  ansible.builtin.fail:
+    msg: The repository is not cloned yet; add the deploy key shown above and run make server-provision again.
+  when: app_checkout_clone_pending

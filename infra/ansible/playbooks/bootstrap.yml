@@ -1,0 +1,65 @@
+---
+# Once per server. Connection settings are play vars, which beat the inventory's
+# ansible_user: ops. Never pass -e ansible_user=...: extra vars would override
+# every play below, the ops check included.
+- name: Prepare the server as the provider's user
+  hosts: app_servers
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    ansible_port: "{{ bootstrap_port | default(sshd_port) }}"
+    ansible_connection: "{{ bootstrap_connection | default('ssh') }}"
+  tasks:
+    - name: Guard CI mode
+      ansible.builtin.import_tasks: tasks/ci_guard.yml
+
+    - name: Check the operating system
+      ansible.builtin.import_role:
+        name: base
+        tasks_from: assert_os
+
+    # The only full upgrade: unattended-upgrades takes over from here, and one in
+    # site.yml would make its second run depend on what was released meanwhile.
+    - name: Upgrade every package
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: true
+      when: bootstrap_full_upgrade | default(true) | bool
+
+    - name: Create the ops account
+      ansible.builtin.import_role:
+        name: users
+        tasks_from: ops
+
+# A different user means a different persistent connection, so this is a fresh
+# SSH login by construction. Until it passes, root and password login stay open.
+- name: Prove that ops can log in and become root
+  hosts: app_servers
+  gather_facts: false
+  vars:
+    ansible_port: "{{ bootstrap_port | default(sshd_port) }}"
+  tasks:
+    - name: Log in as ops
+      ansible.builtin.ping:
+
+    - name: Become root as ops
+      ansible.builtin.command: id -u
+      become: true
+      register: bootstrap_ops_uid
+      changed_when: false
+      check_mode: false
+
+    - name: Require root through sudo
+      ansible.builtin.assert:
+        that:
+          - bootstrap_ops_uid.stdout == '0'
+        quiet: true
+
+    - name: Take SSH access away from the provider's account
+      ansible.builtin.import_role:
+        name: users
+        tasks_from: lock_bootstrap_user
+      become: true
+
+- name: Provision
+  ansible.builtin.import_playbook: site.yml

@@ -1,0 +1,8 @@
+---
+profile: production
+# The collections are installed by `make ansible-deps`; ansible-lint must not
+# fetch anything on its own.
+offline: true
+exclude_paths:
+  - .venv/
+  - collections/

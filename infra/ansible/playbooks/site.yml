@@ -1,0 +1,88 @@
+---
+- name: Provision the application servers
+  hosts: app_servers
+  become: true
+  force_handlers: true
+  # bootstrap_port is set only during bootstrap, while sshd may still listen on
+  # the provider's port.
+  vars:
+    ansible_port: "{{ bootstrap_port | default(sshd_port) }}"
+  tasks:
+    - name: Guard CI mode
+      ansible.builtin.import_tasks: tasks/ci_guard.yml
+
+    - name: Apply the baseline
+      ansible.builtin.import_role:
+        name: base
+
+    - name: Manage the accounts
+      ansible.builtin.import_role:
+        name: users
+
+    # A preview (--check) moves nothing, so it keeps the connection it has.
+    # A port move happens in two passes. The first keeps sshd on the port this
+    # run came in on as well, so a new port the operator cannot reach (an egress
+    # filter, a provider firewall) fails the run instead of locking them out.
+    - name: Harden sshd, still listening on the current port
+      ansible.builtin.import_role:
+        name: sshd
+      vars:
+        sshd_previous_port: "{{ bootstrap_port | default(sshd_port) }}"
+
+    - name: Apply the SSH configuration now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Trust the host keys on the configured SSH port
+      ansible.builtin.import_tasks: tasks/trust_ssh_port.yml
+      when:
+        - not ansible_check_mode
+        - ansible_port | int != sshd_port | int
+
+    - name: Connect on the configured SSH port from now on
+      ansible.builtin.set_fact:
+        ansible_port: "{{ sshd_port }}"
+      when: not ansible_check_mode
+
+    # A fresh login against the configuration just reloaded: a drop-in that
+    # passes sshd -t but shuts ops out fails the run here.
+    - name: Drop the persistent connection
+      ansible.builtin.meta: reset_connection
+      when: not ansible_check_mode
+
+    - name: Log in again against the hardened sshd
+      ansible.builtin.ping:
+      when: not ansible_check_mode
+
+    - name: Stop listening on the previous port
+      ansible.builtin.import_role:
+        name: sshd
+      vars:
+        sshd_previous_port: "{{ sshd_port }}"
+
+    - name: Apply the single-port configuration now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Drop the connection to the restarted sshd
+      ansible.builtin.meta: reset_connection
+      when: not ansible_check_mode
+
+    - name: Log in on the configured port alone
+      ansible.builtin.ping:
+      when: not ansible_check_mode
+
+    - name: Install Docker
+      ansible.builtin.import_role:
+        name: docker
+
+    # After Docker: the DOCKER-USER unit is ordered around docker.service.
+    - name: Close the host
+      ansible.builtin.import_role:
+        name: firewall
+
+    - name: Clone the application
+      ansible.builtin.import_role:
+        name: app_checkout
+
+  post_tasks:
+    - name: Summarise what is left to do
+      ansible.builtin.import_tasks: tasks/summary.yml

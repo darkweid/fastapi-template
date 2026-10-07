@@ -1,0 +1,91 @@
+---
+- name: Check the operating system
+  ansible.builtin.import_tasks: assert_os.yml
+
+# update_cache on the install task only: a standalone cache refresh reports
+# changed on every run that refreshes it.
+- name: Install the baseline packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable unattended upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+
+# The distro's origins (security and ESM) stay as shipped; apt.conf lists add up
+# across files, so this file only sets what differs. Docker's repository is not
+# an origin: Docker moves only when the operator moves it.
+- name: Keep unattended upgrades from rebooting
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52unattended-upgrades-local
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Check for needrestart
+  ansible.builtin.stat:
+    path: /etc/needrestart
+  register: base_needrestart
+
+# List mode: an upgrade never restarts dockerd or sshd on its own. A patched
+# library takes effect after a restart or a reboot, which the summary reports.
+- name: Keep needrestart from restarting services
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/50-ansible.conf
+    content: "$nrconf{restart} = 'l';\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: base_needrestart.stat.exists
+
+- name: Use UTC
+  community.general.timezone:
+    name: UTC
+
+# Whichever time service the release ships (systemd-timesyncd on 24.04, chrony
+# on 26.04) is left in place; this only turns synchronisation on.
+- name: Read whether network time sync is on
+  ansible.builtin.command: timedatectl show --property=NTP --value
+  register: base_ntp
+  changed_when: false
+  check_mode: false
+
+- name: Turn network time sync on
+  ansible.builtin.command: timedatectl set-ntp true
+  when: base_ntp.stdout != 'yes'
+  changed_when: true
+
+- name: Create the journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap the journal
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/60-size.conf
+    content: |
+      [Journal]
+      SystemMaxUse={{ base_journald_max_use }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald
+
+- name: Manage swap
+  ansible.builtin.import_tasks: swap.yml
+  when: base_swap_size_mb | int > 0

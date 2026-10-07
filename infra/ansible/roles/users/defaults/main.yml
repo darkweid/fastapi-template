@@ -1,0 +1,5 @@
+---
+# A self-hosted runner's fixed egress address only: GitHub-hosted runners leave
+# from a rotating range, and CD would break at the next rotation.
+users_deploy_allowed_from: ""
+users_lock_bootstrap_user: true

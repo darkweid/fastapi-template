@@ -1,0 +1,13 @@
+---
+argument_specs:
+  main:
+    short_description: Key-only SSH for ops and deploy
+    options:
+      sshd_port:
+        type: int
+        default: 22
+      sshd_previous_port:
+        type: int
+      sshd_login_grace_time:
+        type: int
+        default: 30

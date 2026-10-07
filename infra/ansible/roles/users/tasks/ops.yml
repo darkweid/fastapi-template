@@ -1,0 +1,30 @@
+---
+- name: Refuse an empty operator key list
+  ansible.builtin.assert:
+    that:
+      - users_ops_authorized_keys | length > 0
+    fail_msg: users_ops_authorized_keys is empty; nobody could log in once root login is closed.
+    quiet: true
+
+- name: Create the ops account
+  ansible.builtin.user:
+    name: ops
+    shell: /bin/bash
+    create_home: true
+
+# ops has no password, so sudo has nothing to ask for.
+- name: Let ops use sudo without a password
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/ops
+    content: "ops ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+# One call with every key: exclusive: true in a loop would keep only the last one.
+- name: Authorise the operators' keys for ops
+  ansible.posix.authorized_key:
+    user: ops
+    key: "{{ users_ops_authorized_keys | join('\n') }}"
+    exclusive: true

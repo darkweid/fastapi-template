@@ -1,0 +1,13 @@
+---
+firewall_ssh_port: "{{ sshd_port | default(22) }}"
+firewall_rule_comment: managed-by-ansible
+# Container ports (after Docker's DNAT) the internet may reach. They equal the
+# host ports in infra/docker-compose.yml.
+firewall_public_tcp_ports: [80, 443]
+# Interfaces whose traffic may reach any container, e.g. a provider's private
+# network. Docker's own bridges are always allowed.
+firewall_trusted_interfaces: []
+# The stock 22 and the port bootstrap came in on, once sshd listens elsewhere.
+firewall_retired_ssh_ports: >-
+  {{ ([22] + ([bootstrap_port] if bootstrap_port is defined else []))
+     | map('int') | reject('equalto', firewall_ssh_port | int) | unique | list }}

@@ -1,13 +1,15 @@
 # FastAPI Template
 
 ![CI](https://github.com/darkweid/fastapi-template/actions/workflows/prod_ci.yml/badge.svg?branch=main)
+![Ansible](https://github.com/darkweid/fastapi-template/actions/workflows/ansible.yml/badge.svg?branch=main)
+![Ansible targets](https://img.shields.io/badge/Ansible-Ubuntu%2024.04%20%7C%2026.04-EE0000?logo=ansible&logoColor=white)
 ![Coverage](https://coveralls.io/repos/github/darkweid/fastapi-template/badge.svg?branch=main)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![Mypy](https://img.shields.io/badge/mypy-strict-success)
 ![License](https://img.shields.io/github/license/darkweid/fastapi-template)
 
 
-Production-ready FastAPI template with modular architecture, async stack, and full Docker setup.
+Production-ready FastAPI template with modular architecture, async stack, full Docker setup, and Ansible that turns a bare VPS into a server ready for CD.
 
 ## Key Features
 - Async FastAPI with modular domain structure.
@@ -16,6 +18,7 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
 - Messaging: taskiq worker/scheduler over Redis Streams with a transactional outbox (atomic enqueue with the DB transaction, worker-side dedup, delayed retries). Background tasks are enqueued via `TaskDispatcher` (`enqueue` for fire-and-forget, `enqueue_transactional` to enqueue inside a UnitOfWork transaction).
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
+- Server provisioning for a VPS (`infra/ansible`): a fresh Ubuntu 24.04/26.04 machine from any provider (Hetzner, DigitalOcean, Vultr, AWS, ...) gets separate admin and CD accounts, key-only SSH on the port you pick and a firewall that also covers Docker-published ports. CI converges it on an Ubuntu 24.04 VM on every change to it; 26.04 is checked by hand until GitHub offers a 26.04 runner. Kubernetes or a PaaS? [Delete it](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps).
 - Email service: templated mailer with async tasks for sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
 - Event log: append-only `event_logs` table (`src/event_log/`) with a per-module event catalog, an `Actor` value object per auth realm, a SAVEPOINT-isolated writer whose failure never takes the action down with it, and a permission-gated read endpoint. The user realm is wired end to end - registration, email verification, sign-in and its failures, sign-out, password change and reset, profile edits.
@@ -189,10 +192,33 @@ Redis increment however many entries carry it.
 ## Security Checks
 - CI runs dedicated security jobs in `.github/workflows/_ci.yml`.
 - `bandit` scans application, migration, and script code for insecure patterns.
-- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages. It runs unfiltered: an advisory that cannot be fixed yet has to be ignored with an explicit `--ignore-vuln` in the workflow, and the reason belongs next to the flag.
+- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages, and `infra/requirements/ansible.txt` in a separate call (its pins conflict with the dev ones in a single resolve). It runs unfiltered: an advisory that cannot be fixed yet has to be ignored with an explicit `--ignore-vuln` in the workflow, and the reason belongs next to the flag.
 - `gitleaks` scans the repository for committed secrets.
 - `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
+
+## Bare VPS to Production: Two Runs and a Deploy Key
+Rent an Ubuntu 24.04 or 26.04 VM from Hetzner, DigitalOcean, Vultr, Linode,
+OVHcloud, AWS or any other provider. Copy `infra/ansible/inventory/example` to
+`infra/ansible/inventory/production` and fill in the address, the SSH port, your
+SSH key, the CD key, `app_name` and the repository URL. Then:
+
+```bash
+make ansible-deps                      # Ansible in its own virtualenv
+make server-bootstrap ENV=production   # users, key-only SSH, Docker, firewall; stops at a deploy key
+# add that key to the repository as a read-only deploy key
+make server-provision ENV=production   # clones the repository; a second run changes nothing
+```
+
+Put `.env` on the server and copy the values the run prints (`SSH_PORT`,
+`SSH_KNOWN_HOSTS`, `APP_DIR`, ...) into the GitHub environment: the server is then
+ready for `infra/deploy/deploy.sh` and CD. Ansible stops there: it never deploys,
+never writes `.env` and leaves the checkout where CD put it. Providers that hand
+over a root password, a non-root user or a non-standard SSH port are covered in
+[infra/ansible/README.md](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md).
+
+On Kubernetes or a PaaS the platform owns the machine: delete `infra/ansible`
+([what else to remove](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps)).
 
 ## After the Fork
 Renaming the compose project, the containers, the image tags and the three volume
@@ -239,12 +265,11 @@ port only in dev — see `docs/readme/security.md` → *Host Port Exposure (Dock
 - Postgres: 5432 — `127.0.0.1:${POSTGRES_HOST_PORT:-5432}`
 - Redis: 6379 — `127.0.0.1:${REDIS_HOST_PORT:-6379}`
 
-On a server, close everything else with `infra/firewall/` (UFW plus a
-`DOCKER-USER` chain, since Docker-published ports bypass UFW):
+On a server, `infra/ansible` closes everything else (UFW plus a `DOCKER-USER`
+chain for Docker-published ports) as part of provisioning:
 
 ```bash
-scp -r infra/firewall <host>:/tmp/firewall
-ssh <host> 'sudo bash /tmp/firewall/harden-host.sh'
+make server-bootstrap ENV=production
 ```
 
 TLS terminates at Nginx — `infra/nginx/tls.conf.example` is a drop-in replacement
@@ -275,9 +300,11 @@ for `app.conf` once the certificate is in place.
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report
 - `make test-integration` — integration suite against a throwaway PostgreSQL; `make test-all` — both suites
-- `make deploy-prod` — deploy on the box, building the image there
+- `make deploy-prod` — deploy on the server, building the image there
 - `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (the same `BUILD=0` path CD runs through `infra/deploy/deploy.sh`)
 - Both run `infra/deploy/deploy.sh`, which rolls the app without downtime: the new container starts beside the serving one, nginx moves to it once it is healthy, and the old one drains its requests before it stops. One that never turns healthy is removed and the old one keeps serving (`docs/readme/infra.md`).
+- `make ansible-deps` / `make ansible-lint` — install / lint the server provisioning in `infra/ansible`
+- `make server-bootstrap ENV=<env>`, `make server-provision ENV=<env>`, `make server-reboot ENV=<env>` — prepare a fresh server, converge it again, reboot it and wait for the stack (`infra/ansible/README.md`)
 - `make backup` — dump the database to `backups/<UTC timestamp>.dump`
 - `make restore f=backups/<file>.dump` — restore the database from a dump
 - `make psql` / `make redis-cli` — open an interactive shell inside the Postgres / Redis container
@@ -330,7 +357,7 @@ ref selector still defaults to `main`, so a blank `image_tag` there deploys
 ## Optional Local Security Runs
 - Install tools: `pip install bandit pip-audit`
 - Static scan: `bandit -r src scripts migrations -q`
-- Dependency audit: `pip-audit -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt`
+- Dependency audit: `pip-audit -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt`, then `pip-audit -r infra/requirements/ansible.txt`
 - Secret scan: `gitleaks detect --source .`
 
 ## Dependencies (pip-tools)
@@ -347,6 +374,7 @@ ref selector still defaults to `main`, so a blank `image_tag` there deploys
 - Bootstrap a fork (rename, secrets, first deploy): [docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
+- Provisioning a VPS: [infra/ansible/README.md](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md)
 - Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)
 - Adding an auth realm: [docs/readme/auth-realms.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/auth-realms.md)
 - Recording and reading the event log: [docs/readme/event-log.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/event-log.md)

@@ -1,0 +1,27 @@
+---
+- name: Manage the ops account
+  ansible.builtin.import_tasks: ops.yml
+
+# Created here rather than by the Docker package, so this role does not depend
+# on the docker role having run first.
+- name: Create the docker group
+  ansible.builtin.group:
+    name: docker
+    system: true
+
+- name: Create the deploy account
+  ansible.builtin.user:
+    name: deploy
+    shell: /bin/bash
+    groups: [docker]
+    append: true
+    create_home: true
+
+# restrict = no pty, no forwarding: CD runs `ssh ... bash -s` and needs neither.
+- name: Authorise the CD key for deploy
+  ansible.posix.authorized_key:
+    user: deploy
+    key: "{{ users_deploy_authorized_keys | join('\n') }}"
+    key_options: >-
+      restrict{{ (',from="' ~ users_deploy_allowed_from ~ '"') if users_deploy_allowed_from else '' }}
+    exclusive: true

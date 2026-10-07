@@ -1,0 +1,6 @@
+---
+app_checkout_dir: "/srv/{{ app_name }}"
+# Governs the first clone only; after it, which commit is checked out is CD's.
+app_checkout_branch: main
+app_checkout_key_path: /home/deploy/.ssh/id_ed25519_repo
+app_checkout_health_timeout_seconds: 300
