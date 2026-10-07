@@ -36,12 +36,22 @@
   changed_when: false
   check_mode: false
 
+# ss names systemd as the owner of every socket-activated listener, so systemd
+# counts as sshd only where ssh.socket itself listens on the port.
+- name: Read the ports ssh.socket listens on
+  ansible.builtin.command: systemctl show --property=Listen --value ssh.socket  # noqa: command-instead-of-module
+  register: sshd_socket_listen
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: Refuse a port another service holds
   ansible.builtin.assert:
     that:
       - >-
         sshd_port_listeners.stdout_lines
-        | reject('search', '"(sshd|systemd)",pid=')
+        | reject('search', '"sshd",pid=')
+        | reject('search', '"systemd",pid=' if (':' ~ sshd_port ~ ' ') in sshd_socket_listen.stdout else '^$')
         | list == []
     fail_msg: >-
       Port {{ sshd_port }} is taken by another service

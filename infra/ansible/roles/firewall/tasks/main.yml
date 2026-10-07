@@ -50,6 +50,19 @@
            | map('regex_replace', '^ufw allow (\d+)/tcp .*$', '\1') | list))
        | map('int') | reject('equalto', firewall_ssh_port | int) | unique | list }}
 
+- name: Close web ports no longer declared public
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+    proto: tcp
+    delete: true
+  loop: >-
+    {{ firewall_ufw_added.stdout_lines
+       | select('match', '^ufw allow \d+/tcp comment .web ' ~ firewall_rule_comment ~ '.$')
+       | map('regex_replace', '^ufw allow (\d+)/tcp .*$', '\1') | map('int')
+       | reject('in', firewall_public_tcp_ports | map('int') | list)
+       | reject('equalto', firewall_ssh_port | int) | unique | list }}
+
 # No `ufw --force reset`: it leaves a moment with no rules at all, and rules
 # added by hand are the operator's to keep.
 - name: Enable ufw
