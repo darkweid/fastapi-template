@@ -44,6 +44,22 @@ listening 22022 || fail "sshd does not listen on 22022"
 if listening 2223; then fail "sshd still listens on 2223"; fi
 if ufw_allows 2223; then fail "2223/tcp is still allowed in ufw"; fi
 
+echo "== a port another service already holds"
+python3 -m http.server 2224 --bind 0.0.0.0 >/dev/null 2>&1 &
+holder=$!
+for _ in $(seq 1 20); do
+    listening 2224 && break
+    sleep 0.5
+done
+if provision -e sshd_port=2224 -e bootstrap_port=22022; then
+    kill "$holder"
+    fail "the run moved sshd onto a port another service holds"
+fi
+kill "$holder"
+[ "$(sudo sshd -T -C user=ops,host=localhost,addr=127.0.0.1 | grep '^port ')" = "port 22022" ] \
+    || fail "the refused move still changed sshd's ports"
+ops_login 22022 || fail "ops can no longer log in on 22022"
+
 echo "== a move that succeeds"
 provision -e sshd_port=2222 -e bootstrap_port=22022
 listening 2222 || fail "sshd does not listen on 2222"

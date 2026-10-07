@@ -21,7 +21,14 @@ if ! dpkg -s openssh-server >/dev/null 2>&1; then
     sudo apt-get update -q
     sudo apt-get install -yq openssh-server
 fi
-sudo systemctl start ssh
+# A cloud image's sshd: socket-activated, as on stock 24.04, with the port named
+# in sshd_config, as some providers ship it.
+sudo systemctl disable --now ssh.service
+sudo systemctl enable --now ssh.socket
+sudo sed -i '/^Port /d' /etc/ssh/sshd_config
+echo "Port 22" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket
 
 for name in ops ops2 deploy; do
     ssh-keygen -q -t ed25519 -N '' -C "ci-$name" -f "$keys/$name"
@@ -30,10 +37,9 @@ done
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 cat "$keys/ops.pub" >> "$HOME/.ssh/authorized_keys"
-# 22022 is the inventory's port; port_change.sh moves sshd to 2222 and 2223.
+# Trusted on 22 only, as after an operator's first manual login: the run itself
+# must trust the keys on every port it moves sshd to.
 for host_key in /etc/ssh/ssh_host_*_key.pub; do
     read -r key_type key_body _ < "$host_key"
-    for host in 127.0.0.1 '[127.0.0.1]:22022' '[127.0.0.1]:2222' '[127.0.0.1]:2223'; do
-        printf '%s %s %s\n' "$host" "$key_type" "$key_body" >> "$HOME/.ssh/known_hosts"
-    done
+    printf '127.0.0.1 %s %s\n' "$key_type" "$key_body" >> "$HOME/.ssh/known_hosts"
 done

@@ -43,6 +43,8 @@ if [ -d /etc/needrestart ]; then
 fi
 
 echo "== sshd"
+[ "$(systemctl is-enabled ssh.socket)" = "enabled" ] || fail "sshd is not socket-activated, so CI tests the wrong restart path"
+if grep -q '^Port ' /etc/ssh/sshd_config; then fail "sshd_config still names a port of its own"; fi
 ops_config="$(sudo sshd -T -C user=ops,host=localhost,addr=127.0.0.1)"
 deploy_config="$(sudo sshd -T -C user=deploy,host=localhost,addr=127.0.0.1)"
 [ "$(grep '^port ' <<<"$ops_config")" = "port 22022" ] || fail "sshd does not listen on 22022 alone"
