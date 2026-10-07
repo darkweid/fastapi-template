@@ -1,0 +1,30 @@
+---
+# Not exercised in CI (a hosted runner cannot reboot); the manual checklist in
+# infra/ansible/README.md covers it.
+- name: Reboot the application servers one at a time
+  hosts: app_servers
+  become: true
+  serial: 1
+  tasks:
+    - name: Check whether a reboot was due
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Report it
+      ansible.builtin.debug:
+        msg: "A reboot was {{ '' if reboot_required.stat.exists else 'not ' }}due."
+
+    - name: Reboot
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+
+    - name: Require the DOCKER-USER rules after boot
+      ansible.builtin.import_role:
+        name: firewall
+        tasks_from: verify
+
+    - name: Wait for the stack
+      ansible.builtin.import_role:
+        name: app_checkout
+        tasks_from: stack_health

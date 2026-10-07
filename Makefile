@@ -222,6 +222,12 @@ server-provision: ## Converge a box: make server-provision ENV=production [CHECK
 	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
 	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/site.yml $(if $(CHECK),--check --diff)
 
+.PHONY: server-reboot
+server-reboot: ## Reboot a box and wait for the stack: make server-reboot ENV=production
+	@test -n "$(ENV)" || { echo "ENV is required: make server-reboot ENV=production"; exit 1; }
+	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
+	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/reboot.yml
+
 ##@ Help
 
 .PHONY: help
