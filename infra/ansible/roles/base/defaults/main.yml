@@ -1,2 +1,16 @@
 ---
 base_supported_releases: ["24.04", "26.04"]
+base_packages:
+  - acl
+  - ca-certificates
+  - curl
+  - git
+  - make
+  - python3
+  - ufw
+  - unattended-upgrades
+# 0 disables it. Created only on a box with no active swap at all, since some
+# providers give a swap partition.
+base_swap_size_mb: 2048
+base_swap_file: /swapfile
+base_journald_max_use: 500M

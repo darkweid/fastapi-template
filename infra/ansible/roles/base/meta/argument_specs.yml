@@ -7,6 +7,18 @@ argument_specs:
         type: list
         elements: str
         default: ["24.04", "26.04"]
+      base_packages:
+        type: list
+        elements: str
+      base_swap_size_mb:
+        type: int
+        default: 2048
+      base_swap_file:
+        type: path
+        default: /swapfile
+      base_journald_max_use:
+        type: str
+        default: 500M
   assert_os:
     short_description: Refuse an unsupported operating system
     options:
