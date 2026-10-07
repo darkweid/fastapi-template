@@ -3,6 +3,10 @@
   hosts: app_servers
   become: true
   force_handlers: true
+  # bootstrap_port is set only during bootstrap, while sshd may still listen on
+  # the provider's port.
+  vars:
+    ansible_port: "{{ bootstrap_port | default(sshd_port) }}"
   tasks:
     - name: Guard CI mode
       ansible.builtin.import_tasks: tasks/ci_guard.yml
@@ -10,3 +14,7 @@
     - name: Apply the baseline
       ansible.builtin.import_role:
         name: base
+
+    - name: Manage the accounts
+      ansible.builtin.import_role:
+        name: users

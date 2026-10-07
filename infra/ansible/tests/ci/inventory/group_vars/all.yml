@@ -1,0 +1,19 @@
+---
+# The GitHub-hosted runner stands in for a fresh box; keys come from
+# tests/ci/prepare_runner.sh.
+ci_mode: true
+ci_keys: "{{ lookup('ansible.builtin.env', 'RUNNER_TEMP') }}/ansible-ci"
+
+ansible_user: ops
+ansible_port: "{{ sshd_port }}"
+ansible_ssh_private_key_file: "{{ ci_keys }}/ops"
+
+app_name: app
+sshd_port: 22
+
+# Two operators: a loop with exclusive: true would keep only the second.
+users_ops_authorized_keys:
+  - "{{ lookup('ansible.builtin.file', ci_keys ~ '/ops.pub') }}"
+  - "{{ lookup('ansible.builtin.file', ci_keys ~ '/ops2.pub') }}"
+users_deploy_authorized_keys:
+  - "{{ lookup('ansible.builtin.file', ci_keys ~ '/deploy.pub') }}"

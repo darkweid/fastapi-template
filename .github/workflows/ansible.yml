@@ -1,0 +1,84 @@
+# Lints infra/ansible and converges it on a real GitHub-hosted VM. Path-filtered,
+# so application changes never start it, and therefore not a required check: a
+# required check that never starts blocks the merge.
+name: Ansible
+
+on:
+  pull_request:
+    paths:
+      - "infra/ansible/**"
+      - "!infra/ansible/**/*.md"
+      - "infra/requirements/ansible.*"
+      - ".github/workflows/ansible.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/ansible/**"
+      - "!infra/ansible/**/*.md"
+      - "infra/requirements/ansible.*"
+      - ".github/workflows/ansible.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ansible-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: make ansible-deps
+
+      - name: Lint
+        run: make ansible-lint
+
+  converge:
+    name: Converge (${{ matrix.os }})
+    needs: lint
+    # The playbooks harden the machine they run on, so only a disposable
+    # GitHub-hosted VM may run them (tests/unit/test_ansible_workflow.py).
+    # A new release joins the matrix in its own commit, once GitHub publishes it:
+    # an unknown label queues until the timeout.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: make ansible-deps
+
+      - name: Prepare the runner
+        run: infra/ansible/tests/ci/prepare_runner.sh
+
+      - name: Bootstrap
+        run: infra/ansible/tests/ci/converge.sh
+
+      - name: Second run changes nothing
+        run: infra/ansible/tests/ci/idempotence.sh
+
+      - name: Verify
+        run: infra/ansible/tests/ci/verify.sh

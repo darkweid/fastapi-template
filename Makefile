@@ -203,6 +203,16 @@ ansible-deps: ## Create the Ansible virtualenv and install the pinned collection
 ansible-lint: ## Lint the playbooks and roles (profile: production)
 	cd $(ANSIBLE_DIR) && PATH="$$PWD/.venv/bin:$$PATH" ansible-lint
 
+.PHONY: server-bootstrap
+server-bootstrap: ## Prepare a fresh box: make server-bootstrap ENV=production [BOOTSTRAP_USER=root] [BOOTSTRAP_PORT=22022] [ASK_PASS=1] [ASK_BECOME=1]
+	@test -n "$(ENV)" || { echo "ENV is required: make server-bootstrap ENV=production"; exit 1; }
+	@test -d $(ANSIBLE_DIR)/inventory/$(ENV) || { echo "No inventory at $(ANSIBLE_DIR)/inventory/$(ENV)"; exit 1; }
+	$(ANSIBLE_PLAYBOOK) $(ANSIBLE_DIR)/playbooks/bootstrap.yml \
+		-e bootstrap_user=$(BOOTSTRAP_USER) \
+		$(if $(BOOTSTRAP_PORT),-e bootstrap_port=$(BOOTSTRAP_PORT)) \
+		$(if $(ASK_PASS),--ask-pass) \
+		$(if $(ASK_BECOME),--ask-become-pass)
+
 .PHONY: server-provision
 server-provision: ## Converge a box: make server-provision ENV=production [CHECK=1]
 	@test -n "$(ENV)" || { echo "ENV is required: make server-provision ENV=production"; exit 1; }
