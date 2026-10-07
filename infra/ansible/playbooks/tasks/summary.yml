@@ -24,7 +24,7 @@
     msg: >-
       {{ ['GitHub -> Settings -> Environments -> <environment>:',
           'SSH_USER=deploy',
-          'SERVER_IP=' ~ ansible_host,
+          'SERVER_IP=' ~ (ansible_host | default(inventory_hostname)),
           'SSH_PORT=' ~ sshd_port,
           'APP_DIR=' ~ app_checkout_dir,
           'SSH_KNOWN_HOSTS:']
@@ -32,7 +32,9 @@
             | map('regex_replace', '^(\S+) (\S+).*$', summary_known_hosts_host ~ ' \1 \2')
             | list) }}
   vars:
-    summary_known_hosts_host: "{{ ansible_host if sshd_port | int == 22 else '[' ~ ansible_host ~ ']:' ~ sshd_port }}"
+    summary_known_hosts_host: >-
+      {{ (ansible_host | default(inventory_hostname)) if sshd_port | int == 22
+         else '[' ~ (ansible_host | default(inventory_hostname)) ~ ']:' ~ sshd_port }}
 
 - name: Show the deploy key to add
   ansible.builtin.debug:

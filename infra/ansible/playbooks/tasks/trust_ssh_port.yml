@@ -7,10 +7,13 @@
   register: trust_ssh_port_host_keys
   changed_when: false
 
-# Under delegate_to, ansible_host names the delegated host, not this one.
+# Under delegate_to, ansible_host names the delegated host, not this one. ssh
+# brackets the host only for a port other than 22.
 - name: Name the server as ssh will look it up
   ansible.builtin.set_fact:
-    trust_ssh_port_name: "[{{ ansible_host | default(inventory_hostname) }}]:{{ sshd_port }}"
+    trust_ssh_port_name: >-
+      {{ (ansible_host | default(inventory_hostname)) if sshd_port | int == 22
+         else '[' ~ (ansible_host | default(inventory_hostname)) ~ ']:' ~ sshd_port }}
 
 - name: Add the host keys under the configured SSH port
   ansible.builtin.known_hosts:
@@ -19,4 +22,6 @@
     state: present
   loop: "{{ trust_ssh_port_host_keys.stdout_lines }}"
   delegate_to: localhost
+  # The inventory's connection settings would otherwise apply to localhost too.
+  connection: local
   become: false

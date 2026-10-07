@@ -4,31 +4,8 @@
     name: openssh-server
     state: present
 
-- name: Open the SSH port before sshd listens on it
-  ansible.builtin.import_role:
-    name: firewall
-    tasks_from: ssh_rule
-
-# sshd -t refuses to run without it, and it is gone after a reboot until the
-# first connection on a socket-activated sshd.
-- name: Create the privilege separation directory
-  ansible.builtin.file:
-    path: /run/sshd
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-# Read before the drop-in: force_handlers runs the restart even when a later
-# task fails, and the restart needs this. A command, not systemd_service: the module fails on a server without ssh.socket.
-- name: Read whether sshd is socket-activated
-  ansible.builtin.command: systemctl is-enabled ssh.socket  # noqa: command-instead-of-module
-  register: sshd_socket
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-# A Docker-published port or any other daemon on sshd_port would take the
+# Before ufw opens the port, so a refused one is not left exposed. A
+# Docker-published port or any other daemon on sshd_port would take the
 # connection the run moves to; a port sshd already holds is the move resuming.
 - name: Read what listens on the SSH port
   ansible.builtin.command: ss -Hltnp "sport = :{{ sshd_port }}"
@@ -57,6 +34,30 @@
       Port {{ sshd_port }} is taken by another service
       ({{ sshd_port_listeners.stdout_lines | join('; ') }}). Pick another sshd_port.
     quiet: true
+
+- name: Open the SSH port before sshd listens on it
+  ansible.builtin.import_role:
+    name: firewall
+    tasks_from: ssh_rule
+
+# sshd -t refuses to run without it, and it is gone after a reboot until the
+# first connection on a socket-activated sshd.
+- name: Create the privilege separation directory
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Read before the drop-in: force_handlers runs the restart even when a later
+# task fails, and the restart needs this. A command, not systemd_service: the module fails on a server without ssh.socket.
+- name: Read whether sshd is socket-activated
+  ansible.builtin.command: systemctl is-enabled ssh.socket  # noqa: command-instead-of-module
+  register: sshd_socket
+  changed_when: false
+  failed_when: false
+  check_mode: false
 
 - name: Write the hardening drop-in
   ansible.builtin.template:
