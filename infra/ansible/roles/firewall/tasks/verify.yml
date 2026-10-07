@@ -11,12 +11,13 @@
   register: firewall_docker_user_unit
   check_mode: false
 
-# A Docker release that switches to its nftables backend has no DOCKER-USER; this
-# fails the run instead of leaving published ports unfiltered.
+# The last two rules are the script's DROP and its unreachable RETURN. A Docker
+# release that switches to its nftables backend has no DOCKER-USER; this fails
+# the run instead of leaving published ports unfiltered.
 - name: Require DOCKER-USER to end in DROP
   ansible.builtin.assert:
     that:
-      - firewall_docker_user.stdout_lines | last == '-A DOCKER-USER -j DROP'
+      - firewall_docker_user.stdout_lines[-2:] == ['-A DOCKER-USER -j DROP', '-A DOCKER-USER -j RETURN']
       - firewall_docker_user_unit.status.ActiveState == 'active'
     fail_msg: >-
       DOCKER-USER does not end in DROP or docker-user-firewall is not active:

@@ -28,6 +28,10 @@ rules() {
     done
     echo "-A DOCKER-USER -p tcp -m multiport --dports ${PUBLIC_TCP_PORTS} -j RETURN"
     echo "-A DOCKER-USER -j DROP"
+    # Never reached. dockerd appends `-j RETURN` at every start unless the chain
+    # already has one, and this unit starts first; declaring it here keeps the
+    # chain the same before and after any Docker restart.
+    echo "-A DOCKER-USER -j RETURN"
     echo "COMMIT"
 }
 

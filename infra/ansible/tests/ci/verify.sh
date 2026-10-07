@@ -88,7 +88,8 @@ expected_chain="$(printf '%s\n' \
     '-A DOCKER-USER -i docker0 -j RETURN' \
     '-A DOCKER-USER -i br-+ -j RETURN' \
     '-A DOCKER-USER -p tcp -m multiport --dports 80,443 -j RETURN' \
-    '-A DOCKER-USER -j DROP')"
+    '-A DOCKER-USER -j DROP' \
+    '-A DOCKER-USER -j RETURN')"
 check_chain() {
     local family actual
     for family in iptables ip6tables; do
