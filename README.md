@@ -18,7 +18,7 @@ Production-ready FastAPI template with modular architecture, async stack, full D
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
 - Messaging: taskiq worker/scheduler over Redis Streams with a transactional outbox (atomic enqueue with the DB transaction, worker-side dedup, delayed retries). Background tasks are enqueued via `TaskDispatcher` (`enqueue` for fire-and-forget, `enqueue_transactional` to enqueue inside a UnitOfWork transaction).
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
-- Server provisioning for a VPS (`infra/ansible`): a fresh Ubuntu 24.04/26.04 machine from any provider (Hetzner, DigitalOcean, Vultr, AWS, ...) gets separate admin and CD accounts, key-only SSH on the port you pick and a firewall that also covers Docker-published ports. CI converges it on a real VM on every change to it. Kubernetes or a PaaS? [Delete it](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps).
+- Server provisioning for a VPS (`infra/ansible`): a fresh Ubuntu 24.04/26.04 machine from any provider (Hetzner, DigitalOcean, Vultr, AWS, ...) gets separate admin and CD accounts, key-only SSH on the port you pick and a firewall that also covers Docker-published ports. CI converges it on an Ubuntu 24.04 VM on every change to it; 26.04 is checked by hand until GitHub offers a 26.04 runner. Kubernetes or a PaaS? [Delete it](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps).
 - Email service: templated mailer with async tasks for sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
 - Event log: append-only `event_logs` table (`src/event_log/`) with a per-module event catalog, an `Actor` value object per auth realm, a SAVEPOINT-isolated writer whose failure never takes the action down with it, and a permission-gated read endpoint. The user realm is wired end to end - registration, email verification, sign-in and its failures, sign-out, password change and reset, profile edits.
@@ -192,7 +192,7 @@ Redis increment however many entries carry it.
 ## Security Checks
 - CI runs dedicated security jobs in `.github/workflows/_ci.yml`.
 - `bandit` scans application, migration, and script code for insecure patterns.
-- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages. It runs unfiltered: an advisory that cannot be fixed yet has to be ignored with an explicit `--ignore-vuln` in the workflow, and the reason belongs next to the flag.
+- `pip-audit` checks pinned files `infra/requirements/base.txt`, `infra/requirements/dev.txt`, and `infra/requirements/prod.txt` for known vulnerable packages, and `infra/requirements/ansible.txt` in a separate call (its pins conflict with the dev ones in a single resolve). It runs unfiltered: an advisory that cannot be fixed yet has to be ignored with an explicit `--ignore-vuln` in the workflow, and the reason belongs next to the flag.
 - `gitleaks` scans the repository for committed secrets.
 - `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
@@ -200,8 +200,8 @@ Redis increment however many entries carry it.
 ## Bare VPS to Production: Two Runs and a Deploy Key
 Rent an Ubuntu 24.04 or 26.04 VM from Hetzner, DigitalOcean, Vultr, Linode,
 OVHcloud, AWS or any other provider. Copy `infra/ansible/inventory/example` to
-`infra/ansible/inventory/production` and fill in the address, your SSH key, the CD
-key and the repository URL. Then:
+`infra/ansible/inventory/production` and fill in the address, the SSH port, your
+SSH key, the CD key, `app_name` and the repository URL. Then:
 
 ```bash
 make ansible-deps                      # Ansible in its own virtualenv
@@ -357,7 +357,7 @@ ref selector still defaults to `main`, so a blank `image_tag` there deploys
 ## Optional Local Security Runs
 - Install tools: `pip install bandit pip-audit`
 - Static scan: `bandit -r src scripts migrations -q`
-- Dependency audit: `pip-audit -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt`
+- Dependency audit: `pip-audit -r infra/requirements/base.txt -r infra/requirements/dev.txt -r infra/requirements/prod.txt`, then `pip-audit -r infra/requirements/ansible.txt`
 - Secret scan: `gitleaks detect --source .`
 
 ## Dependencies (pip-tools)

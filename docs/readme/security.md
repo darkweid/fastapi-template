@@ -208,11 +208,13 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 `infra/docker-compose.yml`, `infra/docker-compose.override.yml`
 
 **Why UFW does not protect Docker-published ports:** the short port syntax
-`ports: "host:container"` binds `0.0.0.0` (all interfaces), and Docker inserts
-its own rules into the `DOCKER` iptables chain — which is evaluated *before* the
-`INPUT` chain that UFW manages. As a result, a `ufw deny <port>` rule has **no
-effect** on a container-published port: it is reachable from the internet even
-when UFW reports the port as blocked.
+`ports: "host:container"` binds `0.0.0.0` (all interfaces), and Docker rewrites
+the destination of such traffic to the container in the `nat` table's
+`PREROUTING` chain. The packet is then forwarded through the `FORWARD` chain,
+where Docker's own rules accept it, and never reaches the `INPUT` chain that UFW
+filters. As a result, a `ufw deny <port>` rule has **no effect** on a
+container-published port: it is reachable from the internet even when UFW
+reports the port as blocked.
 
 **What the template does:**
 - The base (production) compose file publishes **only Nginx (`80` and `443`)** on
@@ -357,7 +359,7 @@ enforce, instead of every call site assembling its own key string.
 that pickle-based caches carry. Version counters remove an entire class of
 invalidation bugs — a partial purge, a tag set that drifted out of sync with the
 entries it was supposed to name — because nothing is enumerated: an entry that
-resolves a bumped counter is simply no longer addressable. The `PUBLIC`/`PRIVATE`
+resolves a bumped counter is no longer addressable. The `PUBLIC`/`PRIVATE`
 distinction is what stands between "one cache
 entry serves every permitted viewer" and "one user's cached response leaks to
 another" once a shared cache sits on the request path.

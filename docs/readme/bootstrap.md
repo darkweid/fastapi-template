@@ -3,8 +3,9 @@
 Everything on this page is done **once**, on a fresh fork. When you reach the
 end, the daily loop is the README *Quick Start* and nothing here comes back.
 
-Order matters in one place only: rename before the first `make run`, or you
-inherit a set of volumes named after this template.
+Order matters in two places: rename before the first `make run`, or you
+inherit a set of volumes named after this template; and commit the nginx changes
+of section 9 before the server clones the repository.
 
 ---
 
@@ -328,32 +329,22 @@ with your platform's tooling and delete `infra/ansible` (its README says what
 else goes with it).
 
 Provision the server from your machine with Ansible - any provider, Ubuntu 24.04 or
-26.04. [`infra/ansible/README.md`](../../infra/ansible/README.md) has the details;
-in short:
+26.04. [`infra/ansible/README.md`](../../infra/ansible/README.md) has the details.
+The server clones the repository once and the first deploy runs from that clone,
+so the nginx changes in steps 1 and 2 are pushed before the clone in step 5. In
+short:
 
-1. `make ansible-deps`, then copy `infra/ansible/inventory/example` to
-   `inventory/production` and fill in the address, `sshd_port`, your key, the CD
-   key and the repository URL.
-2. `make server-bootstrap ENV=production` (`BOOTSTRAP_USER=ubuntu`,
-   `BOOTSTRAP_PORT=22022`, `ASK_PASS=1` for the providers that need them). It
-   creates `ops` and `deploy`, closes root and password login, installs Docker,
-   closes the firewall - ufw plus a `DOCKER-USER` chain, since Docker-published
-   ports bypass ufw - and prints a deploy key.
-3. Add the deploy key to the repository (read-only), run
-   `make server-provision ENV=production` to clone, put `.env` in place as the
-   README shows, and copy the printed CD values into the environment.
-4. Put the API's hostname into `server_name` in `infra/nginx/app.conf` (and in
+1. Put the API's hostname into `server_name` in `infra/nginx/app.conf` (and in
    `tls.conf.example`, in place of `api.example.com`). The default server drops
    every request for a name it does not list, so a server reached by a name missing
    from there answers nothing at all.
-5. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
+2. Terminate TLS at Nginx. The header of `infra/nginx/tls.conf.example` carries
    the exact steps, and swapping the config file is only the first of them: the
    server block reads `/etc/nginx/certs/fullchain.pem`, and the `nginx` service
-   currently mounts the configuration directory only. Put the certificate and
-   key under `infra/nginx/certs/`, replace the content of `app.conf` with
-   `tls.conf.example` (the whole `infra/nginx` directory is nginx's `conf.d`, so
-   a second server file beside `app.conf` would clash with it), and add the
-   mounts those paths need:
+   currently mounts the configuration directory only. Replace the content of
+   `app.conf` with `tls.conf.example` (the whole `infra/nginx` directory is
+   nginx's `conf.d`, so a second server file beside `app.conf` would clash with
+   it), and add the mounts those paths need:
 
    ```yaml
    - ./nginx/certs:/etc/nginx/certs:ro
@@ -362,10 +353,23 @@ in short:
 
    The second one belongs to the ACME challenge location; keep it only if you
    renew through certbot, and declare `certbot-webroot` under `volumes:` in the
-   same file. Without the certificate mount Nginx cannot start and the first
-   deploy fails at the last step.
-6. The first deploy builds the image on the server, because no registry image exists
-   yet: `sudo -iu deploy bash -c 'cd /srv/<app> && bash infra/deploy/deploy.sh'`.
+   same file. Commit and push both changes.
+3. `make ansible-deps`, then copy `infra/ansible/inventory/example` to
+   `inventory/production` and fill in the address, `sshd_port`, your key, the CD
+   key, `app_name` and the repository URL.
+4. `make server-bootstrap ENV=production` (`BOOTSTRAP_USER=ubuntu`,
+   `BOOTSTRAP_PORT=22022`, `ASK_PASS=1` for the providers that need them). It
+   creates `ops` and `deploy`, closes root and password login, installs Docker,
+   closes the firewall - ufw plus a `DOCKER-USER` chain, since Docker-published
+   ports bypass ufw - and prints a deploy key.
+5. Add the deploy key to the repository (read-only), run
+   `make server-provision ENV=production` to clone, put `.env` in place as the
+   README shows, and copy the printed CD values into the environment.
+6. Copy the certificate and key into `/srv/<app_name>/infra/nginx/certs/` on the
+   server (git-ignored, so the clone has none), owned by `deploy`. Without them
+   Nginx cannot start and the first deploy fails at the last step.
+7. The first deploy builds the image on the server, because no registry image exists
+   yet: `sudo -iu deploy bash -c 'cd /srv/<app_name> && bash infra/deploy/deploy.sh'`.
 
 From then on CD runs `BUILD=0 APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12> bash infra/deploy/deploy.sh`
 (what `make deploy-image` wraps)
@@ -397,5 +401,5 @@ hardening in [security.md](security.md).
 [ ] make lint && make test green
 [ ] src/note copied for the first domain, then deleted
 [ ] production environment holds the CD secrets and APP_DIR; PROD_DEPLOY_ENABLED=true (when a server exists)
-[ ] API hostname in nginx server_name, server provisioned (make server-provision), TLS in place, first deploy done
+[ ] API hostname in nginx server_name and TLS config pushed, server provisioned (make server-provision), certificates copied, first deploy done
 ```

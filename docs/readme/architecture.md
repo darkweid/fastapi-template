@@ -41,7 +41,7 @@ Benefits:
 ### UseCase vs Service (Formalization)
 **UseCase (Application Service)**
 - Use when the operation is a scenario, not a single business rule.
-- Always: controls the transaction (UoW), orchestrates steps, may touch multiple repositories/services, may call external ports (S3/Email/Payment/HTTP), is responsible for side effects (events/queues), and shapes the final DTO/response.
+- Always: controls the transaction (UoW), orchestrates steps, may touch multiple repositories/services, may call external ports (S3/Email/Payment/HTTP), owns side effects (events/queues), and shapes the final DTO/response.
 - Forbidden: heavy business logic inside; push domain rules into Services.
 
 **Service (Domain / Module Service)**
@@ -162,6 +162,7 @@ the escape hatch for roles that may reach another user's object.
 │   │   └── postgresql.conf              # PostgreSQL configuration
 │   ├── redis.conf                       # Redis configuration
 │   └── requirements/                    # Python deps (pip-tools: *.in sources → *.txt lockfiles)
+│       ├── ansible.txt                  # Server provisioning (ansible-core, ansible-lint), own virtualenv
 │       ├── base.txt                     # Base dependencies used in all environments
 │       ├── dev.txt                      # Development environment dependencies
 │       ├── prod.txt                     # Production environment dependencies

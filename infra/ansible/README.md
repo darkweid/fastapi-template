@@ -34,9 +34,11 @@ What a provisioned server has:
   uninstall Ansible from the dev environment, hence its own).
 - `sshpass`, only for a provider that hands the server over with a root password
   (`ASK_PASS=1`).
-- The server's SSH host key accepted once by hand: `ssh -p <port> <user>@<ip>`, and
-  compare the fingerprint with the one the provider's console shows. Host key
-  checking stays on.
+- The server's SSH host key accepted once by hand on the port the provider gave:
+  `ssh -p <port> <user>@<ip>`, and compare the fingerprint with the one the
+  provider's console shows. Host key checking stays on; when a run moves sshd to
+  another port, it adds the same keys under that port to your `known_hosts`
+  itself, read over the connection you verified.
 - If the provider has a firewall or security group of its own, it allows
   `sshd_port`, 80 and 443.
 
@@ -53,7 +55,7 @@ Edit `inventory/production/hosts.yml` (the address) and
 | --- | --- |
 | `sshd_port` | The port sshd ends up on. Usually the one the provider gave (22, or 22022 at Spaceship). |
 | `users_ops_authorized_keys` | Your public key(s). Each one grants root. |
-| `users_deploy_authorized_keys` | The public half of the `SSH_PRIVATE_KEY` CD uses. |
+| `users_deploy_authorized_keys` | The public half of the `SSH_PRIVATE_KEY` CD uses: `ssh-keygen -t ed25519 -N '' -C cd-deploy -f cd_deploy_key`, the contents of `cd_deploy_key` go into that secret. |
 | `app_name` | The checkout lands in `/srv/<app_name>`. |
 | `app_checkout_repo_url` | The repository's SSH URL. |
 | `app_checkout_repo_host_keys` | The git server's host keys; the example holds GitHub's. |
@@ -79,9 +81,9 @@ make server-bootstrap ENV=production BOOTSTRAP_USER=admin ASK_BECOME=1  # sudo a
 ```
 
 Bootstrap creates `ops`, logs in as `ops` over a fresh connection and becomes
-root; only then does it close root and password login. It then empties the
-provider account's `authorized_keys` (its password stays, so the provider's web
-console remains a way in) and runs `site.yml`.
+root; only then does it empty the provider account's `authorized_keys` (its
+password stays, so the provider's web console remains a way in). It then runs
+`site.yml`, which closes root and password login.
 
 The first run ends with a failure on purpose: it prints a deploy key generated
 on the server. Add it to the repository as a read-only deploy key (GitHub: Settings
@@ -96,17 +98,18 @@ Then:
    `SERVER_IP`, `SSH_KNOWN_HOSTS` as secrets, `SSH_PORT` and `APP_DIR` as
    variables. `SSH_KNOWN_HOSTS` comes from the server over the connection you already
    verified, so no `ssh-keyscan`.
-3. First deploy, building on the server: `ssh ops@<host>`, then
+3. First deploy, building on the server: `ssh -p <sshd_port> ops@<host>`, then
    `sudo -iu deploy bash -c 'cd /srv/<app_name> && bash infra/deploy/deploy.sh'`.
 
 ## Later
 
 - `make server-provision ENV=production` - converge again after changing the
   inventory or the roles; a run on an unchanged server changes nothing.
-  `CHECK=1` shows what it would change.
+  `CHECK=1` shows what it would change, a port move included when
+  `CURRENT_SSH_PORT` is given too.
 - `make server-reboot ENV=production` - reboot, then wait until `DOCKER-USER` is
-  in place and every service with a healthcheck is healthy. Every provisioning
-  run says whether a reboot is due.
+  in place and every service with a healthcheck is healthy. A provisioning run
+  says so when a reboot is due.
 - Working in the checkout: `sudo -iu deploy`.
 - `~/.ssh/config` for the server:
 
@@ -126,14 +129,16 @@ Then:
 
 ## Changing the SSH port
 
-Set the new `sshd_port`, make sure the provider's own firewall allows it, and run
+Set the new `sshd_port`, check that the provider's own firewall allows it, and run
 `make server-provision ENV=production CURRENT_SSH_PORT=<the port sshd listens on
-now>`. The run opens the new port in ufw and has sshd listen on both, logs in on
-the new port, and only then drops the old one from sshd and from ufw. If the new
-port cannot be reached from where you are, the run fails at that login and the
-old port keeps working; a later run without `CURRENT_SSH_PORT` puts things back.
-Update `SSH_PORT` and `SSH_KNOWN_HOSTS` in the GitHub environment from the
-summary.
+now>`. The run refuses a port another service already listens on. It opens the
+new port in ufw and has sshd listen on both, trusts the host keys under the new
+port, logs in on it, and only then drops the old one from sshd and from ufw. If
+the new port cannot be reached from where you are, the run fails at that login
+and the old port keeps working: set `sshd_port` back to the old port and run
+`make server-provision ENV=production` without `CURRENT_SSH_PORT` to close the new
+one again. Update `SSH_PORT` and `SSH_KNOWN_HOSTS` in the GitHub environment from
+the summary.
 
 ## Locked out
 
@@ -143,8 +148,10 @@ key alone often have none, so set one before bootstrap if you want this way in),
 otherwise its rescue system. Then remove
 `/etc/ssh/sshd_config.d/00-hardening.conf`, run `systemctl daemon-reload` and
 `systemctl restart ssh.socket ssh.service` (plain `systemctl restart ssh` where
-sshd is not socket-activated: `systemctl is-enabled ssh.socket`), fix the inventory
-and provision again.
+sshd is not socket-activated: `systemctl is-enabled ssh.socket`) and
+`ufw allow 22/tcp`: sshd is back on 22, which ufw no longer allows. Fix the
+inventory and run `make server-provision ENV=production CURRENT_SSH_PORT=22`,
+which moves sshd to `sshd_port` and closes 22 again.
 
 ## Tests
 
@@ -152,9 +159,14 @@ The `Ansible` workflow runs only when `infra/ansible/` (outside its markdown),
 `infra/requirements/ansible.*` or the workflow change. It lints with
 `ansible-lint --profile production`, then converges a GitHub-hosted runner as if
 it were a fresh server: bootstrap, a second run that must change nothing, and the
-checks in `tests/ci/verify.sh`. It moves sshd from 22 to 22022 on the way, and
-later through `tests/ci/port_change.sh` to a port it cannot reach and back. It
-never runs on a self-hosted runner: it hardens the machine it runs on
+checks in `tests/ci/verify.sh`. The runner's sshd starts as a cloud image ships
+it: socket-activated, with a `Port 22` line in `sshd_config` and its host key
+trusted on 22 alone. Bootstrap moves it to 22022 on the way. The scripts after it
+cover a `CHECK=1` preview (`check_mode.sh`), a provider drop-in that adds a port
+(`provider_dropin.sh`), a run before the deploy key is added
+(`missing_deploy_key.sh`), and port moves (`port_change.sh`): to a port it cannot
+reach, onto a port another service holds, and to a new port and back. It never
+runs on a self-hosted runner: it hardens the machine it runs on
 (`tests/unit/test_ansible_workflow.py`).
 
 Two things CI cannot do, so check them by hand on a throwaway VM before relying on
@@ -173,8 +185,10 @@ On Kubernetes or a PaaS the platform owns the machine, its users, SSH and its
 firewall, so none of this applies. Delete `infra/ansible/`,
 `infra/requirements/ansible.*`, `.github/workflows/ansible.yml`,
 `tests/unit/test_ansible_workflow.py` and the `##@ Server` group with its
-variables in the `Makefile`; then `git grep -i ansible` shows the few lines left
-to tidy. Nothing else breaks: `infra/deploy/deploy.sh` and CD never call Ansible.
+variables in the `Makefile`, then drop `ansible` from `REQ_NAMES` there and the
+`ansible.txt` lines of the `pip-audit` job in `.github/workflows/_ci.yml`;
+`git grep -i ansible` shows what is left to tidy. `infra/deploy/deploy.sh` and CD
+never call Ansible, so deploys keep working.
 
 On a VPS, keep it or replace it with something that does the same job: Docker
 publishes container ports past UFW, and without the `DOCKER-USER` chain the
