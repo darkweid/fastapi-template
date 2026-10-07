@@ -300,11 +300,11 @@ for `app.conf` once the certificate is in place.
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report
 - `make test-integration` — integration suite against a throwaway PostgreSQL; `make test-all` — both suites
-- `make deploy-prod` — deploy on the box, building the image there
+- `make deploy-prod` — deploy on the server, building the image there
 - `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (the same `BUILD=0` path CD runs through `infra/deploy/deploy.sh`)
 - Both run `infra/deploy/deploy.sh`, which rolls the app without downtime: the new container starts beside the serving one, nginx moves to it once it is healthy, and the old one drains its requests before it stops. One that never turns healthy is removed and the old one keeps serving (`docs/readme/infra.md`).
 - `make ansible-deps` / `make ansible-lint` — install / lint the server provisioning in `infra/ansible`
-- `make server-bootstrap ENV=<env>`, `make server-provision ENV=<env>`, `make server-reboot ENV=<env>` — prepare a fresh box, converge it again, reboot it and wait for the stack (`infra/ansible/README.md`)
+- `make server-bootstrap ENV=<env>`, `make server-provision ENV=<env>`, `make server-reboot ENV=<env>` — prepare a fresh server, converge it again, reboot it and wait for the stack (`infra/ansible/README.md`)
 - `make backup` — dump the database to `backups/<UTC timestamp>.dump`
 - `make restore f=backups/<file>.dump` — restore the database from a dump
 - `make psql` / `make redis-cli` — open an interactive shell inside the Postgres / Redis container

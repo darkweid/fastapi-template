@@ -4,12 +4,12 @@
 DigitalOcean, Vultr, Linode, OVHcloud, AWS or any other provider - and run docker
 compose on. Kubernetes or a PaaS? See [Not on a VPS?](#not-on-a-vps).
 
-`infra/ansible` takes a fresh Ubuntu 24.04 or 26.04 VM at any provider to a box
+`infra/ansible` takes a fresh Ubuntu 24.04 or 26.04 VM at any provider to a server
 that CD can deploy to. It provisions the host and stops there: deploying stays in
 `infra/deploy/deploy.sh`, which CD runs over SSH, and Ansible never writes `.env`
 or moves the checkout after cloning it.
 
-What a provisioned box has:
+What a provisioned server has:
 
 - `ops` - your account: sudo without a password, the keys in
   `users_ops_authorized_keys`, the only account Ansible uses after bootstrap.
@@ -32,9 +32,9 @@ What a provisioned box has:
 - Python 3.12 or newer on your machine, then `make ansible-deps` (a virtualenv in
   `infra/ansible/.venv` plus the pinned collections; `make req-sync-dev` would
   uninstall Ansible from the dev environment, hence its own).
-- `sshpass`, only for a provider that hands the box over with a root password
+- `sshpass`, only for a provider that hands the server over with a root password
   (`ASK_PASS=1`).
-- The box's SSH host key accepted once by hand: `ssh -p <port> <user>@<ip>`, and
+- The server's SSH host key accepted once by hand: `ssh -p <port> <user>@<ip>`, and
   compare the fingerprint with the one the provider's console shows. Host key
   checking stays on.
 - If the provider has a firewall or security group of its own, it allows
@@ -84,31 +84,31 @@ provider account's `authorized_keys` (its password stays, so the provider's web
 console remains a way in) and runs `site.yml`.
 
 The first run ends with a failure on purpose: it prints a deploy key generated
-on the box. Add it to the repository as a read-only deploy key (GitHub: Settings
+on the server. Add it to the repository as a read-only deploy key (GitHub: Settings
 -> Deploy keys) and run `make server-provision ENV=production`; that run clones.
 
 Then:
 
 1. Put `.env` in place once the clone exists: `scp -P <sshd_port> .env ops@<host>:`
-   and on the box
+   and on the server
    `sudo install -o deploy -g deploy -m 0600 .env /srv/<app_name>/.env && rm .env`.
 2. Copy the values the summary printed into the GitHub environment: `SSH_USER`,
    `SERVER_IP`, `SSH_KNOWN_HOSTS` as secrets, `SSH_PORT` and `APP_DIR` as
-   variables. `SSH_KNOWN_HOSTS` comes from the box over the connection you already
+   variables. `SSH_KNOWN_HOSTS` comes from the server over the connection you already
    verified, so no `ssh-keyscan`.
-3. First deploy, building on the box: `ssh ops@<host>`, then
+3. First deploy, building on the server: `ssh ops@<host>`, then
    `sudo -iu deploy bash -c 'cd /srv/<app_name> && bash infra/deploy/deploy.sh'`.
 
 ## Later
 
 - `make server-provision ENV=production` - converge again after changing the
-  inventory or the roles; a run on an unchanged box changes nothing.
+  inventory or the roles; a run on an unchanged server changes nothing.
   `CHECK=1` shows what it would change.
 - `make server-reboot ENV=production` - reboot, then wait until `DOCKER-USER` is
   in place and every service with a healthcheck is healthy. Every provisioning
   run says whether a reboot is due.
 - Working in the checkout: `sudo -iu deploy`.
-- `~/.ssh/config` for the box:
+- `~/.ssh/config` for the server:
 
   ```
   Host myapp-prod
@@ -121,8 +121,8 @@ Then:
 
   `IdentitiesOnly` stops your agent from offering every key it holds before
   the right one.
-- Reaching Postgres or Redis on the box: `ssh -L 5432:127.0.0.1:5432 myapp-prod`
-  (and `6379` for Redis). Both are published on the box's loopback only.
+- Reaching Postgres or Redis on the server: `ssh -L 5432:127.0.0.1:5432 myapp-prod`
+  (and `6379` for Redis). Both are published on the server's loopback only.
 
 ## Changing the SSH port
 
@@ -151,7 +151,7 @@ and provision again.
 The `Ansible` workflow runs only when `infra/ansible/` (outside its markdown),
 `infra/requirements/ansible.*` or the workflow change. It lints with
 `ansible-lint --profile production`, then converges a GitHub-hosted runner as if
-it were a fresh box: bootstrap, a second run that must change nothing, and the
+it were a fresh server: bootstrap, a second run that must change nothing, and the
 checks in `tests/ci/verify.sh`. It moves sshd from 22 to 22022 on the way, and
 later through `tests/ci/port_change.sh` to a port it cannot reach and back. It
 never runs on a self-hosted runner: it hardens the machine it runs on
