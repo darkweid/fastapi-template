@@ -1,5 +1,9 @@
 # Server provisioning
 
+**For a VPS:** one or a few Ubuntu machines you rent - from Hetzner,
+DigitalOcean, Vultr, Linode, OVHcloud, AWS or any other provider - and run docker
+compose on. Kubernetes or a PaaS? See [Not on a VPS?](#not-on-a-vps).
+
 `infra/ansible` takes a fresh Ubuntu 24.04 or 26.04 VM at any provider to a box
 that CD can deploy to. It provisions the host and stops there: deploying stays in
 `infra/deploy/deploy.sh`, which CD runs over SSH, and Ansible never writes `.env`
@@ -162,3 +166,16 @@ and see the stack come back healthy with `iptables -S DOCKER-USER` ending in
 `DROP` and the unreachable `RETURN` after it. On 26.04 also confirm that `sudo`
 (sudo-rs there) accepts Ansible's become and that `visudo -cf` validated
 `/etc/sudoers.d/ops`.
+
+## Not on a VPS?
+
+On Kubernetes or a PaaS the platform owns the machine, its users, SSH and its
+firewall, so none of this applies. Delete `infra/ansible/`,
+`infra/requirements/ansible.*`, `.github/workflows/ansible.yml`,
+`tests/unit/test_ansible_workflow.py` and the `##@ Server` group with its
+variables in the `Makefile`; then `git grep -i ansible` shows the few lines left
+to tidy. Nothing else breaks: `infra/deploy/deploy.sh` and CD never call Ansible.
+
+On a VPS, keep it or replace it with something that does the same job: Docker
+publishes container ports past UFW, and without the `DOCKER-USER` chain the
+`firewall` role installs, nothing filters them.

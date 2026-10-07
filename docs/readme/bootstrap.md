@@ -323,6 +323,10 @@ to `tests/unit/scripts/ops/test_docs_only_change.py` in the same commit.
 
 ## 9. First deploy
 
+These steps are for a VPS. On Kubernetes or a PaaS, deploy the image CI pushes
+with your platform's tooling and delete `infra/ansible` (its README says what
+else goes with it).
+
 Provision the box from your machine with Ansible - any provider, Ubuntu 24.04 or
 26.04. [`infra/ansible/README.md`](../../infra/ansible/README.md) has the details;
 in short:
