@@ -58,6 +58,8 @@ jobs:
     # an unknown label queues until the timeout.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      CI_REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
     strategy:
       fail-fast: false
       matrix:
@@ -88,3 +90,6 @@ jobs:
 
       - name: A provider drop-in that widens sshd fails the run
         run: infra/ansible/tests/ci/provider_dropin.sh
+
+      - name: An unreadable repository asks for the deploy key
+        run: infra/ansible/tests/ci/missing_deploy_key.sh

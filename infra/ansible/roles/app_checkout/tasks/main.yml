@@ -1,0 +1,102 @@
+---
+- name: Create the checkout directory
+  ansible.builtin.file:
+    path: "{{ app_checkout_dir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0750"
+
+- name: Create deploy's SSH directory
+  ansible.builtin.file:
+    path: /home/deploy/.ssh
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0700"
+
+# Generated here and never copied anywhere: only its public half leaves the box.
+- name: Generate the repository deploy key
+  community.crypto.openssh_keypair:
+    path: "{{ app_checkout_key_path }}"
+    type: ed25519
+    comment: "deploy@{{ inventory_hostname }}"
+    owner: deploy
+    group: deploy
+    mode: "0600"
+  register: app_checkout_deploy_key
+
+- name: Trust the git server's host keys
+  ansible.builtin.known_hosts:
+    path: /home/deploy/.ssh/known_hosts
+    name: "{{ item.split()[0] }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ app_checkout_repo_host_keys }}"
+  become: true
+  become_user: deploy
+
+- name: Check for a clone
+  ansible.builtin.stat:
+    path: "{{ app_checkout_dir }}/.git"
+  register: app_checkout_git
+
+# The git module has no read-only probe; a failed clone would end the run before
+# the summary could print the key.
+- name: Check that the deploy key can read the repository
+  ansible.builtin.command: git ls-remote --heads {{ app_checkout_repo_url }}  # noqa: command-instead-of-module
+  environment:
+    GIT_SSH_COMMAND: ssh -i {{ app_checkout_key_path }} -o IdentitiesOnly=yes
+  become: true
+  become_user: deploy
+  register: app_checkout_access
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not app_checkout_git.stat.exists
+
+# The summary prints the key and site.yml fails at its very end, so the operator
+# sees both what to add and everything else that is still missing.
+- name: Remember whether the clone waits for the deploy key
+  ansible.builtin.set_fact:
+    app_checkout_clone_pending: "{{ not app_checkout_git.stat.exists and app_checkout_access.rc != 0 }}"
+    app_checkout_public_key: "{{ app_checkout_deploy_key.public_key }} {{ app_checkout_deploy_key.comment }}"
+
+# update: false is the boundary with CD: Ansible never moves the checkout.
+- name: Clone the repository
+  ansible.builtin.git:
+    repo: "{{ app_checkout_repo_url }}"
+    dest: "{{ app_checkout_dir }}"
+    version: "{{ app_checkout_branch }}"
+    key_file: "{{ app_checkout_key_path }}"
+    ssh_opts: -o IdentitiesOnly=yes
+    accept_hostkey: false
+    update: false
+  become: true
+  become_user: deploy
+  when:
+    - not app_checkout_git.stat.exists
+    - not app_checkout_clone_pending
+
+- name: Point git fetch at the deploy key
+  community.general.git_config:
+    name: core.sshCommand
+    value: ssh -i {{ app_checkout_key_path }} -o IdentitiesOnly=yes
+    scope: local
+    path: "{{ app_checkout_dir }}"
+  become: true
+  become_user: deploy
+  when: not app_checkout_clone_pending
+
+- name: Check for .env
+  ansible.builtin.stat:
+    path: "{{ app_checkout_dir }}/.env"
+  register: app_checkout_env
+
+- name: Keep .env readable by deploy only
+  ansible.builtin.file:
+    path: "{{ app_checkout_dir }}/.env"
+    owner: deploy
+    group: deploy
+    mode: "0600"
+  when: app_checkout_env.stat.exists

@@ -1,0 +1,27 @@
+---
+- name: Check for .env
+  ansible.builtin.stat:
+    path: "{{ app_checkout_dir }}/.env"
+  register: app_checkout_stack_env
+
+# app-builder is a one-shot without a healthcheck, so services with an empty
+# Health are not waited on.
+- name: Wait for every service with a healthcheck to report healthy
+  ansible.builtin.command:
+    cmd: docker compose --env-file .env -f infra/docker-compose.yml ps --all --format json
+    chdir: "{{ app_checkout_dir }}"
+  register: app_checkout_stack
+  changed_when: false
+  check_mode: false
+  retries: "{{ (app_checkout_health_timeout_seconds | int / 10) | round(0, 'ceil') | int }}"
+  delay: 10
+  until: >-
+    (app_checkout_stack.stdout_lines | map('from_json') | rejectattr('Health', 'equalto', '') | list | length > 0)
+    and (app_checkout_stack.stdout_lines | map('from_json') | rejectattr('Health', 'equalto', '')
+         | rejectattr('Health', 'equalto', 'healthy') | list | length == 0)
+  when: app_checkout_stack_env.stat.exists
+
+- name: Report a box with nothing deployed
+  ansible.builtin.debug:
+    msg: "{{ app_checkout_dir }}/.env is missing; there is no stack to wait for."
+  when: not app_checkout_stack_env.stat.exists

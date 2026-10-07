@@ -46,3 +46,11 @@
     - name: Close the host
       ansible.builtin.import_role:
         name: firewall
+
+    - name: Clone the application
+      ansible.builtin.import_role:
+        name: app_checkout
+
+  post_tasks:
+    - name: Summarise what is left to do
+      ansible.builtin.import_tasks: tasks/summary.yml

@@ -111,4 +111,12 @@ done
 sudo docker info >/dev/null 2>&1 || fail "dockerd did not come back after a crash"
 check_chain "a dockerd crash"
 
+echo "== app_checkout"
+sudo test -d /srv/app/.git || fail "/srv/app is not a clone"
+[ "$(sudo stat -c '%U %a' /srv/app)" = "deploy 750" ] || fail "/srv/app is not deploy-owned 0750"
+sudo -u deploy git -C /srv/app status --porcelain >/dev/null || fail "git refuses the checkout as deploy"
+sudo -u deploy git -C /srv/app config core.sshCommand | grep -q id_ed25519_repo || fail "git fetch would not use the deploy key"
+[ "$(sudo stat -c '%U %a' /home/deploy/.ssh/id_ed25519_repo)" = "deploy 600" ] || fail "the deploy key is not deploy-owned 0600"
+sudo grep -q '^github.com ssh-ed25519 ' /home/deploy/.ssh/known_hosts || fail "GitHub's host key is not trusted for deploy"
+
 echo "OK"
