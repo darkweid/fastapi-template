@@ -30,8 +30,10 @@ done
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 cat "$keys/ops.pub" >> "$HOME/.ssh/authorized_keys"
+# 22022 is the inventory's port; port_change.sh moves sshd to 2222 and 2223.
 for host_key in /etc/ssh/ssh_host_*_key.pub; do
     read -r key_type key_body _ < "$host_key"
-    printf '127.0.0.1 %s %s\n[127.0.0.1]:22022 %s %s\n' \
-        "$key_type" "$key_body" "$key_type" "$key_body" >> "$HOME/.ssh/known_hosts"
+    for host in 127.0.0.1 '[127.0.0.1]:22022' '[127.0.0.1]:2222' '[127.0.0.1]:2223'; do
+        printf '%s %s %s\n' "$host" "$key_type" "$key_body" >> "$HOME/.ssh/known_hosts"
+    done
 done

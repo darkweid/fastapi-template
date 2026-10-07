@@ -20,3 +20,8 @@ for expected in "ssh-ed25519 " "read-only deploy key" "[127.0.0.1]:22022 ssh-ed2
         exit 1
     }
 done
+# .env goes in after the clone: git refuses to clone into a directory that holds it.
+if grep -q ".env is missing" <<<"$output"; then
+    echo "FAIL: the summary asks for .env before the repository is cloned" >&2
+    exit 1
+fi

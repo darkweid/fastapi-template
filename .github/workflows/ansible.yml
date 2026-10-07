@@ -93,3 +93,6 @@ jobs:
 
       - name: An unreadable repository asks for the deploy key
         run: infra/ansible/tests/ci/missing_deploy_key.sh
+
+      - name: Moving sshd closes the old port, and never strands the operator
+        run: infra/ansible/tests/ci/port_change.sh
