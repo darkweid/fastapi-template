@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Moving sshd on a provisioned server, the way README.md describes it. A new port the
 # operator cannot reach must leave the old one working; a move that succeeds must
-# close the old port in ufw.
+# close the old port in ufw. Also: a web port dropped from the inventory closes.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -60,6 +60,18 @@ kill "$holder"
     || fail "the refused move still changed sshd's ports"
 ops_login 22022 || fail "ops can no longer log in on 22022"
 
+echo "== a port a systemd socket of another service holds"
+sudo systemd-run --unit=ci-port-holder --socket-property=ListenStream=2225 /bin/true
+listening 2225 || fail "the systemd socket does not listen on 2225"
+if provision -e sshd_port=2225 -e bootstrap_port=22022; then
+    sudo systemctl stop ci-port-holder.socket
+    fail "the run moved sshd onto a port another systemd socket holds"
+fi
+sudo systemctl stop ci-port-holder.socket
+[ "$(sudo sshd -T -C user=ops,host=localhost,addr=127.0.0.1 | grep '^port ')" = "port 22022" ] \
+    || fail "the refused move still changed sshd's ports"
+ops_login 22022 || fail "ops can no longer log in on 22022"
+
 echo "== a move that succeeds"
 provision -e sshd_port=2222 -e bootstrap_port=22022
 listening 2222 || fail "sshd does not listen on 2222"
@@ -72,5 +84,12 @@ echo "== and back"
 provision -e sshd_port=22022 -e bootstrap_port=2222
 listening 22022 || fail "sshd does not listen on 22022"
 if ufw_allows 2222; then fail "2222/tcp is still allowed after moving back"; fi
+
+echo "== a web port dropped from the inventory"
+provision -e '{"firewall_public_tcp_ports": [80, 443, 8443]}'
+ufw_allows 8443 || fail "8443/tcp was not opened"
+provision
+if ufw_allows 8443; then fail "8443/tcp is still allowed after leaving the inventory"; fi
+ufw_allows 443 || fail "443/tcp was closed"
 
 echo "OK"
