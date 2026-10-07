@@ -1,13 +1,15 @@
 # FastAPI Template
 
 ![CI](https://github.com/darkweid/fastapi-template/actions/workflows/prod_ci.yml/badge.svg?branch=main)
+![Ansible](https://github.com/darkweid/fastapi-template/actions/workflows/ansible.yml/badge.svg?branch=main)
+![Ansible targets](https://img.shields.io/badge/Ansible-Ubuntu%2024.04%20%7C%2026.04-EE0000?logo=ansible&logoColor=white)
 ![Coverage](https://coveralls.io/repos/github/darkweid/fastapi-template/badge.svg?branch=main)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![Mypy](https://img.shields.io/badge/mypy-strict-success)
 ![License](https://img.shields.io/github/license/darkweid/fastapi-template)
 
 
-Production-ready FastAPI template with modular architecture, async stack, and full Docker setup.
+Production-ready FastAPI template with modular architecture, async stack, full Docker setup, and Ansible that turns a bare VPS into a server ready for CD.
 
 ## Key Features
 - Async FastAPI with modular domain structure.
@@ -16,6 +18,7 @@ Production-ready FastAPI template with modular architecture, async stack, and fu
 - Rate limiting: limiter package (`src/core/limiter`) with FastAPI dependencies (both IP and user-based).
 - Messaging: taskiq worker/scheduler over Redis Streams with a transactional outbox (atomic enqueue with the DB transaction, worker-side dedup, delayed retries). Background tasks are enqueued via `TaskDispatcher` (`enqueue` for fire-and-forget, `enqueue_transactional` to enqueue inside a UnitOfWork transaction).
 - Edge: Nginx reverse proxy with WebSocket upgrade headers.
+- Server provisioning for a VPS (`infra/ansible`): a fresh Ubuntu 24.04/26.04 machine from any provider (Hetzner, DigitalOcean, Vultr, AWS, ...) gets separate admin and CD accounts, key-only SSH on the port you pick and a firewall that also covers Docker-published ports. CI converges it on a real VM on every change to it. Kubernetes or a PaaS? [Delete it](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps).
 - Email service: templated mailer with async tasks for sending.
 - Auth & JWT: user module with auth usecases, tokens, permissions.
 - Event log: append-only `event_logs` table (`src/event_log/`) with a per-module event catalog, an `Actor` value object per auth realm, a SAVEPOINT-isolated writer whose failure never takes the action down with it, and a permission-gated read endpoint. The user realm is wired end to end - registration, email verification, sign-in and its failures, sign-out, password change and reset, profile edits.
@@ -194,6 +197,29 @@ Redis increment however many entries carry it.
 - `gitleaks` keeps history scanning enabled and uses a repo allowlist only for known example/test placeholders.
 - These checks are intended to fail the pipeline on real findings, so dependency updates should keep the pinned requirement files current.
 
+## Bare VPS to Production: Two Runs and a Deploy Key
+Rent an Ubuntu 24.04 or 26.04 VM from Hetzner, DigitalOcean, Vultr, Linode,
+OVHcloud, AWS or any other provider. Copy `infra/ansible/inventory/example` to
+`infra/ansible/inventory/production` and fill in the address, your SSH key, the CD
+key and the repository URL. Then:
+
+```bash
+make ansible-deps                      # Ansible in its own virtualenv
+make server-bootstrap ENV=production   # users, key-only SSH, Docker, firewall; stops at a deploy key
+# add that key to the repository as a read-only deploy key
+make server-provision ENV=production   # clones the repository; a second run changes nothing
+```
+
+Put `.env` on the server and copy the values the run prints (`SSH_PORT`,
+`SSH_KNOWN_HOSTS`, `APP_DIR`, ...) into the GitHub environment: the server is then
+ready for `infra/deploy/deploy.sh` and CD. Ansible stops there: it never deploys,
+never writes `.env` and leaves the checkout where CD put it. Providers that hand
+over a root password, a non-root user or a non-standard SSH port are covered in
+[infra/ansible/README.md](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md).
+
+On Kubernetes or a PaaS the platform owns the machine: delete `infra/ansible`
+([what else to remove](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps)).
+
 ## After the Fork
 Renaming the compose project, the containers, the image tags and the three volume
 names is a one-time job with an exact checklist -
@@ -348,6 +374,7 @@ ref selector still defaults to `main`, so a blank `image_tag` there deploys
 - Bootstrap a fork (rename, secrets, first deploy): [docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
+- Provisioning a VPS: [infra/ansible/README.md](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md)
 - Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)
 - Adding an auth realm: [docs/readme/auth-realms.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/auth-realms.md)
 - Recording and reading the event log: [docs/readme/event-log.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/event-log.md)
