@@ -56,6 +56,7 @@ if provision -e sshd_port=2224 -e bootstrap_port=22022; then
     fail "the run moved sshd onto a port another service holds"
 fi
 kill "$holder"
+if ufw_allows 2224; then fail "the refused move opened 2224/tcp in ufw"; fi
 [ "$(sudo sshd -T -C user=ops,host=localhost,addr=127.0.0.1 | grep '^port ')" = "port 22022" ] \
     || fail "the refused move still changed sshd's ports"
 ops_login 22022 || fail "ops can no longer log in on 22022"
@@ -68,6 +69,7 @@ if provision -e sshd_port=2225 -e bootstrap_port=22022; then
     fail "the run moved sshd onto a port another systemd socket holds"
 fi
 sudo systemctl stop ci-port-holder.socket
+if ufw_allows 2225; then fail "the refused move opened 2225/tcp in ufw"; fi
 [ "$(sudo sshd -T -C user=ops,host=localhost,addr=127.0.0.1 | grep '^port ')" = "port 22022" ] \
     || fail "the refused move still changed sshd's ports"
 ops_login 22022 || fail "ops can no longer log in on 22022"
@@ -84,6 +86,16 @@ echo "== and back"
 provision -e sshd_port=22022 -e bootstrap_port=2222
 listening 22022 || fail "sshd does not listen on 22022"
 if ufw_allows 2222; then fail "2222/tcp is still allowed after moving back"; fi
+
+echo "== to the standard port 22, whose key ssh files under the bare address"
+ssh-keygen -R 127.0.0.1 >/dev/null 2>&1
+provision -e sshd_port=22 -e bootstrap_port=22022
+listening 22 || fail "sshd does not listen on 22"
+ssh-keygen -F 127.0.0.1 >/dev/null || fail "the run did not trust the host key on 22"
+ops_login 22 || fail "ops cannot log in on 22"
+provision -e sshd_port=22022 -e bootstrap_port=22
+listening 22022 || fail "sshd does not listen on 22022 after moving back"
+if ufw_allows 22; then fail "22/tcp is still allowed after moving back"; fi
 
 echo "== a web port dropped from the inventory"
 provision -e '{"firewall_public_tcp_ports": [80, 443, 8443]}'
