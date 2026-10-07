@@ -83,7 +83,7 @@
     name: core.sshCommand
     value: ssh -i {{ app_checkout_key_path }} -o IdentitiesOnly=yes
     scope: local
-    path: "{{ app_checkout_dir }}"
+    repo: "{{ app_checkout_dir }}"
   become: true
   become_user: deploy
   when: not app_checkout_clone_pending
