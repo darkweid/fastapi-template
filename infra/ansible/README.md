@@ -156,7 +156,8 @@ which moves sshd to `sshd_port` and closes 22 again.
 ## Tests
 
 The `Ansible` workflow runs only when `infra/ansible/` (outside its markdown),
-`infra/requirements/ansible.*` or the workflow change. It lints with
+`infra/requirements/ansible.*`, the `Makefile` (its targets are what the jobs run)
+or the workflow change. It lints with
 `ansible-lint --profile production`, then converges a GitHub-hosted runner as if
 it were a fresh server: bootstrap, a second run that must change nothing, and the
 checks in `tests/ci/verify.sh`. The runner's sshd starts as a cloud image ships

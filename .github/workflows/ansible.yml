@@ -10,6 +10,8 @@ on:
       - "!infra/ansible/**/*.md"
       - "infra/requirements/ansible.*"
       - ".github/workflows/ansible.yml"
+      # The jobs run the ansible-* make targets; the generic CI never does.
+      - "Makefile"
   push:
     branches: [main]
     paths:
@@ -17,6 +19,8 @@ on:
       - "!infra/ansible/**/*.md"
       - "infra/requirements/ansible.*"
       - ".github/workflows/ansible.yml"
+      # The jobs run the ansible-* make targets; the generic CI never does.
+      - "Makefile"
   workflow_dispatch:
 
 permissions:
