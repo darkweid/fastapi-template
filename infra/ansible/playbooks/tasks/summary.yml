@@ -29,7 +29,7 @@
           'APP_DIR=' ~ app_checkout_dir,
           'SSH_KNOWN_HOSTS:']
          + (summary_host_keys.stdout_lines
-            | map('regex_replace', '^(\\S+) (\\S+).*$', summary_known_hosts_host ~ ' \\1 \\2')
+            | map('regex_replace', '^(\S+) (\S+).*$', summary_known_hosts_host ~ ' \1 \2')
             | list) }}
   vars:
     summary_known_hosts_host: "{{ ansible_host if sshd_port | int == 22 else '[' ~ ansible_host ~ ']:' ~ sshd_port }}"

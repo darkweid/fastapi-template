@@ -44,7 +44,7 @@
   ansible.builtin.apt:
     name: >-
       {{ docker_packages if not docker_version else
-         docker_packages | map('regex_replace', '^(docker-ce|docker-ce-cli)$', '\\1=' ~ docker_version) | list }}
+         docker_packages | map('regex_replace', '^(docker-ce|docker-ce-cli)$', '\1=' ~ docker_version) | list }}
     state: present
     update_cache: true
 
