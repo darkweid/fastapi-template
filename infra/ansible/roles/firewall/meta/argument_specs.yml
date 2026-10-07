@@ -1,0 +1,10 @@
+---
+argument_specs:
+  ssh_rule:
+    short_description: Allow the SSH port in ufw
+    options:
+      firewall_ssh_port:
+        type: int
+      firewall_rule_comment:
+        type: str
+        default: managed-by-ansible

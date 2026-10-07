@@ -18,3 +18,22 @@
     - name: Manage the accounts
       ansible.builtin.import_role:
         name: users
+
+    - name: Harden sshd
+      ansible.builtin.import_role:
+        name: sshd
+
+    - name: Apply the SSH configuration now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Connect on the configured SSH port from now on
+      ansible.builtin.set_fact:
+        ansible_port: "{{ sshd_port }}"
+
+    # A fresh login against the configuration just reloaded: a drop-in that
+    # passes sshd -t but shuts ops out fails the run here.
+    - name: Drop the persistent connection
+      ansible.builtin.meta: reset_connection
+
+    - name: Log in again against the hardened sshd
+      ansible.builtin.ping:

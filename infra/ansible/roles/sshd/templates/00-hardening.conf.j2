@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+# sshd keeps the first value it reads for most keywords, and 00- sorts before
+# cloud-init's 50-cloud-init.conf. List keywords (Port, AllowUsers) add up across
+# files instead; the role checks the effective result with sshd -T.
+Port {{ sshd_port }}
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowUsers ops deploy
+LoginGraceTime {{ sshd_login_grace_time }}
+X11Forwarding no
+AllowAgentForwarding no
+
+# Authoritative even for a key added by hand without the restrict option.
+Match User deploy
+    AllowTcpForwarding no
+    PermitTTY no

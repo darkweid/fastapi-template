@@ -1,0 +1,75 @@
+---
+- name: Install the SSH server
+  ansible.builtin.apt:
+    name: openssh-server
+    state: present
+
+- name: Open the SSH port before sshd listens on it
+  ansible.builtin.import_role:
+    name: firewall
+    tasks_from: ssh_rule
+
+# sshd -t refuses to run without it, and it is gone after a reboot until the
+# first connection on a socket-activated sshd.
+- name: Create the privilege separation directory
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the hardening drop-in
+  ansible.builtin.template:
+    src: 00-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify:
+    - Reload systemd units for sshd
+    - Restart sshd
+
+- name: Check the whole configuration
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  check_mode: false
+
+- name: Read the effective settings for ops
+  ansible.builtin.command: /usr/sbin/sshd -T -C user=ops,host=localhost,addr=127.0.0.1
+  register: sshd_effective_ops
+  changed_when: false
+  check_mode: false
+
+- name: Read the effective settings for deploy
+  ansible.builtin.command: /usr/sbin/sshd -T -C user=deploy,host=localhost,addr=127.0.0.1
+  register: sshd_effective_deploy
+  changed_when: false
+  check_mode: false
+
+# Equality, not presence: an extra Port or AllowUsers from another file must fail.
+- name: Require exactly the declared settings
+  ansible.builtin.assert:
+    that:
+      - sshd_effective_ops.stdout_lines | select('match', '^port ') | list == ['port ' ~ sshd_port]
+      - sshd_effective_ops.stdout_lines | select('match', '^allowusers ') | list == ['allowusers ops', 'allowusers deploy']
+      - "'permitrootlogin no' in sshd_effective_ops.stdout_lines"
+      - "'passwordauthentication no' in sshd_effective_ops.stdout_lines"
+      - "'kbdinteractiveauthentication no' in sshd_effective_ops.stdout_lines"
+      - "'pubkeyauthentication yes' in sshd_effective_ops.stdout_lines"
+      - "'allowtcpforwarding yes' in sshd_effective_ops.stdout_lines"
+      - "'allowtcpforwarding no' in sshd_effective_deploy.stdout_lines"
+      - "'permittty no' in sshd_effective_deploy.stdout_lines"
+    fail_msg: >-
+      The effective sshd configuration differs from 00-hardening.conf: another file
+      in /etc/ssh/sshd_config.d or sshd_config overrides or adds to it.
+    quiet: true
+
+# A command, not systemd_service: the module fails on a box without ssh.socket.
+- name: Read whether sshd is socket-activated
+  ansible.builtin.command: systemctl is-enabled ssh.socket  # noqa: command-instead-of-module
+  register: sshd_socket
+  changed_when: false
+  failed_when: false
+  check_mode: false

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 keys="${RUNNER_TEMP:?}/ansible-ci"
-port=22
+port=22022
 
 fail() {
     echo "FAIL: $*" >&2
@@ -41,5 +41,25 @@ grep -q 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades || fail "un
 if [ -d /etc/needrestart ]; then
     grep -q "restart} = 'l'" /etc/needrestart/conf.d/50-ansible.conf || fail "needrestart may restart services"
 fi
+
+echo "== sshd"
+ops_config="$(sudo sshd -T -C user=ops,host=localhost,addr=127.0.0.1)"
+deploy_config="$(sudo sshd -T -C user=deploy,host=localhost,addr=127.0.0.1)"
+[ "$(grep '^port ' <<<"$ops_config")" = "port 22022" ] || fail "sshd does not listen on 22022 alone"
+[ "$(grep '^allowusers ' <<<"$ops_config")" = $'allowusers ops\nallowusers deploy' ] || fail "AllowUsers is not exactly ops deploy"
+for line in "permitrootlogin no" "passwordauthentication no" "kbdinteractiveauthentication no" \
+    "x11forwarding no" "allowagentforwarding no" "allowtcpforwarding yes"; do
+    grep -qx "$line" <<<"$ops_config" || fail "ops: expected '$line'"
+done
+for line in "allowtcpforwarding no" "permittty no"; do
+    grep -qx "$line" <<<"$deploy_config" || fail "deploy: expected '$line'"
+done
+if ss -Hltn 'sport = :22' | grep -q .; then fail "something still listens on 22"; fi
+sudo ufw show added | grep -q 'ufw allow 22022/tcp' || fail "22022/tcp is not allowed in ufw"
+pty_output="$(ssh -tt -p "$port" -i "$keys/deploy" -o BatchMode=yes -o IdentitiesOnly=yes deploy@127.0.0.1 true 2>&1 || true)"
+grep -q "PTY allocation request failed" <<<"$pty_output" || fail "deploy got a pty"
+forward_output="$(timeout 20 ssh -p "$port" -i "$keys/deploy" -o BatchMode=yes -o IdentitiesOnly=yes \
+    -W "127.0.0.1:$port" deploy@127.0.0.1 </dev/null 2>&1 || true)"
+grep -q "administratively prohibited" <<<"$forward_output" || fail "deploy may open a forward"
 
 echo "OK"

@@ -1,0 +1,9 @@
+---
+# Also imported by the sshd role, before it moves the port: sshd must never
+# listen on a port ufw drops, even if the run dies right after.
+- name: Allow SSH in ufw
+  community.general.ufw:
+    rule: allow
+    port: "{{ firewall_ssh_port | string }}"
+    proto: tcp
+    comment: "ssh {{ firewall_rule_comment }}"
