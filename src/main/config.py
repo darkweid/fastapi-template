@@ -251,6 +251,16 @@ class JWTConfig(BaseSettings):
             seen[value] = name
         return self
 
+    @model_validator(mode="after")
+    def reject_access_token_outliving_refresh(self) -> "JWTConfig":
+        """The session index expires with the refresh lifetime, so an access key
+        living longer would outlast the index every session wipe walks."""
+        if self.ACCESS_TOKEN_EXPIRE_MINUTES > self.REFRESH_TOKEN_EXPIRE_MINUTES:
+            raise ValueError(
+                "ACCESS_TOKEN_EXPIRE_MINUTES must not exceed REFRESH_TOKEN_EXPIRE_MINUTES"
+            )
+        return self
+
 
 class PostgresConfig(BaseSettings):
     DB_ECHO: bool

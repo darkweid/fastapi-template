@@ -412,3 +412,22 @@ def test_two_equal_jwt_secrets_are_rejected() -> None:
 
     with pytest.raises(ValidationError, match="must differ"):
         JWTConfig(**payload)
+
+
+def test_access_token_outliving_the_refresh_token_is_rejected() -> None:
+    """The session index expires with the refresh lifetime; a longer access
+    lifetime would leave access keys no session wipe can find."""
+    payload = _jwt_config_payload(
+        ACCESS_TOKEN_EXPIRE_MINUTES=61, REFRESH_TOKEN_EXPIRE_MINUTES=60
+    )
+
+    with pytest.raises(ValidationError, match="ACCESS_TOKEN_EXPIRE_MINUTES"):
+        JWTConfig(**payload)
+
+
+def test_access_token_as_long_as_the_refresh_token_is_accepted() -> None:
+    payload = _jwt_config_payload(
+        ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_MINUTES=60
+    )
+
+    assert JWTConfig(**payload).ACCESS_TOKEN_EXPIRE_MINUTES == 60
