@@ -288,6 +288,42 @@ jobs:
           export PATH="$PWD/.venv/bin:$PATH"
           make test-cov
 
+      # The init script runs on the host before any virtualenv, under whatever
+      # python3 is there, and macOS still ships 3.9. Not put on PATH: only the
+      # init step below calls it, by path.
+      - name: Set up the oldest host Python
+        id: host-python
+        if: github.repository == 'darkweid/fastapi-template'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.9'
+          update-environment: false
+
+      # A fork's first command. Run it on a fresh clone (git clone, so its git
+      # checks run) with a non-default subnet, then make sure the renamed stack
+      # still parses and the tests pinning the network values still hold. The
+      # leftover check is an `if`, not `! git grep`: bash -e ignores a negated
+      # command's status, so the step would pass with names left behind.
+      # Only in the template itself: a fork has already run the script, and a
+      # second run refuses with "already initialized".
+      - name: Initialize a clone as a new project
+        if: github.repository == 'darkweid/fastapi-template'
+        shell: bash
+        env:
+          HOST_PYTHON: ${{ steps.host-python.outputs.python-path }}
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          workdir="$(mktemp -d)/initialized"
+          git clone --quiet "file://$PWD" "$workdir"
+          cd "$workdir"
+          "$HOST_PYTHON" scripts/ops/init_project.py --name ci-project --title "CI Project" --subnet 10.42.7.0/24
+          if git grep -n -e 'template-' -e 'name: fastapi-template' -- infra Makefile; then
+            echo "init-project left a template name behind" >&2
+            exit 1
+          fi
+          docker compose --env-file .env -f infra/docker-compose.yml config --quiet
+          TESTING=true pytest -q -p no:cacheprovider tests/unit/test_docker_compose_config.py tests/unit/test_nginx_security_config.py tests/unit/scripts/ops/test_init_project.py
+
       # A pull request from a fork gets a read-only token whatever this asks
       # for, so the report lands on coveralls.io and the comment does not.
       - name: Upload coverage to Coveralls

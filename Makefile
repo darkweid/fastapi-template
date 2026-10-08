@@ -33,6 +33,20 @@ BOOTSTRAP_USER ?= root
 
 .DEFAULT_GOAL := help
 
+##@ Setup
+
+# Single-quotes a variable's raw text for the shell: `$(value)` keeps make
+# from expanding a `$` in it, and each `'` becomes `'\''`.
+shell_quote = '$(subst ','\'',$(value $(1)))'
+
+.PHONY: init-project
+init-project: ## Rename the template and write .env: make init-project NAME=myapp [TITLE="My API"] [SUBNET=10.20.30.0/24] [DRY_RUN=1]
+# The host python3, not .venv: a fresh fork runs this before the virtualenv exists.
+	@python3 scripts/ops/init_project.py --name $(call shell_quote,NAME) \
+		$(if $(value TITLE),--title $(call shell_quote,TITLE)) \
+		$(if $(value SUBNET),--subnet $(call shell_quote,SUBNET)) \
+		$(if $(value DRY_RUN),--dry-run)
+
 ##@ Stack
 
 .PHONY: build
