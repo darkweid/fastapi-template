@@ -5,8 +5,8 @@ DOCKER_COMPOSE = docker compose --env-file .env -f $(COMPOSE_BASE)
 DOCKER_COMPOSE_DEV = docker compose --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
 DOCKER_COMPOSE_EXEC = $(DOCKER_COMPOSE) exec
 
-# Throwaway PostgreSQL for the integration suite. Every invocation gets its own compose
-# project name and an ephemeral host port so it can never touch the dev stack; both are
+# Throwaway PostgreSQL and Redis for the integration suite. Every invocation gets its own compose
+# project name and ephemeral host ports so it can never touch the dev stack; all of them are
 # built inside the test-integration recipe, which is why there is no shared variable here.
 COMPOSE_TEST = infra/docker-compose.test.yml
 
@@ -146,17 +146,21 @@ test-cov: ## Run the tests with a coverage report
 	TESTING=true pytest --cov=src --cov-report=term-missing --cov-report=xml
 
 .PHONY: test-integration
-test-integration: ## Run the integration suite against a throwaway PostgreSQL container
+test-integration: ## Run the integration suite against a throwaway PostgreSQL and Redis
 	@set -e; \
 	COMPOSE="docker compose -p template-test-$$$$ --env-file .env.test -f $(COMPOSE_TEST)"; \
-	export POSTGRES_PORT=; \
+	export POSTGRES_PORT= REDIS_PORT=; \
 	trap "$$COMPOSE down -v --remove-orphans >/dev/null 2>&1" EXIT INT TERM; \
 	$$COMPOSE up -d --wait --wait-timeout 120; \
 	PG_PORT="$$($$COMPOSE port postgres 5432 | sed 's/.*://')"; \
+	REDIS_TEST_PORT="$$($$COMPOSE port redis 6379 | sed 's/.*://')"; \
 	TESTING=true \
 	POSTGRES_HOST=127.0.0.1 \
 	POSTGRES_PORT="$$PG_PORT" \
-	pytest tests/integration -m integration -v
+	REDIS_HOST=127.0.0.1 \
+	REDIS_PORT="$$REDIS_TEST_PORT" \
+	REDIS_TEST_INSTANCE="127.0.0.1:$$REDIS_TEST_PORT" \
+	pytest tests/integration tests/contract -m integration -v
 
 .PHONY: test-all
 test-all: test test-integration ## Run the unit suite and then the integration suite

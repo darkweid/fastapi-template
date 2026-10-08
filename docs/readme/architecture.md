@@ -266,6 +266,7 @@ the escape hatch for roles that may reach another user's object.
 ├── tests/                               # Test suite
 │   ├── conftest.py                      # Global fixtures (fakes, clients, settings)
 │   ├── TEST_GUIDE.md                    # Testing standard for the template
+│   ├── contract/redis/                  # Lua scripts on InMemoryRedis and a real Redis
 │   ├── factories/                       # Test data factories
 │   ├── fakes/                           # In-memory fakes for external systems
 │   ├── helpers/                         # Test helpers and dependency overrides

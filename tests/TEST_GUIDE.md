@@ -9,7 +9,7 @@ The goal is simple: write solid tests quickly and consistently, without tying th
 - One test - one scenario.
 - Tests should be deterministic, isolated, and easy to read.
 - Do not duplicate business logic inside tests.
-- For unit and API integration tests in this template, avoid real external systems (network, Redis, S3, DB). The one exception is `tests/integration/`, which exists precisely to reach a real database - see section 6.
+- For unit and API integration tests in this template, avoid real external systems (network, Redis, S3, DB). The exceptions are `tests/integration/`, which reaches a real database, and the real half of `tests/contract/redis/`, which reaches a real Redis - see section 6.
 
 ## 2) Required workflow
 
@@ -37,7 +37,7 @@ The goal is simple: write solid tests quickly and consistently, without tying th
 - `tests/unit/src/note/` is the reference suite for a new domain module - the same
   role `src/note/` plays for the code: CRUD, ownership and list-query coverage
   with no auth-specific baggage.
-- Tests that need a live PostgreSQL live under `tests/integration/src/` with the same mirrored path; see section 6 for what qualifies.
+- Tests that need a live PostgreSQL live under `tests/integration/src/` with the same mirrored path; see section 6 for what qualifies. Redis script contracts live under `tests/contract/redis/`.
 - Non-application test tooling and infrastructure checks should live under `tests/unit/` outside `src/`.
 - File names: `test_<feature>.py`.
 - Test names: `test_<scenario>_<expected_result>`.
@@ -127,8 +127,9 @@ Current application test layout:
 - `tests/unit/src/system/...`
 - `tests/unit/src/user/...`
 - `tests/integration/src/...` (real PostgreSQL, section 6)
+- `tests/contract/redis/...` (Lua scripts on the fake and a real Redis, section 6)
 
-## 6) Integration suite (real PostgreSQL)
+## 6) Integration suite (real PostgreSQL and Redis)
 
 `tests/integration/` is the only place that talks to a live database. It covers the SQL
 boundary - behaviour that belongs to PostgreSQL rather than to the Python around it, and
@@ -147,9 +148,9 @@ Everything else stays a unit test. If a fake session can answer the question, th
 does not belong here: this suite needs Docker, so every test added to it is one the default
 `make test` cannot run.
 
-Running it: `make test-integration` starts a throwaway PostgreSQL
-(`infra/docker-compose.test.yml` - its own compose project, an ephemeral host port and no
-volume, so it never touches the dev stack), applies the migrations and runs the suite.
+Running it: `make test-integration` starts a throwaway PostgreSQL and Redis
+(`infra/docker-compose.test.yml` - its own compose project, ephemeral host ports and no
+volumes, so it never touches the dev stack), applies the migrations and runs the suite.
 `make test-all` runs unit then integration. CI runs it as the `integration-tests` job.
 
 Fixtures in `tests/integration/conftest.py`:
@@ -178,6 +179,31 @@ Rules specific to this suite:
   up: a test that only commits cleans up.
 - Scope queries with a per-test unique marker (`uuid4().hex[:8]`); the database is shared
   by the whole session, and `users` carries partial unique indexes on email and username.
+
+### Redis contract suite
+
+`tests/contract/redis/` runs every Lua script the template ships through the component
+that owns it - refresh rotation, single-use challenges, the receiver's claims and the cache
+version scripts against both `InMemoryRedis` and a real Redis, the rate limiter script
+against a real Redis only.
+
+- Take `redis_backend`: it is parametrized `fake` and `real`. The `real` param carries
+  the `integration` marker, so `make test` runs the fake half without Docker and
+  `make test-integration` runs the real half against the throwaway Redis in
+  `infra/docker-compose.test.yml` (CI: a `redis` service in `integration-tests`).
+- A scenario that only makes sense on Redis itself - a race over separate connections,
+  the limiter (the fake answers `evalsha` from overrides) - takes `real_redis`, plus
+  `redis_client_factory` for extra connections. Those fixtures mark the test
+  `integration` by themselves.
+- The real fixtures FLUSHALL the instance and refuse to run unless `REDIS_TEST_INSTANCE`
+  names the `host:port` the settings reach (`REDIS_HOST:REDIS_PORT`); only
+  `make test-integration` and CI set it, each to the Redis it started.
+- When a `[real]` item fails and its `[fake]` twin passes, decide which behaviour is
+  intended: real Redis shows what the script does, not what it should do. If the script
+  is right, fix `tests/fakes/redis.py`; if it is not, fix the script. Never relax the
+  expectation to make both agree.
+- A new Lua script, or a change to how the fake answers one, comes with scenarios here.
+- No scenario waits for a TTL: assert `ttl`/`pttl`, or delete the key.
 
 ## 7) Minimal unit test template
 
@@ -222,7 +248,7 @@ async def test_get_resource_returns_200(async_client_with_fakes):
 ## 10) Run commands
 
 - Run all unit tests: `make test` (integration tests are deselected by default, so no Docker is needed)
-- Run the integration suite: `make test-integration` (needs Docker)
+- Run the integration suite: `make test-integration` (needs Docker; starts a throwaway PostgreSQL and Redis)
 - Run both: `make test-all`
 - Run one file: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py -v`
 - Run one test: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py::test_<scenario> -v`

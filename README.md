@@ -245,13 +245,13 @@ fresh empty volumes.
 - Prod-like: `make run`.
 - Apply migrations: `make migrate` — required on the first run and after pulling new revisions. Nothing migrates automatically outside the server deploy script; until this runs, any DB-touching request fails with `relation "users" does not exist`.
 - Stop: `make down`; logs: `make logs`; tests: `make test` / `make test-cov`; lint: `make lint`.
-- Integration tests against a real PostgreSQL: `make test-integration` (needs Docker); both suites: `make test-all`.
+- Integration tests against a real PostgreSQL and Redis: `make test-integration` (needs Docker); both suites: `make test-all`.
 - Run `make` with no target to see every command the Makefile offers.
 
 ## Testing Layout
 - Application tests mirror `src/` under `tests/unit/src/`.
 - Shared test infrastructure lives in `tests/conftest.py`, `tests/helpers/`, `tests/fakes/`, and `tests/factories/`.
-- `tests/integration/src/` holds the tests that need a live PostgreSQL — migrations, transaction and UoW semantics, advisory locks, the SQL behind `ListQuery`, the transactional outbox. They carry the `integration` marker, which `pytest.ini` deselects by default, so `make test` stays runnable without Docker. `make test-integration` starts a throwaway database (`infra/docker-compose.test.yml`) and runs them; see `tests/TEST_GUIDE.md` for what belongs there.
+- `tests/integration/src/` holds the tests that need a live PostgreSQL — migrations, transaction and UoW semantics, advisory locks, the SQL behind `ListQuery`, the transactional outbox. They carry the `integration` marker, which `pytest.ini` deselects by default, so `make test` stays runnable without Docker. `make test-integration` starts a throwaway database and Redis (`infra/docker-compose.test.yml`) and runs them; see `tests/TEST_GUIDE.md` for what belongs there. `tests/contract/redis/` runs the auth, receiver and cache Lua scripts against `InMemoryRedis` in `make test` and against a real Redis in `make test-integration`; the rate limiter script runs against a real Redis only.
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 - Both suites run in random order (`pytest-randomly`), and the run header prints the seed: `Using --randomly-seed=1234`. Reproduce a failing order with `TESTING=true pytest --randomly-seed=1234`, or through `make` with `PYTEST_ADDOPTS="--randomly-seed=1234" make test` (the same works for `make test-integration`). `-p no:randomly` restores file order while bisecting; a test that passes only in one order is a bug in the test or its fixtures, not something to pin.
 
@@ -299,7 +299,7 @@ for `app.conf` once the certificate is in place.
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
 - `make test-cov` — tests with coverage report
-- `make test-integration` — integration suite against a throwaway PostgreSQL; `make test-all` — both suites
+- `make test-integration` — integration suite against a throwaway PostgreSQL and Redis; `make test-all` — both suites
 - `make deploy-prod` — deploy on the server, building the image there
 - `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (the same `BUILD=0` path CD runs through `infra/deploy/deploy.sh`)
 - Both run `infra/deploy/deploy.sh`, which rolls the app without downtime: the new container starts beside the serving one, nginx moves to it once it is healthy, and the old one drains its requests before it stops. One that never turns healthy is removed and the old one keeps serving (`docs/readme/infra.md`).
