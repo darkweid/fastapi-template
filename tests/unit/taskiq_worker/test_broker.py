@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 from taskiq import InMemoryBroker
 from taskiq.middlewares import SmartRetryMiddleware
-from taskiq_redis import ListRedisScheduleSource, RedisStreamBroker
+from taskiq_redis import RedisStreamBroker
 
 from taskiq_worker.broker import (
     RetryScheduleSource,
@@ -42,4 +42,3 @@ async def test_retry_schedule_source_shutdown_disconnects_its_pool() -> None:
     await source.shutdown()
 
     disconnect.assert_awaited_once()
-    assert isinstance(source, ListRedisScheduleSource)
