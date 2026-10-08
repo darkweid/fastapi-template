@@ -23,14 +23,22 @@ RETRY_DELAY_SECONDS = 60
 STREAM_IDLE_TIMEOUT_SECONDS = 600
 
 
-def create_retry_schedule_source() -> ListRedisScheduleSource:
-    return ListRedisScheduleSource(config.redis.tasks_dsn)
+class RetryScheduleSource(ListRedisScheduleSource):
+    # taskiq_redis opens a connection pool per source and never disconnects
+    # it: ListRedisScheduleSource has no shutdown of its own.
+    async def shutdown(self) -> None:
+        await super().shutdown()
+        await self._connection_pool.disconnect()
+
+
+def create_retry_schedule_source() -> RetryScheduleSource:
+    return RetryScheduleSource(config.redis.tasks_dsn)
 
 
 # Shared by SmartRetryMiddleware (writes one-shot retry schedules) and the
 # scheduler (fires them when due). None under TESTING: the in-memory broker
 # retries nothing and the scheduler never runs in tests.
-retry_schedule_source: ListRedisScheduleSource | None = (
+retry_schedule_source: RetryScheduleSource | None = (
     None if config.app.TESTING else create_retry_schedule_source()
 )
 

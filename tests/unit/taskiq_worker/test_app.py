@@ -229,3 +229,24 @@ async def test_worker_shutdown_closes_the_cache_client(
         await worker_app.on_worker_shutdown(TaskiqState())
 
     assert closed == ["cache", "tasks"]
+
+
+async def test_worker_shutdown_closes_the_retry_schedule_source(
+    clean_cache_singleton: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SmartRetryMiddleware writes every retry through this source's own pool, so
+    a worker that skipped it would leave those connections open, even when
+    another close raises."""
+    retry_source = AsyncMock()
+
+    async def close_http_clients() -> None:
+        raise RuntimeError("provider session refused to close")
+
+    monkeypatch.setattr(worker_app, "retry_schedule_source", retry_source)
+    monkeypatch.setattr(worker_app, "close_http_clients", close_http_clients)
+
+    with pytest.raises(RuntimeError, match="refused to close"):
+        await worker_app.on_worker_shutdown(TaskiqState())
+
+    retry_source.shutdown.assert_awaited_once()
