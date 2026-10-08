@@ -47,15 +47,13 @@ class InMemoryCache(BaseCache):
         self._generations = count(1)
 
     def _current_key(self, key: CacheKey) -> str | None:
-        versions = [self._versions.get(counter) for counter in self._counter_keys(key)]
-        if any(version is None for version in versions):
-            return None
-        return value_key(
-            self._prefix,
-            key.namespace,
-            ".".join(version for version in versions if version is not None),
-            key.suffix,
-        )
+        versions: list[str] = []
+        for counter in self._counter_keys(key):
+            version = self._versions.get(counter)
+            if version is None:
+                return None
+            versions.append(version)
+        return value_key(self._prefix, key.namespace, ".".join(versions), key.suffix)
 
     def ttl_of(self, key: CacheKey) -> int | None:
         current_key = self._current_key(key)
