@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 
-from scripts.ops import check_env
+from scripts.ops import check_env, init_project
 from scripts.ops.check_env import collect_problems, parse_env
 from scripts.ops.init_project import (
     COMPOSE_FILE,
@@ -380,6 +380,10 @@ def template_repo(template_files: Path) -> Path:
     return template_files
 
 
+def _raise_no_space(*args: object) -> None:
+    raise OSError(28, "No space left on device")
+
+
 def _snapshot(root: Path) -> dict[str, bytes]:
     return {path: (root / path).read_bytes() for path in EDITED_FILES}
 
@@ -430,6 +434,53 @@ def test_a_write_failing_midway_keeps_the_marker(template_repo: Path) -> None:
 
     compose = (template_repo / COMPOSE_FILE).read_text(encoding="utf-8")
     assert f"\nname: {TEMPLATE_PROJECT_NAME}\n" in compose
+
+
+def test_a_failed_env_write_leaves_no_env(
+    template_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A truncated .env reads as the developer's own on the next run, which
+    then keeps it instead of generating the secrets it lacks."""
+    real_open, real_fdopen = os.open, os.fdopen
+    env_descriptors: set[int] = set()
+
+    def recording_open(path: object, *args: object, **kwargs: object) -> int:
+        descriptor = real_open(path, *args, **kwargs)
+        if Path(str(path)).name == ".env":
+            env_descriptors.add(descriptor)
+        return descriptor
+
+    def failing_fdopen(descriptor: int, *args: object, **kwargs: object):
+        stream = real_fdopen(descriptor, *args, **kwargs)
+        if descriptor in env_descriptors:
+            stream.write = _raise_no_space  # type: ignore[method-assign]
+        return stream
+
+    monkeypatch.setattr(init_project.os, "open", recording_open)
+    monkeypatch.setattr(init_project.os, "fdopen", failing_fdopen)
+
+    with pytest.raises(InitError, match="git checkout"):
+        run(template_repo, _options())
+    assert not (template_repo / ".env").exists()
+
+
+def test_a_failed_compose_write_removes_the_new_env(
+    template_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """.env is untracked, so the `git checkout` the error suggests leaves it,
+    and the rerun would keep it while the compose file still says template."""
+    real_replace = init_project._replace_file
+
+    def failing_replace(target: Path, text: str) -> None:
+        if target.name == Path(COMPOSE_FILE).name:
+            _raise_no_space()
+        real_replace(target, text)
+
+    monkeypatch.setattr(init_project, "_replace_file", failing_replace)
+
+    with pytest.raises(InitError, match="git checkout"):
+        run(template_repo, _options())
+    assert not (template_repo / ".env").exists()
 
 
 def test_a_missing_git_binary_is_a_refusal(

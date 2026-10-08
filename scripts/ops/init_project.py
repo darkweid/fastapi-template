@@ -410,8 +410,14 @@ def _create_env(path: Path, text: str) -> None:
     # O_EXCL fails rather than follow a symlink or overwrite a file that
     # appeared since the check.
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, ENV_FILE_MODE)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        stream.write(text)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+    except BaseException:
+        # A truncated .env left in place would read as the developer's own on
+        # the next run and never be regenerated.
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _write(root: Path, planned: dict[str, str], env_text: str | None) -> None:
@@ -419,13 +425,18 @@ def _write(root: Path, planned: dict[str, str], env_text: str | None) -> None:
     so a run that fails before it can be reset and run again."""
     order = sorted(planned, key=lambda path: path == COMPOSE_FILE)
     written: list[str] = []
+    env_created = False
     try:
         for path in order:
             if path == COMPOSE_FILE and env_text is not None:
                 _create_env(root / ENV_FILE, env_text)
+                env_created = True
             _replace_file(root / path, planned[path])
             written.append(path)
     except OSError as error:
+        # .env is untracked, so `git checkout` would not undo it.
+        if env_created:
+            (root / ENV_FILE).unlink(missing_ok=True)
         restore = " ".join(written) or "(nothing written yet)"
         raise InitError(
             f"writing failed ({error}); undo the partial run with "
