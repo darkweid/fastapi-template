@@ -16,6 +16,7 @@ from scripts.ops.init_project import (
     PASSWORD_KEYS,
     PLACEHOLDER_MARKER,
     SECRET_KEYS,
+    TEMPLATE_PROJECT_NAME,
     InitError,
     Options,
     build_env,
@@ -42,8 +43,18 @@ def _options(
     return Options(name=name, title=title, subnet=parse_subnet(subnet), dry_run=dry_run)
 
 
+def _is_initialized(root: Path) -> bool:
+    compose = (root / COMPOSE_FILE).read_text(encoding="utf-8")
+    return f"\nname: {TEMPLATE_PROJECT_NAME}\n" not in compose
+
+
 @pytest.fixture
 def template_files(tmp_path: Path) -> Path:
+    # The script stays in a fork after it ran; the fork's files no longer hold
+    # the names these tests rename, and failing on that would break the fork's
+    # suite for good.
+    if _is_initialized(REPO_ROOT):
+        pytest.skip("this checkout already ran init-project")
     for relative in EDITED_FILES:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
