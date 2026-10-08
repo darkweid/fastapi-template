@@ -42,12 +42,24 @@ async def test_clean_exit_without_commit_persists_nothing_on_fresh_session(
     assert found is None
 
 
-async def test_entering_after_a_raw_read_raises_and_leaves_the_session_as_it_was(
+async def test_entering_after_a_raw_read_raises(db_session: AsyncSession) -> None:
+    """A plain SELECT on the shared session autobegins a transaction; the UoW
+    used to nest a SAVEPOINT in it and commit it on `commit()`."""
+    await db_session.execute(select(1))
+
+    with pytest.raises(RuntimeError, match="already in a transaction"):
+        async with ApplicationUnitOfWork(db_session):
+            pass
+
+    assert db_session.in_transaction()
+    assert "uow_active" not in db_session.info
+
+
+async def test_entering_after_staged_work_raises_and_leaves_the_session_as_it_was(
     db_session: AsyncSession,
 ) -> None:
-    """A read on the shared session autobegins a transaction; the UoW used to
-    nest a SAVEPOINT in it and commit it on `commit()`. The refusal must leave
-    the caller's staged work and transaction untouched."""
+    """The refusal must leave the caller's staged work and transaction
+    untouched: no rollback, no marker left behind."""
     tag = f"uow-staged-{uuid4().hex[:12]}"
     await UserRepository().create(db_session, data=_user_data(tag))
     await db_session.flush()
