@@ -10,11 +10,15 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import ipaddress
+import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
+from urllib.parse import urlparse
 
 DEFAULT_SUBNET = ipaddress.IPv4Network("172.30.0.0/24")
 SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -32,8 +36,10 @@ DOCKER_DEFAULT_BRIDGE = ipaddress.IPv4Network("172.17.0.0/16")
 # a unit test holds them together.
 PLACEHOLDER_MARKER = "-not-real"
 # Inside double quotes compose's dotenv reader interpolates `$`, and a quote or
-# a backslash ends or escapes the value.
-FORBIDDEN_TITLE_CHARACTERS = re.compile(r'["\\$\x00-\x1f\x7f]')
+# a backslash ends or escapes the value; a backtick is refused with them so the
+# value is inert in a shell as well. Control characters and Unicode line
+# breaks are caught by isprintable().
+FORBIDDEN_TITLE_CHARACTERS = re.compile(r'["\\$`]')
 
 COMPOSE_FILE = "infra/docker-compose.yml"
 ENV_EXAMPLE_FILE = ".env.example"
@@ -65,13 +71,10 @@ PROJECT_NAME_LINE = re.compile(r"^PROJECT_NAME=.*$", re.MULTILINE)
 # The three addresses of the default subnet, never a prefix of a longer one
 # (172.30.0.1 is a prefix of 172.30.0.128).
 DEFAULT_SUBNET_ADDRESS = re.compile(r"(?<![\d.])172\.30\.0\.(0/24|128/25|1)(?![\d./])")
-# Signing secrets: distinct per purpose (docs/readme/bootstrap.md, "Signing secrets").
-SECRET_KEYS = (
-    "JWT_USER_SECRET_KEY",
-    "JWT_USER_VERIFY_SECRET_KEY",
-    "JWT_USER_RESET_PASSWORD_SECRET_KEY",
-    "CSRF_SECRET_KEY",
-)
+# Signing secrets, distinct per purpose (docs/readme/bootstrap.md, "Signing
+# secrets"). Matched by suffix, so the keys a new realm adds to .env.example
+# are generated without touching this script.
+SECRET_KEY_SUFFIX = "_SECRET_KEY"  # nosec B105
 # token_urlsafe is ASCII, which DOCS_PASSWORD needs (HTTP Basic reaches FastAPI
 # as ASCII), and 32 bytes encode to 43 characters, above SECRET_MIN_LENGTH.
 PASSWORD_KEYS = ("POSTGRES_PASSWORD", "REDIS_PASSWORD", "DOCS_PASSWORD")
@@ -128,8 +131,15 @@ def parse_subnet(text: str | None) -> ipaddress.IPv4Network:
 def validate_title(title: str | None) -> str | None:
     if not title:
         return None
-    if FORBIDDEN_TITLE_CHARACTERS.search(title):
-        raise InitError('TITLE may not contain ", \\, $ or control characters')
+    if (
+        FORBIDDEN_TITLE_CHARACTERS.search(title)
+        or not title.isprintable()
+        or not title.strip()
+    ):
+        raise InitError(
+            'TITLE may not be blank or contain ", \\, $, ` or non-printable '
+            "characters"
+        )
     return title
 
 
@@ -187,7 +197,10 @@ def plan_edits(root: Path, options: Options) -> dict[str, str]:
     relative to `root`."""
     planned: dict[str, str] = {}
     for path in EDITED_FILES:
-        original = (root / path).read_text(encoding="utf-8")
+        try:
+            original = (root / path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise InitError(f"{path}: cannot be read ({error})") from None
         text = original
         # `fastapi-template` holds no `template-`, so this leaves the project
         # name to its own counted replacement below.
@@ -223,27 +236,72 @@ def plan_edits(root: Path, options: Options) -> dict[str, str]:
     return planned
 
 
-def build_env(example_text: str) -> tuple[str, tuple[str, ...]]:
+def build_env(example_text: str) -> str:
     """Fills the secrets and passwords of an (already edited) .env.example and
-    keeps every other line, so check_env.py finds each example key in .env.
-
-    Returns the .env text and the keys whose value is still a placeholder."""
+    keeps every other line, so check_env.py finds each example key in .env."""
     lines = []
-    remaining = []
     for line in example_text.splitlines(keepends=True):
-        key, separator, value = line.partition("=")
+        key, separator, _ = line.partition("=")
         key = key.strip()
         if not separator or key.startswith("#"):
             lines.append(line)
-        elif key in SECRET_KEYS:
+        elif key.endswith(SECRET_KEY_SUFFIX):
             lines.append(f"{key}={secrets.token_urlsafe(SECRET_BYTES)}\n")
         elif key in PASSWORD_KEYS:
             lines.append(f"{key}={secrets.token_urlsafe(PASSWORD_BYTES)}\n")
         else:
-            if PLACEHOLDER_MARKER in value:
-                remaining.append(key)
             lines.append(line)
-    return "".join(lines), tuple(remaining)
+    return "".join(lines)
+
+
+# What scripts/ops/check_env.py refuses at the first deploy, restated here
+# because that module is not importable before the virtualenv exists; a unit
+# test holds the two to the same verdict on the generated .env.
+DOUBLE_QUOTED_VALUE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+SINGLE_QUOTED_VALUE = re.compile(r"'([^']*)'")
+INLINE_COMMENT = re.compile(r"\s#")
+TRUTHY_VALUES = {"1", "true", "t", "y", "yes", "on"}
+S3_KEY_PREFIX = "S3_"
+PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
+LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # nosec B104
+
+
+def _dotenv_entries(text: str) -> dict[str, str]:
+    entries = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, raw = stripped.partition("=")
+        value = raw.strip()
+        for quoted in (DOUBLE_QUOTED_VALUE, SINGLE_QUOTED_VALUE):
+            match = quoted.match(value)
+            if match:
+                value = match.group(1)
+                break
+        else:
+            value = INLINE_COMMENT.split(raw, maxsplit=1)[0].strip()
+        entries[key.strip()] = value
+    return entries
+
+
+def _points_at_localhost(value: str) -> bool:
+    hostname = (urlparse(value.strip()).hostname or "").lower()
+    return hostname in LOCAL_HOSTNAMES or hostname.startswith("127.")
+
+
+def pending_before_deploy(env_text: str) -> tuple[str, ...]:
+    """One `KEY: reason` line per value the deploy gate would still refuse."""
+    entries = _dotenv_entries(env_text)
+    s3_enabled = entries.get("S3_ENABLED", "").strip().lower() in TRUTHY_VALUES
+    pending = []
+    for key, value in sorted(entries.items()):
+        dormant = key.startswith(S3_KEY_PREFIX) and key != "S3_ENABLED"
+        if PLACEHOLDER_MARKER in value.lower() and not (dormant and not s3_enabled):
+            pending.append(f"{key}: still a placeholder")
+        if key in PUBLIC_URL_KEYS and _points_at_localhost(value):
+            pending.append(f"{key}: points at localhost, set the deployed frontend")
+    return tuple(pending)
 
 
 def env_hints(options: Options) -> tuple[str, ...]:
@@ -259,11 +317,14 @@ def env_hints(options: Options) -> tuple[str, ...]:
 
 
 ENV_FILE = ".env"
+ENV_FILE_MODE = 0o600
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANUAL_STEPS = (
     "If a stack of this checkout ever ran: `docker compose -p fastapi-template "
-    "-f infra/docker-compose.yml down` (the old project name), then drop the "
-    "template-* volumes if nothing in them matters.",
+    "-f infra/docker-compose.yml down` (the old project name) and "
+    "`docker network rm app-network` (the old network holds the subnet, so the "
+    'next `make run` fails with "Pool overlaps"), then drop the template-* '
+    "volumes if nothing in them matters.",
     "README badges and links point at darkweid/fastapi-template: swap or delete them.",
     "LICENSE: replace the copyright holder, or delete it for a private project.",
     "infra/ansible/roles/*/meta/main.yml carry `author: fastapi-template`.",
@@ -276,18 +337,21 @@ class Report:
     edited: tuple[str, ...]
     env_created: bool
     env_exists: bool
-    remaining_placeholders: tuple[str, ...]
+    pending: tuple[str, ...]
     env_hints: tuple[str, ...]
     dry_run: bool
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603  # nosec B603 B607
-        ["git", "-C", str(root), *args],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(  # noqa: S603  # nosec B603 B607
+            ["git", "-C", str(root), *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        raise InitError(f"cannot run git ({error}); install git first") from None
 
 
 def _ensure_can_run(root: Path) -> None:
@@ -299,7 +363,10 @@ def _ensure_can_run(root: Path) -> None:
         raise InitError(
             f"{root} is not the root of a git work tree; run this from a clone"
         )
-    compose = (root / COMPOSE_FILE).read_text(encoding="utf-8")
+    try:
+        compose = (root / COMPOSE_FILE).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise InitError(f"{COMPOSE_FILE}: cannot be read ({error})") from None
     if f"\nname: {TEMPLATE_PROJECT_NAME}\n" not in compose:
         raise InitError(
             f"already initialized: {COMPOSE_FILE} no longer names the project "
@@ -317,27 +384,71 @@ def _ensure_can_run(root: Path) -> None:
             "commit or stash the uncommitted changes in the files this edits first:\n"
             + dirty.stdout.rstrip()
         )
+    # A dangling symlink reads as absent, and writing through any symlink puts
+    # the secrets wherever it points.
+    if (root / ENV_FILE).is_symlink():
+        raise InitError(f"{ENV_FILE} is a symlink; replace it with a file or remove it")
+
+
+def _replace_file(target: Path, text: str) -> None:
+    """Swaps the file in one rename, so a failure leaves either the old text or
+    the new one, never half of it; the mode (deploy.sh is executable) is kept."""
+    descriptor, temporary = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".init-project"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        shutil.copymode(target, temporary)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def _create_env(path: Path, text: str) -> None:
+    # O_EXCL fails rather than follow a symlink or overwrite a file that
+    # appeared since the check.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, ENV_FILE_MODE)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(text)
+
+
+def _write(root: Path, planned: dict[str, str], env_text: str | None) -> None:
+    """The compose file goes last: its project name is the initialized marker,
+    so a run that fails before it can be reset and run again."""
+    order = sorted(planned, key=lambda path: path == COMPOSE_FILE)
+    written: list[str] = []
+    try:
+        for path in order:
+            if path == COMPOSE_FILE and env_text is not None:
+                _create_env(root / ENV_FILE, env_text)
+            _replace_file(root / path, planned[path])
+            written.append(path)
+    except OSError as error:
+        restore = " ".join(written) or "(nothing written yet)"
+        raise InitError(
+            f"writing failed ({error}); undo the partial run with "
+            f"`git checkout -- {restore}` and run it again"
+        ) from None
 
 
 def run(root: Path, options: Options) -> Report:
     _ensure_can_run(root)
     planned = plan_edits(root, options)
-    env_path = root / ENV_FILE
-    env_exists = env_path.exists()
+    env_exists = (root / ENV_FILE).exists()
     example_text = planned.get(
         ENV_EXAMPLE_FILE, (root / ENV_EXAMPLE_FILE).read_text(encoding="utf-8")
     )
-    env_text, remaining = build_env(example_text)
+    env_text = build_env(example_text)
     if not options.dry_run:
-        for path, text in planned.items():
-            (root / path).write_text(text, encoding="utf-8")
-        if not env_exists:
-            env_path.write_text(env_text, encoding="utf-8")
+        _write(root, planned, None if env_exists else env_text)
     return Report(
         edited=tuple(sorted(planned)),
         env_created=not env_exists and not options.dry_run,
         env_exists=env_exists,
-        remaining_placeholders=remaining,
+        # An existing .env was not written by this run; its values are unknown.
+        pending=() if env_exists else pending_before_deploy(env_text),
         env_hints=env_hints(options) if env_exists else (),
         dry_run=options.dry_run,
     )
@@ -354,9 +465,9 @@ def format_report(report: Report) -> str:
     else:
         created = "Would create" if report.dry_run else "Created"
         lines.append(f"{created} {ENV_FILE} with generated secrets and passwords.")
-    if report.remaining_placeholders:
-        lines.append(f"Still placeholders in {ENV_FILE} (fill before deploying):")
-        lines.extend(f"  {key}" for key in report.remaining_placeholders)
+    if report.pending:
+        lines.append(f"The deploy gate refuses these in {ENV_FILE}; fix them first:")
+        lines.extend(f"  {item}" for item in report.pending)
     lines.append("Left to do by hand:")
     lines.extend(f"  - {step}" for step in MANUAL_STEPS)
     return "\n".join(lines)

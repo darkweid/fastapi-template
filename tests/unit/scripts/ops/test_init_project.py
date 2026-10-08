@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 from pathlib import Path
+import re
 import shutil
+import stat
 import subprocess
 
 import pytest
 
 from scripts.ops import check_env
-from scripts.ops.check_env import parse_env
+from scripts.ops.check_env import collect_problems, parse_env
 from scripts.ops.init_project import (
     COMPOSE_FILE,
     DEFAULT_SUBNET,
     EDITED_FILES,
+    NAME_PREFIX,
+    NAME_PREFIX_COUNTS,
     PASSWORD_KEYS,
     PLACEHOLDER_MARKER,
-    SECRET_KEYS,
+    SECRET_KEY_SUFFIX,
+    SUBNET_ADDRESS_COUNTS,
     TEMPLATE_PROJECT_NAME,
     InitError,
     Options,
@@ -24,14 +30,26 @@ from scripts.ops.init_project import (
     format_report,
     main,
     parse_subnet,
+    pending_before_deploy,
     plan_edits,
     run,
     validate_name,
     validate_title,
 )
+from src.main.config import SECRET_MIN_LENGTH
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SECRET_MIN_LENGTH = 32  # src/main/config.py SECRET_MIN_LENGTH
+EXAMPLE_TEXT = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+# Files that name a template- string or a default-subnet address without being
+# something the script renames: prose, the script and this test, and a
+# User-Agent string.
+NOT_RENAMED = (
+    "scripts/ops/init_project.py",
+    "tests/unit/scripts/ops/test_init_project.py",
+    "tests/unit/src/core/http/test_http_client.py",
+    # The init-project CI step greps the renamed clone for leftovers.
+    ".github/workflows/_ci.yml",
+)
 
 
 def _options(
@@ -125,11 +143,25 @@ def test_title_is_optional() -> None:
 
 
 @pytest.mark.parametrize(
-    "title", ['Say "hi"', "back\\slash", "cost $HOME", "line\nbreak", "tab\there"]
+    "title",
+    [
+        'Say "hi"',
+        "back\\slash",
+        "cost $HOME",
+        "run `id`",
+        "line\nbreak",
+        "tab\there",
+        "next\x85line",
+        "line separator",
+        "no\xa0break",
+        "   ",
+    ],
 )
 def test_title_rules(title: str) -> None:
     """The title lands inside double quotes in a dotenv file, where compose
-    interpolates `$` and a quote or backslash ends or escapes the value."""
+    interpolates `$` and a quote or backslash ends or escapes the value; a
+    Unicode line break splits the line for any reader that honours it, and a
+    blank title is an empty Swagger heading."""
     with pytest.raises(InitError):
         validate_title(title)
 
@@ -197,19 +229,64 @@ def test_drifted_count_fails_before_writing(template_files: Path) -> None:
         plan_edits(template_files, _options())
 
 
+def test_a_missing_edited_file_is_a_refusal(template_files: Path) -> None:
+    (template_files / "infra/nginx/proxy.inc").unlink()
+
+    with pytest.raises(InitError, match="infra/nginx/proxy.inc"):
+        plan_edits(template_files, _options())
+
+
+def _files_naming(root: Path, pattern: str) -> set[str]:
+    listed = subprocess.run(
+        ["git", "-C", str(root), "grep", "-l", "-F", "-e", pattern],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {
+        path
+        for path in listed.stdout.splitlines()
+        if not path.startswith("docs/")
+        and not path.endswith(".md")
+        and path not in NOT_RENAMED
+    }
+
+
+def test_every_file_naming_the_template_is_one_the_script_edits() -> None:
+    """A template- name or a default-subnet address added to a file outside
+    the count tables survives the rename unnoticed; this fails in `make test`
+    instead of in the init-project CI step."""
+    if _is_initialized(REPO_ROOT):
+        pytest.skip("this checkout already ran init-project")
+
+    assert _files_naming(REPO_ROOT, NAME_PREFIX) == set(NAME_PREFIX_COUNTS)
+    assert _files_naming(REPO_ROOT, "172.30.0.") == set(SUBNET_ADDRESS_COUNTS)
+
+
 def _parsed(text: str, tmp_path: Path) -> dict[str, str]:
     path = tmp_path / "generated.env"
     path.write_text(text, encoding="utf-8")
     return parse_env(path)
 
 
+def _problem_keys(problems: list[str] | tuple[str, ...]) -> set[str]:
+    return {re.split(r"[\s=:]", problem, maxsplit=1)[0] for problem in problems}
+
+
 def test_env_gets_distinct_secrets_and_passwords(tmp_path: Path) -> None:
     """Sharing one value across purposes lets a token minted for one pass the
-    check of another; CSRF_SECRET_KEY is outside the startup validator's reach."""
-    text, _ = build_env((REPO_ROOT / ".env.example").read_text(encoding="utf-8"))
-    env = _parsed(text, tmp_path)
+    check of another; CSRF_SECRET_KEY is outside the startup validator's reach.
+    The secrets are found by suffix, so a new realm's keys are filled too."""
+    env = _parsed(build_env(EXAMPLE_TEXT), tmp_path)
+    secret_keys = {key for key in env if key.endswith(SECRET_KEY_SUFFIX)}
 
-    generated = [env[key] for key in (*SECRET_KEYS, *PASSWORD_KEYS)]
+    assert {
+        "JWT_USER_SECRET_KEY",
+        "JWT_USER_VERIFY_SECRET_KEY",
+        "JWT_USER_RESET_PASSWORD_SECRET_KEY",
+        "CSRF_SECRET_KEY",
+    } <= secret_keys
+    generated = [env[key] for key in (*sorted(secret_keys), *PASSWORD_KEYS)]
     assert len(set(generated)) == len(generated)
     for value in generated:
         assert len(value) >= SECRET_MIN_LENGTH
@@ -217,26 +294,44 @@ def test_env_gets_distinct_secrets_and_passwords(tmp_path: Path) -> None:
         assert PLACEHOLDER_MARKER not in value
 
 
-def test_env_lists_what_is_still_a_placeholder(tmp_path: Path) -> None:
-    text, remaining = build_env(
-        (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
-    )
-    env = _parsed(text, tmp_path)
+def test_a_new_secret_key_in_the_example_is_generated(tmp_path: Path) -> None:
+    example = EXAMPLE_TEXT + "JWT_STAFF_SECRET_KEY=example-staff-secret-not-real\n"
 
-    assert "EMAIL_PASSWORD" in remaining
-    assert "SENTRY_DSN" in remaining
-    assert not set(remaining) & {*SECRET_KEYS, *PASSWORD_KEYS}
-    assert set(remaining) == {
-        key for key, value in env.items() if PLACEHOLDER_MARKER in value
-    }
+    env = _parsed(build_env(example), tmp_path)
+
+    assert PLACEHOLDER_MARKER not in env["JWT_STAFF_SECRET_KEY"]
+
+
+def test_pending_list_matches_the_deploy_gate(tmp_path: Path) -> None:
+    """The summary must name exactly what check_env.py will refuse at the first
+    deploy: placeholders outside dormant S3 keys, and a localhost
+    PUBLIC_BASE_URL."""
+    text = build_env(EXAMPLE_TEXT)
+    gate = collect_problems(_parsed(EXAMPLE_TEXT, tmp_path), _parsed(text, tmp_path))
+
+    pending = _problem_keys(pending_before_deploy(text))
+
+    assert pending == _problem_keys(gate)
+    assert {"EMAIL_PASSWORD", "SENTRY_DSN", "PUBLIC_BASE_URL"} <= pending
+    assert not any(key.startswith("S3_") for key in pending)
+
+
+def test_pending_list_names_s3_keys_once_s3_is_enabled(tmp_path: Path) -> None:
+    example = EXAMPLE_TEXT.replace("S3_ENABLED=false", "S3_ENABLED=true")
+    text = build_env(example)
+    gate = collect_problems(_parsed(example, tmp_path), _parsed(text, tmp_path))
+
+    pending = _problem_keys(pending_before_deploy(text))
+
+    assert pending == _problem_keys(gate)
+    assert "S3_SECRET_ACCESS_KEY" in pending
 
 
 def test_env_keeps_every_example_key(tmp_path: Path) -> None:
     """check_env.py fails a deploy on any .env.example key missing from .env."""
-    example_text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
-    text, _ = build_env(example_text)
+    text = build_env(EXAMPLE_TEXT)
 
-    assert _parsed(text, tmp_path).keys() == _parsed(example_text, tmp_path).keys()
+    assert _parsed(text, tmp_path).keys() == _parsed(EXAMPLE_TEXT, tmp_path).keys()
 
 
 def test_hints_name_what_an_existing_env_needs() -> None:
@@ -269,6 +364,8 @@ def _commit(root: Path, *args: str) -> None:
         "user.email=test@example.com",
         "-c",
         "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
         "commit",
         "--quiet",
         *args,
@@ -296,6 +393,52 @@ def test_run_writes_the_planned_files_and_env(template_repo: Path) -> None:
     env = parse_env(template_repo / ".env")
     assert env["PROJECT_NAME"] == "Shop"
     assert env["TRUST_PROXY_HOSTS"] == '["127.0.0.1","::1","10.42.7.128/25"]'
+    assert "PUBLIC_BASE_URL" in _problem_keys(report.pending)
+
+
+def test_run_keeps_file_modes_and_hides_env(template_repo: Path) -> None:
+    """deploy.sh is executed by path, so a rewrite that drops its exec bit
+    breaks every deploy; .env holds every secret the stack has."""
+    run(template_repo, _options())
+
+    assert os.access(template_repo / "infra/deploy/deploy.sh", os.X_OK)
+    assert stat.S_IMODE((template_repo / ".env").stat().st_mode) == 0o600
+
+
+def test_env_symlink_is_refused(template_repo: Path) -> None:
+    """A dangling .env symlink reads as absent, and writing through it would
+    put the secrets wherever it points."""
+    (template_repo / ".env").symlink_to(template_repo / "elsewhere.env")
+    before = _snapshot(template_repo)
+
+    with pytest.raises(InitError, match=r"\.env"):
+        run(template_repo, _options())
+    assert _snapshot(template_repo) == before
+    assert not (template_repo / "elsewhere.env").exists()
+
+
+def test_a_write_failing_midway_keeps_the_marker(template_repo: Path) -> None:
+    """The compose project name is what marks a checkout as initialized; it is
+    written last, so a run that failed halfway can be reset and run again."""
+    deploy = template_repo / "infra/deploy"
+    deploy.chmod(0o555)
+    try:
+        with pytest.raises(InitError, match="git checkout"):
+            run(template_repo, _options())
+    finally:
+        deploy.chmod(0o755)
+
+    compose = (template_repo / COMPOSE_FILE).read_text(encoding="utf-8")
+    assert f"\nname: {TEMPLATE_PROJECT_NAME}\n" in compose
+
+
+def test_a_missing_git_binary_is_a_refusal(
+    template_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(template_repo / "no-such-bin"))
+
+    with pytest.raises(InitError, match="git"):
+        run(template_repo, _options())
 
 
 def test_second_run_is_refused_and_changes_nothing(template_repo: Path) -> None:
@@ -343,6 +486,7 @@ def test_existing_env_is_left_alone_and_hints_are_printed(
 
     assert (template_repo / ".env").read_text() == "PROJECT_NAME=mine\n"
     assert not report.env_created
+    assert report.pending == ()
     output = format_report(report)
     assert 'PROJECT_NAME="Shop"' in output
     assert "10.42.7.128/25" in output
