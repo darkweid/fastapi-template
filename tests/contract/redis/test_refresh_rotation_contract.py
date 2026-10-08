@@ -112,6 +112,77 @@ async def test_reuse_after_the_grace_window_wipes_every_session(
     assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == []
 
 
+@pytest.mark.parametrize(
+    "used_marker",
+    [
+        pytest.param(lambda now: str(now - 60), id="stale"),
+        pytest.param(lambda now: "not-a-timestamp", id="unreadable"),
+    ],
+)
+async def test_a_marker_outside_the_grace_window_is_reuse(
+    redis_backend: Redis,
+    monkeypatch: pytest.MonkeyPatch,
+    used_marker: Callable[[int], str],
+) -> None:
+    """The grace window forgives a retry, not a replay a minute later; and a
+    marker whose age cannot be read must not be forgiven by default."""
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    subject_id = str(uuid4())
+    first = await _login(redis_backend, subject_id)
+    second = await _login(redis_backend, subject_id)
+    await rotate_session_tokens(first, redis_backend, realm=USER_AUTH_REALM)
+    now_seconds, _ = await redis_backend.time()
+    await redis_backend.set(
+        KEYS.used(subject_id, first["jti"]), used_marker(int(now_seconds))
+    )
+
+    with pytest.raises(UnauthorizedException, match="reuse detected"):
+        await rotate_session_tokens(first, redis_backend, realm=USER_AUTH_REALM)
+
+    for session_id in (first["session_id"], second["session_id"]):
+        assert await redis_backend.exists(*_session_keys(subject_id, session_id)) == 0
+    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == []
+
+
+async def test_rotation_prunes_lapsed_sessions_from_the_index(
+    redis_backend: Redis,
+) -> None:
+    """Nothing else removes a session whose refresh token silently expired; an
+    index that only grows makes every session wipe slower."""
+    subject_id = str(uuid4())
+    old = await _login(redis_backend, subject_id)
+    now_seconds, _ = await redis_backend.time()
+    lapsed_session_id = str(uuid4())
+    await redis_backend.zadd(
+        KEYS.sessions(subject_id), {lapsed_session_id: int(now_seconds) - 1}
+    )
+
+    await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
+
+    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == [
+        old["session_id"]
+    ]
+
+
+async def test_the_rotated_access_jti_outlives_the_access_token(
+    redis_backend: Redis,
+) -> None:
+    """Logout names the session by its newest access token even after that token
+    expired, so the record of it must last as long as the refresh token can."""
+    access_seconds = config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    refresh_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
+    assert refresh_seconds > access_seconds
+    subject_id = str(uuid4())
+    old = await _login(redis_backend, subject_id)
+
+    await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
+
+    latest_access_ttl = await redis_backend.ttl(
+        KEYS.latest_access(subject_id, old["session_id"])
+    )
+    assert access_seconds < latest_access_ttl <= refresh_seconds
+
+
 async def test_a_jti_the_session_never_held_is_invalid_and_wipes(
     redis_backend: Redis,
 ) -> None:

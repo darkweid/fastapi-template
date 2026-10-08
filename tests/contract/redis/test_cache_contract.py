@@ -8,6 +8,7 @@ from src.core.cache.serializer import JsonSerializer
 PREFIX = "contract"
 DEFAULT_TTL_SECONDS = 60
 VERSION_TTL_SECONDS = 600
+SHRUNK_TTL_SECONDS = 5
 
 
 def _cache(redis_client: Redis) -> RedisCache:
@@ -114,17 +115,22 @@ async def test_delete_drops_one_entry(redis_backend: Redis) -> None:
     assert await cache.get(kept) == {"n": 2}
 
 
-async def test_counters_written_since_invalidation_live_for_the_version_ttl(
+async def test_a_write_pushes_its_counters_back_to_the_version_ttl(
     redis_backend: Redis,
 ) -> None:
-    """A counter must outlive the values addressed through it; its TTL is that
-    promise."""
+    """A counter must outlive the values addressed through it: one expiring under
+    a live value resets the version to 0, and the next invalidation increments it
+    straight back onto that value."""
     cache = _cache(redis_backend)
     key = CacheKey("users", "1", tags=("profile",))
+    counters = (version_key(PREFIX, "users"), tag_version_key(PREFIX, "profile"))
     await cache.invalidate("users")
     await cache.invalidate_tags("profile")
+    for counter in counters:
+        await redis_backend.expire(counter, SHRUNK_TTL_SECONDS)
 
     await cache.set(key, {"name": "Ada"})
 
-    for counter in (version_key(PREFIX, "users"), tag_version_key(PREFIX, "profile")):
-        assert 0 < await redis_backend.ttl(counter) <= VERSION_TTL_SECONDS
+    for counter in counters:
+        assert SHRUNK_TTL_SECONDS < await redis_backend.ttl(counter)
+        assert await redis_backend.ttl(counter) <= VERSION_TTL_SECONDS
