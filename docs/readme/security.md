@@ -77,7 +77,9 @@ Redis-backed **fixed window** counter via Lua script:
 - Thread-safe dictionary with lock.
 - Capped at 100,000 entries (~20-25 MB).
 - Oldest entries evicted when at capacity.
-- State transitions (degraded/recovered) reported to Sentry.
+- State transitions (degraded/recovered) reported to Sentry, recovery only at
+  the next admitted call: a full Redis (`OOM`) still answers the reads a refused
+  call makes, so only a call whose window write succeeds proves it recovered.
 
 **Why it matters:** Rate limiting is the first line of defense against brute-force, credential stuffing, and abuse. The fallback ensures protection continues during Redis outages instead of silently disabling.
 

@@ -1,11 +1,13 @@
 import asyncio
 from collections.abc import AsyncIterator
+from unittest.mock import MagicMock
 
 import pytest
 from redis.asyncio import Redis
 
 from src.core.limiter import FastAPILimiter
 from src.core.limiter.depends import RateLimiter
+from src.core.redis.degradation import RedisDegradationReporter
 
 PREFIX = "contract-limiter"
 WINDOW_MS = 60_000
@@ -16,11 +18,18 @@ async def limiter_redis(real_redis: Redis) -> AsyncIterator[Redis]:
     """Initialize the class-level limiter on the real instance and put back what
     was there: `init` rewrites the class prefix for the rest of the session."""
     previous = (FastAPILimiter.redis, FastAPILimiter.lua_sha, FastAPILimiter.prefix)
+    previous_state = (RateLimiter._fallback_windows, RateLimiter._degradation_reporter)
     await FastAPILimiter.init(real_redis, prefix=PREFIX)
+    # Class-level, so another test's outage would otherwise carry into this one.
+    RateLimiter._fallback_windows = {}
+    RateLimiter._degradation_reporter = RedisDegradationReporter("RateLimiter")
     try:
         yield real_redis
     finally:
         FastAPILimiter.redis, FastAPILimiter.lua_sha, FastAPILimiter.prefix = previous
+        RateLimiter._fallback_windows, RateLimiter._degradation_reporter = (
+            previous_state
+        )
 
 
 async def test_the_window_admits_the_limit_then_answers_the_wait(
@@ -78,3 +87,30 @@ async def test_concurrent_calls_never_exceed_the_limit(limiter_redis: Redis) -> 
 
     assert sum(result == 0 for result in results) == 3
     assert await limiter_redis.get(key) == "3"
+
+
+async def test_a_sustained_out_of_memory_is_reported_once(
+    limiter_redis: Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins what no fake can: under OOM the script still runs its GET and PTTL
+    and fails only at INCR or SET, so a refused call succeeds while every
+    admitted one degrades. Were the refusal read as recovery, the cooldown
+    would never hold."""
+    capture = MagicMock()
+    monkeypatch.setattr(
+        "src.core.redis.degradation.sentry_sdk.capture_message", capture
+    )
+    limiter = RateLimiter(times=1, seconds=60)
+    full = f"{PREFIX}:oom-full"
+    assert await limiter._check_limit(full) == 0  # noqa: SLF001
+    original = (await limiter_redis.config_get("maxmemory"))["maxmemory"]
+    await limiter_redis.config_set("maxmemory", 1)
+    try:
+        for attempt in range(2):
+            await limiter._check_limit(f"{PREFIX}:oom-fresh-{attempt}")  # noqa: SLF001
+            assert await limiter._check_limit(full) > 0  # noqa: SLF001
+    finally:
+        await limiter_redis.config_set("maxmemory", original)
+
+    capture.assert_called_once()
+    assert "OutOfMemoryError" in capture.call_args.args[0]
