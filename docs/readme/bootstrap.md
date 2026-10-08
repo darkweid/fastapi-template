@@ -50,7 +50,10 @@ second run (`infra/docker-compose.yml` no longer names `fastapi-template`). It
 needs only `python3` and `git`, not the virtualenv of section 3, and it never
 runs Docker. `DRY_RUN=1` prints the files it would edit and touches nothing.
 `TITLE` sets `PROJECT_NAME` (the Swagger/OpenAPI title) in `.env.example` and in
-the `.env` it creates; it may not hold `"`, `\`, `$` or control characters.
+the `.env` it creates; it may not be blank or hold `"`, `\`, `$`, a backtick or
+a non-printable character. Every file is written whole through a rename and
+`infra/docker-compose.yml` goes last, so a run that fails midway leaves the
+project name in place: `git checkout --` the files it names and run it again.
 
 | What | Where | Becomes |
 | --- | --- | --- |
@@ -68,33 +71,42 @@ the `.env` it creates; it may not hold `"`, `\`, `$` or control characters.
 The network's Docker name always changes, so two forks on one host never share
 a bridge. Its subnet moves only with `SUBNET`: two forks on one host also need
 distinct subnets, and `SUBNET` must be a private `/24` outside `172.17.0.0/16`
-(docker0).
+(docker0). Pick it clear of Docker's default address pools (`172.17.0.0/16`
+through `172.31.0.0/16`, `192.168.0.0/16`) and of every LAN or VPN the host
+joins, or networks Docker creates later and those routes collide with it.
 
 **Volumes are the one irreversible bit.** The names are pinned explicitly, so
 renaming after the stack has run once points the new names at fresh, empty
 volumes while the old data sits in `template-postgres-data` untouched.
 
 If you renamed first and the old stack is still up, address it by its original
-project name — the `-p` flag overrides the `name:` inside the compose file — and
-then drop the volumes, assuming nothing in them is worth keeping:
+project name — the `-p` flag overrides the `name:` inside the compose file —
+then remove the old network, which still holds the subnet (the next `make run`
+otherwise fails with `Pool overlaps with other one on this address space`), and
+drop the volumes, assuming nothing in them is worth keeping:
 
 ```bash
 docker compose -p fastapi-template -f infra/docker-compose.yml down
+docker network rm app-network
 docker volume rm template-postgres-data template-redis-data template-nginx-upstream
 ```
 
-The command ends by listing what is left by hand:
+When it creates `.env`, the command lists the values the deploy gate
+(`scripts/ops/check_env.py`) would still refuse in it: the `-not-real`
+placeholders it cannot generate (`EMAIL_PASSWORD`, `SENTRY_DSN`, the `S3_*` keys once
+`S3_ENABLED` is on) and a `PUBLIC_BASE_URL` pointing at localhost. A `.env` that
+already existed is left alone and not listed; the command prints the
+`PROJECT_NAME` and `TRUST_PROXY_HOSTS` lines it needs instead. Then it lists
+what is left by hand:
 
-- `PROJECT_NAME` — set by `TITLE`.
-- `VERSION` in `.env`.
-- README badges point at `darkweid/fastapi-template` — swap the owner/repo or
-  delete the block. The Coveralls badge also needs the repository enabled at
-  coveralls.io before it resolves.
+- If a stack of this checkout ever ran: the cleanup above.
+- README badges and links point at `darkweid/fastapi-template` — swap the
+  owner/repo or delete them. The Coveralls badge also needs the repository
+  enabled at coveralls.io before it resolves.
 - `LICENSE` — replace the copyright holder, or delete the file for a private
   project.
 - `author: fastapi-template` in `infra/ansible/roles/*/meta/main.yml`.
-
-Review the diff and commit it before section 3.
+- Review the diff (`git diff`) and commit it, before section 3.
 
 ---
 
@@ -184,7 +196,9 @@ applies to them — see [auth-realms.md](auth-realms.md).
   `app-network` (pinned in `infra/docker-compose.yml`), where nginx sits. The
   network's gateway, `172.30.0.1`, stays outside it: Docker forwards
   published-port connections it proxies, every IPv6 client included, from
-  there. `make init-project SUBNET=` moves this value with the subnet.
+  there. These are the defaults: `make init-project SUBNET=` moves the subnet,
+  and with it the `172.30.0.x` values here become that `/24`'s `.1` and upper
+  `/25`.
 - `DEBUG=false`, `VALIDATE_CERTS=true`, `COOKIE_SECURE=true` outside local
   development; `check_env.py` hard-blocks the other way round in a deploy.
 - `S3_ENABLED` is `false` by default. Turn it on and fill `S3_BUCKET_NAME`,
