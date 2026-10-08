@@ -199,6 +199,13 @@ class FakeUnitOfWork:
         return [event.code for _, event in self.published]
 
     async def __aenter__(self) -> FakeUnitOfWork:
+        # Same refusal as SQLAlchemyUnitOfWork, so route tests running on this
+        # fake catch a handler that enters a unit of work after a raw read.
+        if self._session.in_transaction():
+            raise RuntimeError(
+                "UnitOfWork entered while the session is already in a transaction."
+            )
+        self._session.set_in_transaction(True)
         return self
 
     async def __aexit__(
@@ -207,12 +214,18 @@ class FakeUnitOfWork:
         exc_val: BaseException | None,
         exc_tb: object | None,
     ) -> None:
-        if exc_type is not None and not self._completed:
-            await self.rollback()
+        try:
+            if exc_type is not None and not self._completed:
+                await self.rollback()
+        finally:
+            # The real unit of work rolls back a clean exit without commit(),
+            # so every exit leaves the session idle.
+            self._session.set_in_transaction(False)
         return None
 
     async def _commit(self) -> None:
         self._completed = True
+        self._session.set_in_transaction(False)
         hooks, self._after_commit_hooks = self._after_commit_hooks, []
         for hook in hooks:
             try:
@@ -226,6 +239,7 @@ class FakeUnitOfWork:
 
     def _mark_rolled_back(self) -> None:
         self._completed = True
+        self._session.set_in_transaction(False)
         self._after_commit_hooks = []
 
     def _ensure_not_completed(self) -> None:

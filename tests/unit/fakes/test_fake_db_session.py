@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.exc import InvalidRequestError
 
-from tests.fakes.db import FakeAsyncSession
+from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 
 
 async def test_commit_ends_the_transaction() -> None:
@@ -119,3 +119,36 @@ async def test_begin_inside_a_transaction_raises() -> None:
         await session.begin()
 
     assert session.in_transaction() is True
+
+
+async def test_fake_unit_of_work_refuses_a_session_already_in_a_transaction() -> None:
+    """Route tests run on the fake; without the real guard a handler that
+    enters a unit of work after a raw read would pass them and fail in prod."""
+    session = FakeAsyncSession(in_transaction=True)
+
+    with pytest.raises(RuntimeError, match="already in a transaction"):
+        async with FakeUnitOfWork(session=session):
+            pass
+
+    assert session.in_transaction() is True
+
+
+async def test_fake_unit_of_work_ends_its_transaction_on_every_exit() -> None:
+    """One fake unit of work serves every request of a route test, so each exit
+    has to leave the session idle for the next entry, as the real one does."""
+    session = FakeAsyncSession()
+    uow = FakeUnitOfWork(session=session)
+
+    async with uow:
+        assert session.in_transaction() is True
+        await uow.commit()
+    assert session.in_transaction() is False
+
+    async with uow:
+        pass
+    assert session.in_transaction() is False
+
+    with pytest.raises(ValueError, match="boom"):
+        async with uow:
+            raise ValueError("boom")
+    assert session.in_transaction() is False
