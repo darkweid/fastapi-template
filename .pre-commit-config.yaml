@@ -9,6 +9,13 @@ repos:
     hooks:
       - id: pyupgrade
         args: [ "--py313-plus" ]
+        exclude: ^scripts/ops/init_project\.py$
+      # init_project.py runs on the host before the virtualenv exists, under
+      # whatever python3 is there; macOS still ships 3.9.
+      - id: pyupgrade
+        name: pyupgrade (host scripts, 3.9)
+        args: [ "--py39-plus" ]
+        files: ^scripts/ops/init_project\.py$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
