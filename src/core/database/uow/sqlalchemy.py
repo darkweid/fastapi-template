@@ -38,7 +38,12 @@ class SQLAlchemyUnitOfWork:
         enclosing unit of work. A SAVEPOINT there would make `commit()` commit
         that outer transaction too, work this unit never saw included. Nothing
         is touched on refusal: the session stays in its transaction.
+
+        Also raises once this unit has been committed or rolled back: the
+        per-request instance is shared by every use case of a route, and a
+        second entry would open a transaction nothing ends.
         """
+        self._ensure_not_completed()
         if self._session.in_transaction():
             raise RuntimeError(
                 "UnitOfWork entered while the session is already in a "
