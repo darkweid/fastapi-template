@@ -117,6 +117,21 @@ async def test_dedicated_client_is_closed_when_verify_fails(
     assert verify.await_args.args[0].closed
 
 
+async def test_disabled_cache_opens_no_dedicated_client(
+    dedicated_cache_url: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cache switched off never sends a command; an instance it still pinged
+    # would fail startup over a service nothing uses.
+    monkeypatch.setattr(config.cache, "CACHE_ENABLED", False)
+    application_client = InMemoryRedis()
+
+    async with AsyncExitStack() as stack:
+        client = await open_cache_redis_client(stack, application_client)
+
+    assert client is application_client
+    assert dedicated_cache_url == []
+
+
 @pytest.fixture
 def declare_cached_route(monkeypatch: pytest.MonkeyPatch) -> Callable[[int], None]:
     # The registry is module state that decorating appends to, so each test gets

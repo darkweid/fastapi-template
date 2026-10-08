@@ -20,12 +20,13 @@ async def open_cache_redis_client(
     """
     The client the cache runs on.
 
-    Blank `CACHE_REDIS_URL` keeps the cache on the application client. A set one
-    gets a client of its own whose close is on `stack` before the ping, so a wrong
-    URL fails startup instead of every cache call, and leaks no pool doing so.
+    Blank `CACHE_REDIS_URL`, or a disabled cache, keeps the application client.
+    A set one gets a client of its own whose close is on `stack` before the ping,
+    so a wrong URL fails startup instead of every cache call, and leaks no pool
+    doing so.
     """
-    url = config.cache.CACHE_REDIS_URL.get_secret_value()
-    if not url:
+    url = config.cache.dedicated_redis_url
+    if url is None:
         return application_client
     client = create_redis_client(connection_url=url)
     stack.push_async_callback(client.aclose)

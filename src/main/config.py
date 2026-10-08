@@ -2,7 +2,7 @@ from functools import lru_cache
 import json
 import os
 from typing import Annotated, Any, Literal
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlsplit
 
 from pydantic import (
     BaseModel,
@@ -141,6 +141,11 @@ class RedisConfig(BaseSettings):
         )
 
 
+_INVALID_CACHE_REDIS_URL = (
+    "CACHE_REDIS_URL is not a valid redis URL; percent-encode the password"
+)
+
+
 class CacheConfig(BaseSettings):
     CACHE_ENABLED: bool = True
     CACHE_DEFAULT_TTL: int = Field(60, gt=0)
@@ -159,11 +164,35 @@ class CacheConfig(BaseSettings):
     @classmethod
     def validate_cache_redis_url(cls, value: SecretStr) -> SecretStr:
         url = value.get_secret_value().strip()
-        if url and not url.startswith(("redis://", "rediss://")):
+        if not url:
+            return SecretStr(url)
+        parts = urlsplit(url)
+        if parts.scheme == "unix":
+            return SecretStr(url)
+        if parts.scheme not in ("redis", "rediss"):
             raise ValueError(
-                "CACHE_REDIS_URL must be blank or a redis:// or rediss:// URL"
+                "CACHE_REDIS_URL must be blank or a redis://, rediss:// or "
+                "unix:// URL"
             )
+        # A `/`, `#` or `?` left raw in the password ends the netloc early, and
+        # redis-py then fails on a "port" made of the password, quoting it. The
+        # same parse here fails first, with a message that quotes nothing.
+        try:
+            addressable = bool(parts.hostname) and parts.port != 0
+        except ValueError:
+            raise ValueError(_INVALID_CACHE_REDIS_URL) from None
+        if not addressable:
+            raise ValueError(_INVALID_CACHE_REDIS_URL)
         return SecretStr(url)
+
+    @property
+    def dedicated_redis_url(self) -> str | None:
+        """
+        The URL of the cache's own instance, or None while the cache runs on the
+        application client - or is switched off, which needs no instance at all.
+        """
+        url = self.CACHE_REDIS_URL.get_secret_value()
+        return url if url and self.CACHE_ENABLED else None
 
     @model_validator(mode="after")
     def validate_ttl_bounds(self) -> "CacheConfig":

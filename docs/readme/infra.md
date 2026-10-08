@@ -66,15 +66,22 @@ the `REDIS_*` settings and the `redis://` URLs stay as they are.
 The cache layer (`src/core/cache/`) runs on `app.state.redis_client`, the
 application client created in `src/main/lifespan.py` and shared with auth token
 storage and the health probe, unless `CACHE_REDIS_URL` is set: then the API
-lifespan and the worker each open a client on that instance (the API pings it at
-startup and fails on a wrong URL), and only the cache uses it.
+lifespan and the worker each open a client on that instance and ping it at
+startup, so a wrong URL fails either process, and only the cache uses it. With
+`CACHE_ENABLED=false` neither opens one.
 
 The rate limiter runs on the application client: `lifespan` hands it to
-`FastAPILimiter.init`. Only taskiq keeps a connection of its own (the broker plus
-the retry schedule source), so an API container holds two Redis connection pools
-(three with `CACHE_REDIS_URL`), a worker container holds the broker's and its own
-(plus one with `CACHE_REDIS_URL`), and a scheduler container holds the broker's -
-size `maxclients` from that count, not from one pool per process.
+`FastAPILimiter.init`. The pools that open connections, per container:
+
+- API: the application client and the broker (`.kiq()`), plus the cache client
+  with `CACHE_REDIS_URL`.
+- Worker: the broker, the retry schedule source (`SmartRetryMiddleware` writes
+  retries onto it) and the tasks client (`get_tasks_redis_singleton`), plus the
+  cache client with `CACHE_REDIS_URL`.
+- Scheduler: the broker, the retry schedule source and the heartbeat client.
+
+Size `maxclients` of each instance from that count, not from one pool per
+process; the cache clients count against the cache instance only.
 
 - Keep `maxmemory-policy noeviction` (`infra/redis.conf`). One instance holds
   sessions and refresh-token state, OTP and one-time challenges, rate-limit
@@ -82,8 +89,10 @@ size `maxclients` from that count, not from one pool per process.
   to make room: an evicted session logs a user out and an evicted stream entry is
   a task that never runs (a cache version counter, by contrast, may go: a missing
   counter is a miss, never a stale hit). Under `noeviction` a full Redis refuses
-  writes with `OOM` instead, which fails loudly everywhere but in the cache: the
-  cache fails open on it, turning its calls into misses reported to Sentry. Watch
+  writes with `OOM` instead, which fails loudly everywhere but in the cache and
+  the rate limiter: the cache drops its writes while hits keep serving and
+  invalidation keeps working, the limiter falls back to its per-process
+  in-memory window, and both report to Sentry. Watch
   for it before it happens: `/health/` reports `redis_memory_used_ratio` and
   turns `degraded` at 90% of `maxmemory`. When the cache outgrows its share, move
   it to a separate instance with an eviction policy (see `CACHE_REDIS_URL` above)

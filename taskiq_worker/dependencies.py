@@ -45,8 +45,8 @@ def get_cache_redis_singleton() -> Redis:
     cache, so task-side invalidations reach the instance the API caches on.
     """
     global _cache_redis_client
-    url = config.cache.CACHE_REDIS_URL.get_secret_value()
-    if not url:
+    url = config.cache.dedicated_redis_url
+    if url is None:
         return get_tasks_redis_singleton()
     if _cache_redis_client is None:
         _cache_redis_client = create_redis_client(connection_url=url)

@@ -14,6 +14,7 @@ from src.core.cache.serializer import JsonSerializer
 import src.core.email_service.tasks  # noqa: F401
 from src.core.http.client import close_http_clients
 import src.core.outbox.tasks  # noqa: F401
+from src.core.redis.lifecycle import verify_redis_client
 from src.main.config import config
 from src.main.event_subscribers import register_event_subscribers
 from src.main.sentry import init_sentry
@@ -36,9 +37,14 @@ async def on_worker_startup(_: TaskiqState) -> None:
     # tasks can read and invalidate the same cache the API writes. Same prefix
     # and TTLs are what make the keys shared; the client is the worker's own, on
     # the cache instance when CACHE_REDIS_URL is set.
+    cache_client = get_cache_redis_singleton()
+    # Pinged like the API's, so a wrong URL fails the worker at startup rather
+    # than turning every task-side invalidation into a silent no-op.
+    if config.cache.dedicated_redis_url is not None:
+        await verify_redis_client(cache_client)
     set_cache(
         RedisCache(
-            redis_client=get_cache_redis_singleton(),
+            redis_client=cache_client,
             serializer=JsonSerializer(),
             prefix=config.cache.CACHE_KEY_PREFIX,
             default_ttl=config.cache.CACHE_DEFAULT_TTL,

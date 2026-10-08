@@ -188,10 +188,13 @@ The cache runs on the application's Redis unless `CACHE_REDIS_URL` names an
 instance of its own; the API and the worker then both cache there, while
 sessions, one-time challenges, rate limits and the task queue stay on the main
 instance. That instance may run `maxmemory-policy allkeys-lru`: an evicted
-version counter is a miss, never a stale hit. The cache fails open either way -
-an unreachable or full (`OOM`) Redis turns cache calls into misses, reported to
-Sentry with a cooldown, never into errors - so `/health/` does not probe the
-cache instance. `.env` must carry the key, blank or not: the deploy gate
+version counter is a miss, never a stale hit. The cache fails open either way,
+never into errors: an unreachable Redis turns every cache call into a miss, and
+a full one (`OOM`) drops only the writes - hits keep serving and invalidation
+keeps working. Sentry hears of it once per incident, and of the recovery at the
+next write that succeeds, so `/health/` does not probe the cache instance. A
+custom `CACHE_REDIS_URL` must percent-encode its password. `.env` must carry
+the key, blank or not: the deploy gate
 (`scripts/ops/check_env.py`) requires every key of `.env.example`.
 
 ## Tooling

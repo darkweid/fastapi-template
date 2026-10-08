@@ -139,3 +139,21 @@ async def test_cache_client_is_built_once_from_the_cache_url(
     assert created_with == ["redis://cache.internal:6379/0"]
     assert dedicated.closed
     assert tasks_dependencies._cache_redis_client is None
+
+
+def test_disabled_cache_builds_no_dedicated_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_with: list[str] = []
+    tasks_client = InMemoryRedis()
+    monkeypatch.setattr(config.cache, "CACHE_ENABLED", False)
+    monkeypatch.setattr(
+        config.cache, "CACHE_REDIS_URL", SecretStr("redis://cache.internal:6379/0")
+    )
+    monkeypatch.setattr(tasks_dependencies, "create_redis_client", created_with.append)
+    monkeypatch.setattr(
+        tasks_dependencies, "get_tasks_redis_singleton", lambda: tasks_client
+    )
+
+    assert tasks_dependencies.get_cache_redis_singleton() is tasks_client
+    assert created_with == []
