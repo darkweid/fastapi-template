@@ -42,36 +42,80 @@ async def test_clean_exit_without_commit_persists_nothing_on_fresh_session(
     assert found is None
 
 
-async def test_clean_exit_without_commit_discards_savepoint_work(
+async def test_entering_after_a_raw_read_raises(db_session: AsyncSession) -> None:
+    """A plain SELECT on the shared session autobegins a transaction; the UoW
+    used to nest a SAVEPOINT in it and commit it on `commit()`."""
+    await db_session.execute(select(1))
+
+    with pytest.raises(RuntimeError, match="already in a transaction"):
+        async with ApplicationUnitOfWork(db_session):
+            pass
+
+    assert db_session.in_transaction()
+    assert "uow_active" not in db_session.info
+
+
+async def test_entering_after_staged_work_raises_and_leaves_the_session_as_it_was(
     db_session: AsyncSession,
 ) -> None:
-    # A prior read on the shared session autobegins the outer transaction, so
-    # the UoW enters through begin_nested().
-    await db_session.execute(select(1))
-    tag = f"uow-nested-{uuid4().hex[:12]}"
-    uow = ApplicationUnitOfWork(db_session)
-    async with uow:
-        await uow.users.create(uow.session, data=_user_data(tag))
+    """The refusal must leave the caller's staged work and transaction
+    untouched: no rollback, no marker left behind."""
+    tag = f"uow-staged-{uuid4().hex[:12]}"
+    await UserRepository().create(db_session, data=_user_data(tag))
+    await db_session.flush()
+
+    with pytest.raises(RuntimeError, match="already in a transaction"):
+        async with ApplicationUnitOfWork(db_session):
+            pass
+
+    assert db_session.in_transaction()
+    assert "uow_active" not in db_session.info
+    staged = await db_session.scalar(select(User).where(User.username == tag))
+    assert staged is not None
+
+
+async def test_a_unit_of_work_inside_a_unit_of_work_raises(
+    db_session: AsyncSession,
+) -> None:
+    """The inner exit used to pop `uow_active` and lift the outer UoW's guard
+    against a repository `commit=True`."""
+    tag = f"uow-outer-{uuid4().hex[:12]}"
+    outer = ApplicationUnitOfWork(db_session)
+    async with outer:
+        await outer.users.create(outer.session, data=_user_data(tag))
+        with pytest.raises(RuntimeError, match="already in a transaction"):
+            async with ApplicationUnitOfWork(db_session):
+                pass
+        assert db_session.info.get("uow_active") is True
+        with pytest.raises(RuntimeError, match="inside an active UnitOfWork"):
+            await outer.users.create(
+                outer.session, data=_user_data(f"{tag}-x"), commit=True
+            )
 
     found = await db_session.scalar(select(User).where(User.username == tag))
     assert found is None
 
 
-async def test_clean_exit_rolls_back_only_the_uow_savepoint(
+async def test_sequential_units_of_work_on_one_session(
     db_session: AsyncSession,
 ) -> None:
-    # Work the caller staged on the shared session before entering the UoW
-    # must survive the UoW's implicit rollback: only the SAVEPOINT goes.
-    outer_tag = f"uow-outer-{uuid4().hex[:12]}"
-    inner_tag = f"uow-inner-{uuid4().hex[:12]}"
-    await UserRepository().create(db_session, data=_user_data(outer_tag))
-    await db_session.flush()
+    """The guard must not fire on a session the previous unit already ended."""
+    first_tag = f"uow-first-{uuid4().hex[:12]}"
+    second_tag = f"uow-second-{uuid4().hex[:12]}"
 
-    uow = ApplicationUnitOfWork(db_session)
-    async with uow:
-        await uow.users.create(uow.session, data=_user_data(inner_tag))
+    first = ApplicationUnitOfWork(db_session)
+    async with first:
+        await first.users.create(first.session, data=_user_data(first_tag))
+        await first.rollback()
+    assert not db_session.in_transaction()
 
-    outer = await db_session.scalar(select(User).where(User.username == outer_tag))
-    inner = await db_session.scalar(select(User).where(User.username == inner_tag))
-    assert outer is not None
-    assert inner is None
+    second = ApplicationUnitOfWork(db_session)
+    async with second:
+        await second.users.create(second.session, data=_user_data(second_tag))
+        await second.flush()
+        found = await second.users.get_single(second.session, username=second_tag)
+        assert found is not None
+
+    assert not db_session.in_transaction()
+    gone = await db_session.scalar(select(User).where(User.username == second_tag))
+    assert gone is None

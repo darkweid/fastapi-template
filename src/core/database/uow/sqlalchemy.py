@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Self, TypeVar
 
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
@@ -17,31 +17,40 @@ class SQLAlchemyUnitOfWork:
     """
     Transaction boundary over an AsyncSession, shared by every UseCase.
 
-    Commit is strictly explicit: leaving the context without calling commit()
-    rolls the transaction back, whether the block raised or returned normally.
-    Any later `uow.*` call raises RuntimeError.
+    A unit of work is always the top-level transaction: entering one on a
+    session that is already in a transaction raises. Commit is strictly
+    explicit: leaving the context without calling commit() rolls the
+    transaction back, whether the block raised or returned normally. Any later
+    `uow.*` call raises RuntimeError.
     """
 
     def __init__(self, session: AsyncSession):
         self._session = session
-        self._transaction: AsyncSessionTransaction | None = None
         self._is_completed = False
         self._after_commit_hooks: list[AfterCommitHook] = []
 
     async def __aenter__(self) -> Self:
         """
-        Start a transaction and keep a handle on it.
+        Begin the session's transaction.
 
-        Top-level on an idle session, which is what a request hands over after
-        authentication: the auth dependency ends its own read transaction. A
-        SAVEPOINT when an earlier read on the shared session has already
-        autobegun one, so rollback can target exactly this UoW's scope instead
-        of the whole session transaction.
+        Raises RuntimeError when the session is already in one - an earlier
+        read on the shared session autobegins a transaction, and so does an
+        enclosing unit of work. A SAVEPOINT there would make `commit()` commit
+        that outer transaction too, work this unit never saw included. Nothing
+        is touched on refusal: the session stays in its transaction.
+
+        Also raises once this unit has been committed or rolled back: the
+        per-request instance is shared by every use case of a route, and a
+        second entry would open a transaction nothing ends.
         """
+        self._ensure_not_completed()
         if self._session.in_transaction():
-            self._transaction = await self._session.begin_nested()
-        else:
-            self._transaction = await self._session.begin()
+            raise RuntimeError(
+                "UnitOfWork entered while the session is already in a "
+                "transaction. Read through `detached_read` or move the read "
+                "inside the UnitOfWork; a UnitOfWork is never nested."
+            )
+        await self._session.begin()
         self._session.info["uow_active"] = True
         return self
 
@@ -49,10 +58,9 @@ class SQLAlchemyUnitOfWork:
         """
         Roll back on any exit without a prior commit().
 
-        Without this, a clean exit's outcome would depend on invisible context:
-        an idle session's `begin()` block commits on clean exit, while a session
-        an earlier read left in a transaction releases the SAVEPOINT and
-        discards the work later at session close.
+        Without this, a clean exit would leave the transaction open on the
+        session until it closes, and its outcome would depend on what the
+        caller did next.
         """
         try:
             if not self._is_completed:
@@ -63,7 +71,6 @@ class SQLAlchemyUnitOfWork:
                     )
                 await self.rollback()
         finally:
-            self._transaction = None
             self._session.info.pop("uow_active", None)
 
     def _has_pending_changes(self) -> bool:
@@ -87,19 +94,8 @@ class SQLAlchemyUnitOfWork:
         await self._run_after_commit_hooks()
 
     async def rollback(self) -> None:
-        """
-        Roll back only the transaction this UoW opened.
-
-        On the nested path that is the SAVEPOINT, so uncommitted work the caller
-        staged on the shared session before entering the UoW survives. Without
-        the handle (rollback outside the context), the whole session transaction
-        is rolled back.
-        """
         self._ensure_not_completed()
-        if self._transaction is not None:
-            await self._transaction.rollback()
-        else:
-            await self._session.rollback()
+        await self._session.rollback()
         self._is_completed = True
         self._after_commit_hooks = []
 

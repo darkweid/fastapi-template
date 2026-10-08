@@ -181,3 +181,81 @@ async def test_get_uow_returns_application_uow() -> None:
     uow = await get_uow(session)
 
     assert isinstance(uow, ApplicationUnitOfWork)
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_refuses_a_session_already_in_a_transaction() -> None:
+    """A SAVEPOINT here would let `commit()` commit the caller's open
+    transaction too, work the UoW never saw included."""
+    session = FakeAsyncSession(in_transaction=True)
+    uow = SQLAlchemyUnitOfWork(session)
+
+    with pytest.raises(RuntimeError, match="already in a transaction"):
+        async with uow:
+            pass
+
+    assert session.in_transaction() is True
+    assert "uow_active" not in session.info
+    session.rollback.assert_not_awaited()
+    assert uow.completed is False
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_inside_a_uow_raises_and_keeps_the_outer_guard() -> None:
+    """The inner exit used to pop `uow_active`, silently lifting the outer
+    UoW's protection against `commit=True` repository calls."""
+    session = FakeAsyncSession()
+
+    async with SQLAlchemyUnitOfWork(session) as outer:
+        with pytest.raises(RuntimeError, match="already in a transaction"):
+            async with SQLAlchemyUnitOfWork(session):
+                pass
+        assert session.info.get("uow_active") is True
+        await outer.commit()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_sequential_units_on_one_session() -> None:
+    session = FakeAsyncSession()
+
+    async with SQLAlchemyUnitOfWork(session) as first:
+        await first.commit()
+    async with SQLAlchemyUnitOfWork(session):
+        pass
+    async with SQLAlchemyUnitOfWork(session) as third:
+        await third.commit()
+
+    assert session.commit.await_count == 2
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_survives_a_rolled_back_savepoint() -> None:
+    """The event log rolls its SAVEPOINT back on a failed insert; the unit of
+    work around it must still be able to commit."""
+    session = FakeAsyncSession()
+
+    async with SQLAlchemyUnitOfWork(session) as uow:
+        savepoint = await session.begin_nested()
+        await savepoint.rollback()
+        assert session.in_transaction() is True
+        await uow.commit()
+
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_uow_refuses_to_reenter_after_completion() -> None:
+    """`get_unit_of_work` is cached per request, so two use cases in one route
+    share one instance; a second entry would open a transaction nothing ends."""
+    session = FakeAsyncSession()
+    uow = SQLAlchemyUnitOfWork(session)
+    async with uow:
+        await uow.commit()
+
+    with pytest.raises(RuntimeError, match="already been completed"):
+        async with uow:
+            pass
+
+    assert session.in_transaction() is False
+    assert "uow_active" not in session.info
