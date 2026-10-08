@@ -200,13 +200,15 @@ async def test_disabled_worker_cache_pings_no_dedicated_client(
     assert get_cache_instance()._redis is not dedicated_cache_client  # noqa: SLF001
 
 
-async def test_worker_shutdown_closes_the_cache_client(
+async def test_worker_shutdown_closes_every_client_when_one_close_raises(
     clean_cache_singleton: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cache client closes even when another close raises, and before the
-    tasks client it may be borrowing."""
+    """The cache client closes before the tasks client it may be borrowing, and
+    the retry schedule source - whose pool SmartRetryMiddleware writes every
+    retry through - closes too, even when another close raises."""
     closed: list[str] = []
+    retry_source = AsyncMock()
 
     async def close_cache_redis_client() -> None:
         closed.append("cache")
@@ -224,8 +226,10 @@ async def test_worker_shutdown_closes_the_cache_client(
         worker_app, "close_tasks_redis_client", close_tasks_redis_client
     )
     monkeypatch.setattr(worker_app, "close_http_clients", close_http_clients)
+    monkeypatch.setattr(worker_app, "retry_schedule_source", retry_source)
 
     with pytest.raises(RuntimeError, match="refused to close"):
         await worker_app.on_worker_shutdown(TaskiqState())
 
     assert closed == ["cache", "tasks"]
+    retry_source.shutdown.assert_awaited_once()

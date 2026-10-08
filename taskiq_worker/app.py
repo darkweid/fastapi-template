@@ -20,7 +20,7 @@ from src.main.event_subscribers import register_event_subscribers
 from src.main.sentry import init_sentry
 import src.user.auth.tasks  # noqa: F401
 import src.user.tasks  # noqa: F401
-from taskiq_worker.broker import broker
+from taskiq_worker.broker import broker, retry_schedule_source
 from taskiq_worker.dependencies import (
     close_cache_redis_client,
     close_tasks_redis_client,
@@ -62,6 +62,10 @@ async def on_worker_shutdown(_: TaskiqState) -> None:
     # skips its pool disconnect; the process exits right after, so that is fine.
     async with AsyncExitStack() as stack:
         stack.push_async_callback(close_tasks_redis_client)
+        # SmartRetryMiddleware writes retries through this source's own pool;
+        # the scheduler closes it through its sources, the worker here.
+        if retry_schedule_source is not None:
+            stack.push_async_callback(retry_schedule_source.shutdown)
         stack.push_async_callback(close_cache_redis_client)
         stack.push_async_callback(close_http_clients)
         stack.callback(reset_cache)
