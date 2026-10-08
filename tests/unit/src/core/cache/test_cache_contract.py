@@ -98,6 +98,19 @@ async def test_value_written_after_invalidate_is_readable(cache: Cache) -> None:
     assert await cache.get(KEY) == {"name": "grace"}
 
 
+async def test_invalidated_value_stays_unreachable_after_a_sibling_write(
+    cache: Cache,
+) -> None:
+    # The sibling write recreates the namespace counter; a generation that
+    # restarted where it once was would address the retired entry again.
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+    await cache.invalidate(KEY.namespace)
+
+    await cache.set(OTHER_KEY, {"name": "grace"}, ttl=60)
+
+    assert await cache.get(KEY) is None
+
+
 async def test_tag_invalidation_crosses_namespaces(cache: Cache) -> None:
     await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
     await cache.set(OTHER_TAGGED_KEY, {"name": "grace"}, ttl=60)
@@ -149,7 +162,7 @@ async def test_value_written_after_tag_invalidation_is_readable(cache: Cache) ->
     assert await cache.get(TAGGED_KEY) == {"name": "grace"}
 
 
-async def test_multiple_tags_are_bumped_in_one_call(cache: Cache) -> None:
+async def test_multiple_tags_are_invalidated_in_one_call(cache: Cache) -> None:
     roles_key = CacheKey(namespace="user:1", suffix="roles", tags=("roles",))
     await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
     await cache.set(roles_key, {"role": "admin"}, ttl=60)
@@ -160,7 +173,7 @@ async def test_multiple_tags_are_bumped_in_one_call(cache: Cache) -> None:
     assert await cache.get(roles_key) is None
 
 
-async def test_an_entry_dies_when_any_of_its_tags_is_bumped(cache: Cache) -> None:
+async def test_an_entry_dies_when_any_of_its_tags_is_invalidated(cache: Cache) -> None:
     key = CacheKey(namespace="user:1", suffix="summary", tags=("users", "roles"))
     await cache.set(key, {"name": "ada"}, ttl=60)
 

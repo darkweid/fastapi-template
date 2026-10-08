@@ -112,14 +112,10 @@ class RedisCache(BaseCache):
         except FAIL_OPEN_ERRORS as error:
             self._on_redis_outage("delete", key, error)
 
-    async def _bump_versions(self, counters: Sequence[str]) -> None:
+    async def _retire_counters(self, counters: Sequence[str]) -> None:
         try:
-            versions = await self._eval(
-                CACHE_INVALIDATE_SCRIPT,
-                counters,
-                str(self._version_ttl),
-            )
-            logger.debug("[Cache] counters %s bumped to %s", list(counters), versions)
+            await self._eval(CACHE_INVALIDATE_SCRIPT, counters)
+            logger.debug("[Cache] counters %s retired", list(counters))
         except FAIL_OPEN_ERRORS as error:
             logger.warning(
                 "[Cache] invalidate failed for counters %s: %s", list(counters), error

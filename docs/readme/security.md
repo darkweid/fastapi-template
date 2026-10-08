@@ -290,15 +290,18 @@ pickle path anywhere in this layer. A compromised or untrusted Redis instance ca
 hand back malformed JSON, which fails to decode, but it cannot make the process
 execute arbitrary code the way a pickle payload could.
 
-Invalidation is a version bump over Lua, not a key scan or a tag registry — there
-is no `KEYS`/`SCAN` call and no set of members to enumerate. An entry answers to
-its namespace (`cache.invalidate(namespace)`) and to every tag its key declares
+Invalidation deletes a version counter over Lua, not a key scan or a tag registry —
+there is no `KEYS`/`SCAN` call and no set of members to enumerate. An entry answers
+to its namespace (`cache.invalidate(namespace)`) and to every tag its key declares
 (`cache.invalidate_tags("users")`); each is one counter, so a tag flush costs one
-increment no matter how many entries carry the tag.
+key deletion no matter how many entries carry the tag. A read that finds a counter
+missing is a miss, and the next write starts a new generation from the Redis
+server clock, so a deleted or evicted counter never readdresses a stored value.
 
-**Fail-open, and what it costs:** a lost connection or a timeout is swallowed —
-reads report a miss, writes and version bumps are dropped — so a Redis outage
-degrades the API instead of breaking it. Everything else Redis can raise (a
+**Fail-open, and what it costs:** a lost connection, a timeout or an `OOM` refusal
+from a full Redis is swallowed — reads report a miss, writes and counter deletions
+are dropped — so a Redis outage degrades the API instead of breaking it. Everything
+else Redis can raise (a
 malformed command, a broken script) propagates, because that is a bug and hiding
 it would also burn the degradation reporter's cooldown and mute the report of a
 genuine outage. The price of failing open is on the write path: if the invalidation
@@ -359,7 +362,7 @@ enforce, instead of every call site assembling its own key string.
 that pickle-based caches carry. Version counters remove an entire class of
 invalidation bugs — a partial purge, a tag set that drifted out of sync with the
 entries it was supposed to name — because nothing is enumerated: an entry that
-resolves a bumped counter is no longer addressable. The `PUBLIC`/`PRIVATE`
+resolves a deleted counter is no longer addressable. The `PUBLIC`/`PRIVATE`
 distinction is what stands between "one cache
 entry serves every permitted viewer" and "one user's cached response leaks to
 another" once a shared cache sits on the request path.

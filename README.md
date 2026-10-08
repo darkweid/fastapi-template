@@ -173,7 +173,7 @@ the same transaction, so a `GET` that starts after the `PATCH` has returned norm
 observes the new body. Two gaps are left open on purpose, both bounded by the TTL:
 a `GET` that missed the cache *before* the `PATCH` and is still computing writes its
 already-stale body after the invalidation; and if Redis is unreachable at that
-moment, the version bump is swallowed (the cache never fails a request) while the
+moment, the counter deletion is swallowed (the cache never fails a request) while the
 transaction commits, so a value cached before the outage keeps serving until it
 expires.
 
@@ -182,7 +182,7 @@ import, a role migration — instead flushes them all through the tag every user
 carries (`USER_CACHE_TAG`, `src/user/cache_keys.py`):
 `await cache.invalidate_tags(USER_CACHE_TAG)`. A tag is an extra invalidation unit
 declared on the key itself, so it cuts across namespaces, and clearing it costs one
-Redis increment however many entries carry it.
+key deletion however many entries carry it.
 
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)

@@ -1,9 +1,10 @@
 """
 Lua scripts for the cache.
 
-Each script resolves the namespace version and touches the value key in one
-round trip; a naive GET version + GET value would double the latency of every
-cache read.
+Each script resolves every version counter a key composes from and touches the
+value key in one round trip; a naive GET version + GET value would double the
+latency of every cache read. A missing counter is a miss, and a write that finds
+one missing starts a new generation from the server clock.
 """
 
 from pathlib import Path

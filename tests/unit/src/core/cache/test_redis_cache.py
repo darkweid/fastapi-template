@@ -12,6 +12,7 @@ import pytest
 import redis.exceptions as redis_exc
 
 from src.core.cache.interface import CacheKey
+from src.core.cache.keys import tag_version_key, value_key, version_key
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.serializer import JsonSerializer
 from tests.fakes.redis import InMemoryRedis
@@ -45,6 +46,13 @@ def sentry_capture(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     return capture
 
 
+async def _value_key(fake_redis: InMemoryRedis, key: CacheKey) -> str:
+    counters = [version_key("cache", key.namespace)]
+    counters.extend(tag_version_key("cache", tag) for tag in key.tags)
+    versions = [await fake_redis.get(counter) or "" for counter in counters]
+    return value_key("cache", key.namespace, ".".join(versions), key.suffix)
+
+
 async def test_get_uses_single_redis_round_trip(
     cache: RedisCache, fake_redis: InMemoryRedis
 ) -> None:
@@ -56,12 +64,14 @@ async def test_get_uses_single_redis_round_trip(
     assert fake_redis.cache_eval_calls == 1
 
 
-async def test_invalidate_sets_version_ttl(
+async def test_invalidate_deletes_the_namespace_counter(
     cache: RedisCache, fake_redis: InMemoryRedis
 ) -> None:
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+
     await cache.invalidate(KEY.namespace)
 
-    assert await fake_redis.ttl("cache-ver:user:1") == 604800
+    assert await fake_redis.get("cache-ver:user:1") is None
 
 
 async def test_tagged_get_still_uses_a_single_round_trip(
@@ -83,17 +93,15 @@ async def test_tagged_value_key_composes_every_version(
     # Counters appear in the key's own sorted tag order, after the namespace one.
     await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=30)
 
-    assert await fake_redis.ttl("cache:user:1:v0.0.0:summary") == 30
+    assert await fake_redis.ttl(await _value_key(fake_redis, TAGGED_KEY)) == 30
 
 
 async def test_write_pushes_every_counter_back_to_the_full_version_ttl(
     cache: RedisCache, fake_redis: InMemoryRedis
 ) -> None:
-    # A counter that expires while a value written under it is still alive resets
-    # the version to 0, and the next invalidation increments it back onto that
-    # value - so a write must leave every counter it read outliving the value.
-    await cache.invalidate(TAGGED_KEY.namespace)
-    await cache.invalidate_tags(*TAGGED_KEY.tags)
+    # A counter expiring under a live value makes that value unreachable; the
+    # refresh keeps a namespace that is still written to readable.
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
     for counter in ("cache-ver:user:1", "cache-tag:users", "cache-tag:roles"):
         await fake_redis.expire(counter, 10)
 
@@ -104,24 +112,39 @@ async def test_write_pushes_every_counter_back_to_the_full_version_ttl(
     assert await fake_redis.ttl("cache-tag:roles") == 604800
 
 
-async def test_write_does_not_create_a_counter_that_does_not_exist(
+async def test_write_creates_missing_counters_with_the_version_ttl(
     cache: RedisCache, fake_redis: InMemoryRedis
 ) -> None:
-    # An absent counter reads as version 0; the refresh must not materialize it,
-    # or every untouched namespace would grow a key it never needed.
     await cache.set(KEY, {"name": "ada"}, ttl=60)
 
-    assert await fake_redis.get("cache-ver:user:1") is None
+    assert await fake_redis.get("cache-ver:user:1") is not None
+    assert await fake_redis.ttl("cache-ver:user:1") == 604800
 
 
-async def test_invalidate_tags_sets_version_ttl_on_every_counter(
+async def test_writes_on_a_pinned_clock_still_start_distinct_generations(
+    fake_redis: InMemoryRedis, cache: RedisCache
+) -> None:
+    # Real Redis's clock moves between scripts; a fake whose pinned clock handed
+    # out one generation twice would let a retired value come back in tests only.
+    fake_redis.wall_clock = lambda: 1_700_000_000.0
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+    first = await fake_redis.get("cache-ver:user:1")
+    await cache.invalidate(KEY.namespace)
+
+    await cache.set(KEY, {"name": "grace"}, ttl=60)
+
+    assert await fake_redis.get("cache-ver:user:1") != first
+
+
+async def test_invalidate_tags_deletes_every_tag_counter(
     cache: RedisCache, fake_redis: InMemoryRedis
 ) -> None:
+    await cache.set(TAGGED_KEY, {"name": "ada"}, ttl=60)
+
     await cache.invalidate_tags("users", "roles")
 
-    assert await fake_redis.get("cache-tag:users") == "1"
-    assert await fake_redis.ttl("cache-tag:users") == 604800
-    assert await fake_redis.ttl("cache-tag:roles") == 604800
+    assert await fake_redis.get("cache-tag:users") is None
+    assert await fake_redis.get("cache-tag:roles") is None
 
 
 async def test_invalidate_tags_swallows_connection_failure(
@@ -137,7 +160,7 @@ async def test_stored_value_carries_requested_ttl(
 ) -> None:
     await cache.set(KEY, {"name": "ada"}, ttl=30)
 
-    assert await fake_redis.ttl("cache:user:1:v0:summary") == 30
+    assert await fake_redis.ttl(await _value_key(fake_redis, KEY)) == 30
 
 
 async def test_get_returns_none_when_redis_is_unreachable(

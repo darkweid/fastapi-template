@@ -55,6 +55,10 @@ class InMemoryRedis:
         # refresh grace-window math never races the real clock. Key expiry
         # stays on time.monotonic() and is unaffected by reassigning this.
         self.wall_clock: Callable[[], float] = time.time
+        # Last generation a cache write started. The wall clock is often pinned in
+        # tests, and two writes reading the same pinned TIME would reuse a
+        # generation real Redis - whose clock moves between scripts - never does.
+        self._last_cache_generation = 0
         self._store: dict[str, str] = {}
         self._zsets: dict[str, dict[str, float]] = {}
         self._expires: dict[str, float] = {}
@@ -359,47 +363,57 @@ class InMemoryRedis:
     # not hold, and a cache test would see a version counter Redis can never
     # produce. They reach the store through _read/_write/_drop/_expire for the
     # same reason: the public commands yield.
-    def _cache_value_key(self, counters: list[str], prefix_ns: str, suffix: str) -> str:
-        versions = [self._read(counter) or "0" for counter in counters]
+    def _cache_versions(self, counters: list[str]) -> list[str] | None:
+        versions = [self._read(counter) for counter in counters]
+        if any(version is None for version in versions):
+            return None
+        return [version for version in versions if version is not None]
+
+    @staticmethod
+    def _cache_value_key(versions: list[str], prefix_ns: str, suffix: str) -> str:
         return f"{prefix_ns}:v{'.'.join(versions)}:{suffix}"
+
+    def _next_cache_generation(self) -> str:
+        microseconds = int(self.wall_clock() * 1_000_000)
+        self._last_cache_generation = max(microseconds, self._last_cache_generation + 1)
+        seconds, usec = divmod(self._last_cache_generation, 1_000_000)
+        return f"{seconds}{usec:06d}"
 
     def _eval_cache_get(self, counters: list[str], *args: Any) -> str | None:
         self.cache_eval_calls += 1
+        versions = self._cache_versions(counters)
+        if versions is None:
+            return None
         key = self._cache_value_key(
-            counters,
-            _normalize_value(args[0]),
-            _normalize_value(args[1]),
+            versions, _normalize_value(args[0]), _normalize_value(args[1])
         )
         return self._read(key)
 
     def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
         self.cache_eval_calls += 1
+        generation = self._next_cache_generation()
+        versions = []
+        for counter in counters:
+            version = self._read(counter) or generation
+            self._write(counter, version, ttl_seconds=int(args[4]))
+            versions.append(version)
         key = self._cache_value_key(
-            counters,
-            _normalize_value(args[0]),
-            _normalize_value(args[1]),
+            versions, _normalize_value(args[0]), _normalize_value(args[1])
         )
         self._write(key, _normalize_value(args[2]), ttl_seconds=int(args[3]))
-        for counter in counters:
-            self._expire(counter, int(args[4]))
         return 1
 
     def _eval_cache_delete(self, counters: list[str], *args: Any) -> int:
+        versions = self._cache_versions(counters)
+        if versions is None:
+            return 0
         key = self._cache_value_key(
-            counters,
-            _normalize_value(args[0]),
-            _normalize_value(args[1]),
+            versions, _normalize_value(args[0]), _normalize_value(args[1])
         )
         return self._drop(key)
 
-    def _eval_cache_invalidate(self, counters: list[str], *args: Any) -> list[int]:
-        versions = []
-        for counter in counters:
-            version = int(self._read(counter) or "0") + 1
-            self._write(counter, str(version))
-            self._expire(counter, int(args[0]))
-            versions.append(version)
-        return versions
+    def _eval_cache_invalidate(self, counters: list[str], *args: Any) -> int:
+        return sum(self._drop(counter) for counter in counters)
 
     def _eval_consume_challenge(self, numkeys: int, *keys_and_args: Any) -> str:
         if numkeys != 1:

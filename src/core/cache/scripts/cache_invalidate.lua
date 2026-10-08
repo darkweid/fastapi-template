@@ -1,7 +1,4 @@
--- KEYS = version counters to bump, ARGV[1] = version ttl
-local versions = {}
-for index = 1, #KEYS do
-    versions[index] = redis.call('INCR', KEYS[index])
-    redis.call('EXPIRE', KEYS[index], ARGV[1])
-end
-return versions
+-- KEYS = version counters to retire
+-- Deleting a counter retires every value addressed through it: a read finds the
+-- counter missing and misses, and the next write starts a new generation.
+return redis.call('DEL', unpack(KEYS))

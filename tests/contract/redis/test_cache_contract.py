@@ -4,7 +4,7 @@ import pytest
 from redis.asyncio import Redis
 
 from src.core.cache.interface import CacheKey
-from src.core.cache.keys import tag_version_key, version_key
+from src.core.cache.keys import tag_version_key, value_key, version_key
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.serializer import JsonSerializer
 
@@ -94,7 +94,7 @@ async def test_a_tag_cuts_across_namespaces(redis_backend: Redis) -> None:
 
 
 async def test_an_entry_with_two_tags_dies_with_either(redis_backend: Redis) -> None:
-    """Each tag counter is part of the address; bumping any one moves it."""
+    """Each tag counter is part of the address; retiring any one moves it."""
     cache = _cache(redis_backend)
     key = CacheKey("users", "1", tags=("profile", "team"))
     await cache.set(key, {"name": "Ada"})
@@ -121,22 +121,134 @@ async def test_delete_drops_one_entry(redis_backend: Redis) -> None:
 async def test_a_write_pushes_its_counters_back_to_the_version_ttl(
     redis_backend: Redis,
 ) -> None:
-    """A counter must outlive the values addressed through it: one expiring under
-    a live value resets the version to 0, and the next invalidation increments it
-    straight back onto that value."""
+    """A counter expiring under a live value makes that value unreachable; a
+    namespace that is still written to must stay readable, on the generation it
+    already has."""
     cache = _cache(redis_backend)
     key = CacheKey("users", "1", tags=("profile",))
     counters = (version_key(PREFIX, "users"), tag_version_key(PREFIX, "profile"))
-    await cache.invalidate("users")
-    await cache.invalidate_tags("profile")
+    await cache.set(key, {"name": "Ada"})
+    generations = [await redis_backend.get(counter) for counter in counters]
     for counter in counters:
         await redis_backend.expire(counter, SHRUNK_TTL_SECONDS)
 
+    await cache.set(CacheKey("users", "2", tags=("profile",)), {"name": "Grace"})
+
+    assert [await redis_backend.get(counter) for counter in counters] == generations
+    for counter in counters:
+        assert await redis_backend.ttl(counter) >= VERSION_TTL_SECONDS - 1
+    assert await cache.get(key) == {"name": "Ada"}
+
+
+async def test_a_value_misses_once_its_namespace_counter_is_gone(
+    redis_backend: Redis,
+) -> None:
+    """An evicting cache instance may drop a counter and keep the value: reading
+    the value anyway would serve what an invalidation already retired."""
+    cache = _cache(redis_backend)
+    key = CacheKey("users", "1")
     await cache.set(key, {"name": "Ada"})
 
+    await redis_backend.delete(version_key(PREFIX, "users"))
+
+    assert await cache.get(key) is None
+
+
+async def test_a_tagged_value_misses_when_one_tag_counter_is_gone(
+    redis_backend: Redis,
+) -> None:
+    """The namespace counter surviving is not enough: every counter in the
+    address must be present."""
+    cache = _cache(redis_backend)
+    key = CacheKey("users", "1", tags=("profile", "team"))
+    await cache.set(key, {"name": "Ada"})
+
+    await redis_backend.delete(tag_version_key(PREFIX, "team"))
+
+    assert await cache.get(key) is None
+
+
+async def test_a_value_set_after_invalidation_starts_a_new_generation(
+    redis_backend: Redis,
+) -> None:
+    """The refill must not land under the generation the invalidation retired."""
+    cache = _cache(redis_backend)
+    key = CacheKey("users", "1")
+    counter = version_key(PREFIX, "users")
+    await cache.set(key, {"name": "Ada"})
+    retired = await redis_backend.get(counter)
+    await cache.invalidate("users")
+
+    await cache.set(key, {"name": "Grace"})
+
+    assert await redis_backend.get(counter) != retired
+    assert await cache.get(key) == {"name": "Grace"}
+
+
+async def test_a_retired_value_stays_unreachable_after_a_sibling_write(
+    redis_backend: Redis,
+) -> None:
+    """The sibling write recreates the namespace counter; a counter that restarted
+    at a value it once had would address the retired entry again."""
+    cache = _cache(redis_backend)
+    key = CacheKey("users", "1")
+    await cache.set(key, {"name": "Ada"})
+    await cache.invalidate("users")
+
+    await cache.set(CacheKey("users", "2"), {"name": "Grace"})
+
+    assert await cache.get(key) is None
+
+
+async def test_a_write_starts_absent_counters_with_the_version_ttl(
+    redis_backend: Redis,
+) -> None:
+    """A generation is the server clock in microseconds: digits only, never the
+    `0` an absent counter used to read as."""
+    cache = _cache(redis_backend)
+    counters = (
+        version_key(PREFIX, "users"),
+        tag_version_key(PREFIX, "profile"),
+        tag_version_key(PREFIX, "team"),
+    )
+
+    await cache.set(CacheKey("users", "1", tags=("profile", "team")), {"n": 1})
+
     for counter in counters:
-        assert SHRUNK_TTL_SECONDS < await redis_backend.ttl(counter)
-        assert await redis_backend.ttl(counter) <= VERSION_TTL_SECONDS
+        generation = await redis_backend.get(counter)
+        assert generation is not None and generation.isdigit()
+        assert len(generation) >= 16
+        assert await redis_backend.ttl(counter) >= VERSION_TTL_SECONDS - 1
+
+
+async def test_invalidation_deletes_only_the_named_counters(
+    redis_backend: Redis,
+) -> None:
+    """Retiring a tag must not cost the namespace its generation."""
+    cache = _cache(redis_backend)
+    await cache.set(CacheKey("users", "1", tags=("profile", "team")), {"n": 1})
+
+    await cache.invalidate_tags("profile", "team")
+
+    assert await redis_backend.get(tag_version_key(PREFIX, "profile")) is None
+    assert await redis_backend.get(tag_version_key(PREFIX, "team")) is None
+    assert await redis_backend.get(version_key(PREFIX, "users")) is not None
+
+
+async def test_delete_with_a_missing_counter_touches_nothing(
+    redis_backend: Redis,
+) -> None:
+    """With a counter gone there is no current value; the stored one is left to
+    its own ttl rather than guessed at."""
+    cache = _cache(redis_backend)
+    counter = version_key(PREFIX, "users")
+    await cache.set(CacheKey("users", "1"), {"n": 1})
+    stored = value_key(PREFIX, "users", await redis_backend.get(counter), "1")
+    await redis_backend.delete(counter)
+
+    await cache.delete(CacheKey("users", "1"))
+
+    assert await redis_backend.exists(stored) == 1
 
 
 @pytest.fixture

@@ -77,14 +77,22 @@ that count, not from one pool per process.
 - Keep `maxmemory-policy noeviction` (`infra/redis.conf`). One instance holds
   sessions and refresh-token state, OTP and one-time challenges, rate-limit
   windows and the task queue next to the cache, and none of those may disappear
-  to make room: an evicted session logs a user out, an evicted stream entry is a
-  task that never runs, and an evicted cache version counter falls back to `0`
-  and serves a value an `invalidate()` or `invalidate_tags()` call already
-  retired. Under `noeviction` a full Redis refuses writes instead, which fails
-  loudly. Watch for it before it happens: `/health/` reports
-  `redis_memory_used_ratio` and turns `degraded` at 90% of `maxmemory`. When the
-  cache outgrows its share, move it to a separate instance with its own eviction
-  policy rather than turning eviction on here.
+  to make room: an evicted session logs a user out and an evicted stream entry is
+  a task that never runs (a cache version counter, by contrast, may go: a missing
+  counter is a miss, never a stale hit). Under `noeviction` a full Redis refuses
+  writes with `OOM` instead, which fails loudly everywhere but in the cache: the
+  cache fails open on it, turning its calls into misses reported to Sentry. Watch
+  for it before it happens: `/health/` reports `redis_memory_used_ratio` and
+  turns `degraded` at 90% of `maxmemory`. When the cache outgrows its share, move
+  it to a separate instance with an eviction policy (see `CACHE_REDIS_URL` above)
+  rather than turning eviction on here.
+- Version counters are safe to evict. A read that finds any counter of its key
+  missing is a miss, `invalidate()`/`invalidate_tags()` delete counters, and a
+  write that finds one missing starts a new generation from the Redis server
+  clock (`TIME`, microseconds), so a recreated counter never addresses a value
+  stored under an earlier generation. The one way a generation repeats is that
+  clock moving backwards - a manual clock change, or a failover onto a replica
+  whose clock lags - and the exposure is bounded by the value ttl.
 - The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
   per invocation without hash tags, so as written they run correctly against a
   single Redis instance but not against a sharded Redis Cluster — a cluster

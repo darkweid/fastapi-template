@@ -14,7 +14,7 @@ class CacheKey:
     The namespace is the entry's primary invalidation unit and the suffix names
     the entry inside it. Tags are additional invalidation units the entry answers
     to, and unlike the namespace they cut across namespaces: every entry tagged
-    `users` dies when that tag is bumped, whichever user namespace it lives in.
+    `users` dies when that tag is invalidated, whichever user namespace it lives in.
 
     Tags travel inside the key rather than being passed to `set`, because a read
     resolves the same tag versions a write did - a value stored with a tag its

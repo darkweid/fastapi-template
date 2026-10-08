@@ -35,8 +35,8 @@ def validate_declared_ttls(version_ttl: int) -> None:
     if offenders:
         raise ValueError(
             f"Cached callables declare a ttl above CACHE_VERSION_TTL "
-            f"({version_ttl}s): {', '.join(offenders)}. Values must die before "
-            "the version counters that address them."
+            f"({version_ttl}s): {', '.join(offenders)}. A value outliving its "
+            "version counter is unreachable and only holds memory."
         )
 
 

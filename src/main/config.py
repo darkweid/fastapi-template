@@ -144,8 +144,8 @@ class CacheConfig(BaseSettings):
 
     @model_validator(mode="after")
     def validate_ttl_bounds(self) -> "CacheConfig":
-        # Values must die before their namespace version counter, otherwise an
-        # expired counter resets the version to 0 and resurrects stale values.
+        # A value that outlives its version counter is unreachable (a missing
+        # counter is a miss), so it would only hold memory until it expired.
         if self.CACHE_DEFAULT_TTL > self.CACHE_VERSION_TTL:
             raise ValueError("CACHE_DEFAULT_TTL must not exceed CACHE_VERSION_TTL")
         return self
