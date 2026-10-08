@@ -18,7 +18,8 @@ from src.user.auth.realm import USER_AUTH_REALM
 KEYS = USER_AUTH_REALM.keys
 
 
-def _claims(token: str) -> dict[str, Any]:
+def _claims(token: str | None) -> dict[str, Any]:
+    assert token is not None
     decoded: dict[str, Any] = jwt.decode(token, options={"verify_signature": False})
     return decoded
 
