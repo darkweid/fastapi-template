@@ -11,12 +11,24 @@ class AsyncTransactionContext:
 
     def __init__(self, session: FakeAsyncSession) -> None:
         self._session = session
-        self._was_in_transaction = session.in_transaction()
-        self.nested = self._was_in_transaction
+        self.nested = session.in_transaction()
+        self._open = False
 
     async def start(self) -> AsyncTransactionContext:
         self._session.set_in_transaction(True)
+        if self.nested and not self._open:
+            self._session.open_savepoints += 1
+        self._open = True
         return self
+
+    def _close(self) -> None:
+        if not self._open:
+            return
+        self._open = False
+        if self.nested:
+            self._session.open_savepoints -= 1
+        else:
+            self._session.set_in_transaction(False)
 
     def __await__(self) -> Generator[Any, None, AsyncTransactionContext]:
         return self.start().__await__()
@@ -30,8 +42,7 @@ class AsyncTransactionContext:
         exc_val: BaseException | None,
         exc_tb: object | None,
     ) -> None:
-        if not self._was_in_transaction:
-            self._session.set_in_transaction(False)
+        self._close()
         if exc_type is None and self._session.fail_nested_with is not None:
             error, self._session.fail_nested_with = self._session.fail_nested_with, None
             raise error
@@ -40,16 +51,21 @@ class AsyncTransactionContext:
     async def rollback(self) -> None:
         # Forward to the session mock so tests can keep asserting on
         # `session.rollback`; scope granularity is proven at integration level.
+        # The savepoint still counts as open during that call, which keeps the
+        # session's handler from ending the outer transaction.
         await self._session.rollback()
-        if not self._was_in_transaction:
-            self._session.set_in_transaction(False)
+        self._close()
 
 
 class FakeAsyncSession:
     def __init__(self, in_transaction: bool = False) -> None:
         self._in_transaction = in_transaction
-        self.commit = AsyncMock()
-        self.rollback = AsyncMock()
+        # Open `begin_nested()` contexts. A savepoint's rollback is forwarded to
+        # `session.rollback`, and only the outer transaction's end may clear
+        # the flag, as on a real session.
+        self.open_savepoints = 0
+        self.commit = AsyncMock(side_effect=self._end_transaction)
+        self.rollback = AsyncMock(side_effect=self._end_transaction)
         self.flush = AsyncMock()
         self.refresh = AsyncMock()
         self.execute = AsyncMock()
@@ -80,6 +96,10 @@ class FakeAsyncSession:
 
     def set_in_transaction(self, value: bool) -> None:
         self._in_transaction = value
+
+    def _end_transaction(self) -> None:
+        if self.open_savepoints == 0:
+            self._in_transaction = False
 
     def begin(self) -> AsyncTransactionContext:
         return AsyncTransactionContext(self)
