@@ -7,11 +7,14 @@ and syntax the macOS system python3 (3.9) still reads."""
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import ipaddress
 from pathlib import Path
 import re
 import secrets
+import subprocess  # nosec B404
+import sys
 
 DEFAULT_SUBNET = ipaddress.IPv4Network("172.30.0.0/24")
 SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -253,3 +256,138 @@ def env_hints(options: Options) -> tuple[str, ...]:
             f'TRUST_PROXY_HOSTS=["127.0.0.1","::1","{trusted_proxy_range(options.subnet)}"]'
         )
     return tuple(hints)
+
+
+ENV_FILE = ".env"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MANUAL_STEPS = (
+    "If a stack of this checkout ever ran: `docker compose -p fastapi-template "
+    "-f infra/docker-compose.yml down` (the old project name), then drop the "
+    "template-* volumes if nothing in them matters.",
+    "README badges and links point at darkweid/fastapi-template: swap or delete them.",
+    "LICENSE: replace the copyright holder, or delete it for a private project.",
+    "infra/ansible/roles/*/meta/main.yml carry `author: fastapi-template`.",
+    "Review the diff (`git diff`) and commit it.",
+)
+
+
+@dataclass(frozen=True)
+class Report:
+    edited: tuple[str, ...]
+    env_created: bool
+    env_exists: bool
+    remaining_placeholders: tuple[str, ...]
+    env_hints: tuple[str, ...]
+    dry_run: bool
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603  # nosec B603 B607
+        ["git", "-C", str(root), *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _ensure_can_run(root: Path) -> None:
+    inside = _git(root, "rev-parse", "--show-toplevel")
+    if (
+        inside.returncode != 0
+        or Path(inside.stdout.strip()).resolve() != root.resolve()
+    ):
+        raise InitError(
+            f"{root} is not the root of a git work tree; run this from a clone"
+        )
+    compose = (root / COMPOSE_FILE).read_text(encoding="utf-8")
+    if f"\nname: {TEMPLATE_PROJECT_NAME}\n" not in compose:
+        raise InitError(
+            f"already initialized: {COMPOSE_FILE} no longer names the project "
+            f"{TEMPLATE_PROJECT_NAME}"
+        )
+    # .env is gitignored, so --untracked-files=no never reports it and an
+    # existing one never blocks the run.
+    dirty = _git(
+        root, "status", "--porcelain", "--untracked-files=no", "--", *EDITED_FILES
+    )
+    if dirty.returncode != 0:
+        raise InitError(f"git status failed: {dirty.stderr.strip()}")
+    if dirty.stdout.strip():
+        raise InitError(
+            "commit or stash the uncommitted changes in the files this edits first:\n"
+            + dirty.stdout.rstrip()
+        )
+
+
+def run(root: Path, options: Options) -> Report:
+    _ensure_can_run(root)
+    planned = plan_edits(root, options)
+    env_path = root / ENV_FILE
+    env_exists = env_path.exists()
+    example_text = planned.get(
+        ENV_EXAMPLE_FILE, (root / ENV_EXAMPLE_FILE).read_text(encoding="utf-8")
+    )
+    env_text, remaining = build_env(example_text)
+    if not options.dry_run:
+        for path, text in planned.items():
+            (root / path).write_text(text, encoding="utf-8")
+        if not env_exists:
+            env_path.write_text(env_text, encoding="utf-8")
+    return Report(
+        edited=tuple(sorted(planned)),
+        env_created=not env_exists and not options.dry_run,
+        env_exists=env_exists,
+        remaining_placeholders=remaining,
+        env_hints=env_hints(options) if env_exists else (),
+        dry_run=options.dry_run,
+    )
+
+
+def format_report(report: Report) -> str:
+    verb = "Would edit" if report.dry_run else "Edited"
+    lines = [f"{verb}:", *(f"  {path}" for path in report.edited)]
+    if report.env_exists:
+        lines.append(f"{ENV_FILE} already exists and was left alone.")
+        if report.env_hints:
+            lines.append("Copy these values into it:")
+            lines.extend(f"  {hint}" for hint in report.env_hints)
+    else:
+        created = "Would create" if report.dry_run else "Created"
+        lines.append(f"{created} {ENV_FILE} with generated secrets and passwords.")
+    if report.remaining_placeholders:
+        lines.append(f"Still placeholders in {ENV_FILE} (fill before deploying):")
+        lines.extend(f"  {key}" for key in report.remaining_placeholders)
+    lines.append("Left to do by hand:")
+    lines.extend(f"  - {step}" for step in MANUAL_STEPS)
+    return "\n".join(lines)
+
+
+def _parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--name", required=True)
+    parser.add_argument("--title")
+    parser.add_argument("--subnet")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--root", type=Path, default=REPO_ROOT)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = _parse_arguments(argv)
+    try:
+        options = Options(
+            name=validate_name(arguments.name),
+            title=validate_title(arguments.title),
+            subnet=parse_subnet(arguments.subnet),
+            dry_run=arguments.dry_run,
+        )
+        report = run(arguments.root, options)
+    except InitError as error:
+        print(f"init-project: {error}", file=sys.stderr)
+        return 1
+    print(format_report(report))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 import shutil
+import subprocess
 
 import pytest
 
@@ -19,8 +20,11 @@ from scripts.ops.init_project import (
     Options,
     build_env,
     env_hints,
+    format_report,
+    main,
     parse_subnet,
     plan_edits,
+    run,
     validate_name,
     validate_title,
 )
@@ -239,3 +243,104 @@ def test_hints_name_what_an_existing_env_needs() -> None:
         )
         == ()
     )
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def _commit(root: Path, *args: str) -> None:
+    _git(
+        root,
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        *args,
+    )
+
+
+@pytest.fixture
+def template_repo(template_files: Path) -> Path:
+    _git(template_files, "init", "--quiet")
+    _git(template_files, "add", "--all")
+    _commit(template_files, "-m", "template")
+    return template_files
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {path: (root / path).read_bytes() for path in EDITED_FILES}
+
+
+def test_run_writes_the_planned_files_and_env(template_repo: Path) -> None:
+    report = run(template_repo, _options(title="Shop", subnet="10.42.7.0/24"))
+
+    assert report.env_created
+    assert "infra/nginx/proxy.inc" in report.edited
+    assert "deny 10.42.7.1;" in (template_repo / "infra/nginx/proxy.inc").read_text()
+    env = parse_env(template_repo / ".env")
+    assert env["PROJECT_NAME"] == "Shop"
+    assert env["TRUST_PROXY_HOSTS"] == '["127.0.0.1","::1","10.42.7.128/25"]'
+
+
+def test_second_run_is_refused_and_changes_nothing(template_repo: Path) -> None:
+    run(template_repo, _options())
+    _commit(template_repo, "-am", "init")
+    before = _snapshot(template_repo)
+
+    with pytest.raises(InitError, match="already initialized"):
+        run(template_repo, _options(name="other"))
+    assert _snapshot(template_repo) == before
+
+
+def test_uncommitted_changes_in_an_edited_file_are_refused(
+    template_repo: Path,
+) -> None:
+    proxy = template_repo / "infra/nginx/proxy.inc"
+    proxy.write_text(proxy.read_text() + "# local edit\n")
+
+    with pytest.raises(InitError, match="infra/nginx/proxy.inc"):
+        run(template_repo, _options())
+
+
+def test_outside_a_git_work_tree_is_refused(template_files: Path) -> None:
+    with pytest.raises(InitError, match="git"):
+        run(template_files, _options())
+
+
+def test_dry_run_writes_nothing(template_repo: Path) -> None:
+    before = _snapshot(template_repo)
+
+    report = run(template_repo, _options(subnet="10.42.7.0/24", dry_run=True))
+
+    assert report.dry_run
+    assert set(report.edited) == set(EDITED_FILES)
+    assert _snapshot(template_repo) == before
+    assert not (template_repo / ".env").exists()
+
+
+def test_existing_env_is_left_alone_and_hints_are_printed(
+    template_repo: Path,
+) -> None:
+    (template_repo / ".env").write_text("PROJECT_NAME=mine\n")
+
+    report = run(template_repo, _options(title="Shop", subnet="10.42.7.0/24"))
+
+    assert (template_repo / ".env").read_text() == "PROJECT_NAME=mine\n"
+    assert not report.env_created
+    output = format_report(report)
+    assert 'PROJECT_NAME="Shop"' in output
+    assert "10.42.7.128/25" in output
+
+
+def test_main_reports_a_refusal_with_exit_code_1(
+    template_files: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["--name", "Bad_Name", "--root", str(template_files)])
+
+    assert code == 1
+    assert "NAME must be" in capsys.readouterr().err
