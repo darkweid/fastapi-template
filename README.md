@@ -221,13 +221,14 @@ On Kubernetes or a PaaS the platform owns the machine: delete `infra/ansible`
 ([what else to remove](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps)).
 
 ## After the Fork
-Renaming the compose project, the containers, the image tags and the three volume
-names is a one-time job with an exact checklist -
+Run `make init-project NAME=<slug>` once, on the fresh fork: it renames the
+compose project, the containers, the image tags, the three volumes and the
+network, optionally moves the pinned subnet (`SUBNET=`), and writes `.env` with
+generated secrets. Do it **before** the first `make run` - the volume names are
+pinned, so renaming later points the stack at fresh empty volumes.
 [docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
 walks the whole path from a fresh clone to the first deploy: renaming, secrets,
-CI/CD wiring and server preparation. Do the rename **before** the first
-`make run` - the volume names are pinned, so renaming later points the stack at
-fresh empty volumes.
+CI/CD wiring and server preparation.
 
 ## Quick Start
 - Install Docker and Docker Compose, Python 3.13 (for local scripts/hooks).
@@ -239,7 +240,7 @@ fresh empty volumes.
   make req-sync-dev
   pre-commit install
   ```
-- Copy env: `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
+- `.env`: `make init-project` writes one with generated secrets; otherwise `cp .env.example .env` and fill required values. For tests you can also use `.env.test` (picked up when `TESTING=true` in env).
 - S3 is off by default (`S3_ENABLED=false`); set it to `true` and fill `S3_BUCKET_NAME`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_REGION_NAME` to use file storage. `LOG_LEVEL` and `LOG_JSON` are read from the process environment (containers get them via `env_file`; a bare local run without them falls back to `INFO`/`false`).
 - Dev with reload: `make run-dev` (Nginx on 8000, app on 8001).
 - Prod-like: `make run`.
@@ -292,6 +293,7 @@ for `app.conf` once the certificate is in place.
 
 ## Useful Make Targets
 - `make` (or `make help`) — list every target with its description
+- `make init-project NAME=<slug> [TITLE="..."] [SUBNET=a.b.c.0/24] [DRY_RUN=1]` — once, on a fresh fork: rename the compose project, containers, images, volumes and network, optionally move the pinned subnet, and write `.env` with generated secrets (`docs/readme/bootstrap.md`)
 - `make run-dev` — build+up with override (reload)
 - `make run` — build+up prod-like
 - `make migrate` / `make migration m="add users table"` — apply/create Alembic revisions

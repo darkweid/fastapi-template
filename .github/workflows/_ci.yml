@@ -288,6 +288,26 @@ jobs:
           export PATH="$PWD/.venv/bin:$PATH"
           make test-cov
 
+      # A fork's first command. Run it on a fresh clone (git clone, so its git
+      # checks run) with a non-default subnet, then make sure the renamed stack
+      # still parses and the tests pinning the network values still hold. The
+      # leftover check is an `if`, not `! git grep`: bash -e ignores a negated
+      # command's status, so the step would pass with names left behind.
+      - name: Initialize a clone as a new project
+        shell: bash
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          workdir="$(mktemp -d)/initialized"
+          git clone --quiet "file://$PWD" "$workdir"
+          cd "$workdir"
+          python3 scripts/ops/init_project.py --name ci-project --title "CI Project" --subnet 10.42.7.0/24
+          if git grep -n -e 'template-' -e 'name: fastapi-template' -- infra Makefile; then
+            echo "init-project left a template name behind" >&2
+            exit 1
+          fi
+          docker compose --env-file .env -f infra/docker-compose.yml config --quiet
+          TESTING=true pytest -q -p no:cacheprovider tests/unit/test_docker_compose_config.py tests/unit/test_nginx_security_config.py tests/unit/scripts/ops/test_init_project.py
+
       # A pull request from a fork gets a read-only token whatever this asks
       # for, so the report lands on coveralls.io and the comment does not.
       - name: Upload coverage to Coveralls

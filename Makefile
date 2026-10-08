@@ -125,6 +125,14 @@ create-admin: ## Bootstrap the first admin (env: ADMIN_EMAIL, ADMIN_PASSWORD)
 # -e without a value re-requests it from the host process running this recipe.
 	$(DOCKER_COMPOSE_EXEC) -e ADMIN_EMAIL -e ADMIN_PASSWORD -e ADMIN_FIRST_NAME -e ADMIN_LAST_NAME -e ADMIN_USERNAME -e ADMIN_PHONE $(APP_CONTAINER) python -m scripts.app.create_admin
 
+.PHONY: init-project
+init-project: ## Rename the template and write .env: make init-project NAME=myapp [TITLE="My API"] [SUBNET=10.20.30.0/24] [DRY_RUN=1]
+# The host python3, not .venv: a fresh fork runs this before the virtualenv exists.
+	@python3 scripts/ops/init_project.py --name "$(NAME)" \
+		$(if $(TITLE),--title "$(TITLE)") \
+		$(if $(SUBNET),--subnet "$(SUBNET)") \
+		$(if $(DRY_RUN),--dry-run)
+
 ##@ Logs
 
 .PHONY: logs

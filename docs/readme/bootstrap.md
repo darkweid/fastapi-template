@@ -22,22 +22,10 @@ for the hooks, `pip-tools` and the occasional script.
 
 ## 2. Rename the template
 
-The compose project name, every container name, every image tag and all three
-volume names carry `template-` / `fastapi-template`. Two stacks forked from this
-template on one machine collide on all of them.
-
-Pick a slug — lowercase, no spaces — and replace:
-
-| What | Where | Becomes |
-| --- | --- | --- |
-| Compose project name `fastapi-template` | `infra/docker-compose.yml:4` | `myapp` |
-| Container names `template-worker`, `-scheduler`, `-nginx`, `-postgres`, `-redis`, `-app-builder` (the app has none: a deploy runs two of it side by side, named after the compose project) | `infra/docker-compose.yml` | `myapp-*` |
-| Prod image tag `template-app-image:latest` | `infra/docker-compose.yml` (the `APP_IMAGE` fallback, 4 services), `infra/deploy/deploy.sh:24` | `myapp-app-image:latest` |
-| Dev image tag `template-app-dev-image:latest` | `infra/docker-compose.override.yml` | `myapp-app-dev-image:latest` |
-| Postgres image tag `template-postgres:18` | `infra/docker-compose.yml:23` | `myapp-postgres:18` |
-| Test Postgres tag `template-postgres-test:18` | `infra/docker-compose.test.yml:26` | `myapp-postgres-test:18` |
-| Volume names `template-postgres-data`, `template-redis-data`, `template-nginx-upstream` | `infra/docker-compose.yml:227,229,231` | `myapp-postgres-data`, `myapp-redis-data`, `myapp-nginx-upstream` |
-| Integration-suite project prefix `template-test-$$` | `Makefile:143` | `myapp-test-$$` |
+The compose project name, every container name, every image tag, all three
+volume names and the network's Docker name carry `template-` /
+`fastapi-template` / `app-network`. Two stacks forked from this template on one
+machine collide on all of them.
 
 If the stack has already run once, tear it down **before** renaming. `make down`
 resolves the project name from `infra/docker-compose.yml`, so after the rename it
@@ -48,21 +36,39 @@ keep holding the old volumes:
 make down
 ```
 
-One pass covers all of them:
+Pick a slug and run, once, on the fresh fork:
 
 ```bash
-NEW=myapp
-
-git grep -lz -e 'template-' -e 'fastapi-template' -- Makefile infra docs \
-  | xargs -0 sed -i '' -e "s/fastapi-template/${NEW}/g" -e "s/template-/${NEW}-/g"
+make init-project NAME=myapp                       # rename only
+make init-project NAME=myapp TITLE="My API" SUBNET=10.20.30.0/24 DRY_RUN=1   # preview
 ```
 
-`sed -i ''` is the BSD/macOS spelling; on GNU sed drop the empty argument
-(`sed -i -e ...`). Verify nothing survived:
+`NAME` is 2-30 lowercase letters, digits and single inner hyphens, starting with
+a letter, and may not contain `template`. The command edits exactly the places
+below, refuses to run when any of them has uncommitted changes, and refuses a
+second run (`infra/docker-compose.yml` no longer names `fastapi-template`). It
+needs only `python3` and `git`, not the virtualenv of section 3, and it never
+runs Docker. `DRY_RUN=1` prints the files it would edit and touches nothing.
+`TITLE` sets `PROJECT_NAME` (the Swagger/OpenAPI title) in `.env.example` and in
+the `.env` it creates; it may not hold `"`, `\`, `$` or control characters.
 
-```bash
-git grep -n 'template-\|fastapi-template' -- Makefile infra docs   # expect no output
-```
+| What | Where | Becomes |
+| --- | --- | --- |
+| Compose project name `fastapi-template` | `infra/docker-compose.yml` | `myapp` |
+| Container names `template-worker`, `-scheduler`, `-nginx`, `-postgres`, `-redis`, `-app-builder` (the app has none: a deploy runs two of it side by side, named after the compose project) | `infra/docker-compose.yml` | `myapp-*` |
+| Prod image tag `template-app-image:latest` | `infra/docker-compose.yml` (the `APP_IMAGE` fallback, 4 services), `infra/deploy/deploy.sh` | `myapp-app-image:latest` |
+| Dev image tag `template-app-dev-image:latest` | `infra/docker-compose.override.yml` | `myapp-app-dev-image:latest` |
+| Postgres image tag `template-postgres:18` | `infra/docker-compose.yml` | `myapp-postgres:18` |
+| Test Postgres tag `template-postgres-test:18` | `infra/docker-compose.test.yml` | `myapp-postgres-test:18` |
+| Volume names `template-postgres-data`, `template-redis-data`, `template-nginx-upstream` | `infra/docker-compose.yml` | `myapp-postgres-data`, `myapp-redis-data`, `myapp-nginx-upstream` |
+| Integration-suite project prefix `template-test-$$` | `Makefile` | `myapp-test-$$` |
+| Docker network name `app-network` (the compose key stays `app-network`) | `infra/docker-compose.yml` | `myapp-network` |
+| With `SUBNET`: the subnet, gateway and `ip_range`, the default `TRUST_PROXY_HOSTS`, the gateway `deny` | `infra/docker-compose.yml`, `src/main/config.py`, `.env.example`, `infra/nginx/proxy.inc` | the new `/24`, its `.1`, its upper `/25` |
+
+The network's Docker name always changes, so two forks on one host never share
+a bridge. Its subnet moves only with `SUBNET`: two forks on one host also need
+distinct subnets, and `SUBNET` must be a private `/24` outside `172.17.0.0/16`
+(docker0).
 
 **Volumes are the one irreversible bit.** The names are pinned explicitly, so
 renaming after the stack has run once points the new names at fresh, empty
@@ -77,22 +83,18 @@ docker compose -p fastapi-template -f infra/docker-compose.yml down
 docker volume rm template-postgres-data template-redis-data template-nginx-upstream
 ```
 
-**The Docker network is deliberately not renamed by the command above.**
-`app-network` (`infra/docker-compose.yml`) is a generic name shared by every
-fork on the host, and so is its pinned subnet, `172.30.0.0/24`. If more than one
-fork will ever run on the same machine, rename it and move its subnet too, along
-with the two values that name it: the range in `TRUST_PROXY_HOSTS` and the
-gateway denied in `infra/nginx/proxy.inc`.
+The command ends by listing what is left by hand:
 
-The rest of this template's identity lives outside compose:
-
-- `PROJECT_NAME` in `.env` — the Swagger/OpenAPI title.
+- `PROJECT_NAME` — set by `TITLE`.
 - `VERSION` in `.env`.
 - README badges point at `darkweid/fastapi-template` — swap the owner/repo or
   delete the block. The Coveralls badge also needs the repository enabled at
   coveralls.io before it resolves.
 - `LICENSE` — replace the copyright holder, or delete the file for a private
   project.
+- `author: fastapi-template` in `infra/ansible/roles/*/meta/main.yml`.
+
+Review the diff and commit it before section 3.
 
 ---
 
@@ -113,9 +115,12 @@ Dependencies are edited in `infra/requirements/*.in` and compiled with
 
 ## 4. Fill `.env`
 
-```bash
-cp .env.example .env
-```
+`make init-project` (section 2) created `.env` from `.env.example` if there was
+none, with the four signing secrets and the Postgres, Redis and docs passwords
+already generated and distinct, and listed the placeholders still left. It never
+overwrites an existing `.env`; then it prints the `PROJECT_NAME` and
+`TRUST_PROXY_HOSTS` values to copy in by hand. Without the command:
+`cp .env.example .env` and generate the values below.
 
 Every placeholder in `.env.example` carries the marker `-not-real`.
 `scripts/ops/check_env.py` rejects any value still carrying it — but that script is
@@ -137,7 +142,8 @@ Sharing one would let a value minted for one purpose pass the check of another.
 match, but it walks `JWTConfig`'s own fields only: `CSRF_SECRET_KEY` belongs to
 `CookieConfig` and nothing compares it against them. That fourth one is on you.
 
-Generate four distinct values and paste them over the placeholders:
+`make init-project` generates them this way; by hand, generate four distinct
+values and paste them over the placeholders:
 
 ```bash
 for key in JWT_USER_SECRET_KEY JWT_USER_VERIFY_SECRET_KEY \
@@ -150,6 +156,9 @@ Every realm you add later brings its own secret fields, and the same rule
 applies to them — see [auth-realms.md](auth-realms.md).
 
 ### Other credentials
+
+`make init-project` fills `POSTGRES_PASSWORD`, `REDIS_PASSWORD` and
+`DOCS_PASSWORD`; the rest are yours.
 
 - `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`
 - `REDIS_PASSWORD`
@@ -175,7 +184,7 @@ applies to them — see [auth-realms.md](auth-realms.md).
   `app-network` (pinned in `infra/docker-compose.yml`), where nginx sits. The
   network's gateway, `172.30.0.1`, stays outside it: Docker forwards
   published-port connections it proxies, every IPv6 client included, from
-  there. Moving the subnet means moving this value with it.
+  there. `make init-project SUBNET=` moves this value with the subnet.
 - `DEBUG=false`, `VALIDATE_CERTS=true`, `COOKIE_SECURE=true` outside local
   development; `check_env.py` hard-blocks the other way round in a deploy.
 - `S3_ENABLED` is `false` by default. Turn it on and fill `S3_BUCKET_NAME`,
@@ -389,11 +398,10 @@ hardening in [security.md](security.md).
 ## Checklist
 
 ```
-[ ] Renamed compose project, containers, images, volumes, test project prefix
-[ ] Renamed app-network and moved its subnet (only if several forks share a host)
+[ ] make init-project NAME=... (SUBNET=... if several forks share a host), diff committed
 [ ] PROJECT_NAME, VERSION, README badges, LICENSE
 [ ] venv + make req-sync-dev + pre-commit install
-[ ] .env copied and every -not-real placeholder replaced
+[ ] .env created and every -not-real placeholder it listed replaced
 [ ] Four signing secrets: 32+ chars, all four different
 [ ] PUBLIC_BASE_URL, CORS_ALLOWED_ORIGINS, SMTP, cookie settings
 [ ] make run-dev && make migrate && make create-admin
