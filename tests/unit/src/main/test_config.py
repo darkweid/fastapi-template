@@ -189,6 +189,37 @@ def test_cache_redis_url_accepts_a_unix_socket() -> None:
     assert CacheConfig(CACHE_REDIS_URL=url).CACHE_REDIS_URL.get_secret_value() == url
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "unix://:Ab3/xYz9@/run/redis/cache.sock?db=0",
+        "unix://:Ab3?xYz9@/run/redis/cache.sock",
+        "unix://:Ab3#xYz9@/run/redis/cache.sock",
+    ],
+)
+def test_cache_redis_unix_url_with_an_unencoded_password_fails_without_echoing_it(
+    url: str,
+) -> None:
+    # The password tail lands in the socket path, which redis-py prints when the
+    # connection fails.
+    with pytest.raises(ValidationError) as error:
+        CacheConfig(CACHE_REDIS_URL=url)
+
+    assert "xYz9" not in str(error.value)
+    assert "percent-encode the password" in str(error.value)
+
+
+def test_cache_redis_unix_url_requires_a_socket_path() -> None:
+    with pytest.raises(ValidationError):
+        CacheConfig(CACHE_REDIS_URL="unix://?db=0")
+
+
+def test_cache_redis_unix_url_accepts_a_percent_encoded_password() -> None:
+    url = "unix://:Ab3%2FxYz9%40@/run/redis/cache.sock?db=0"
+
+    assert CacheConfig(CACHE_REDIS_URL=url).CACHE_REDIS_URL.get_secret_value() == url
+
+
 def test_jwt_config_rejects_short_secret() -> None:
     with pytest.raises(ValidationError):
         JWTConfig(**{**_base_jwt_config_data(), "JWT_USER_SECRET_KEY": "too-short"})

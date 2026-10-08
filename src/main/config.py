@@ -168,6 +168,12 @@ class CacheConfig(BaseSettings):
             return SecretStr(url)
         parts = urlsplit(url)
         if parts.scheme == "unix":
+            # The socket path follows the credentials, so a raw reserved
+            # character in the password moves its tail, `@` included, into the
+            # path, query or fragment - and redis-py names the path it fails on.
+            leaked = "@" in parts.path + parts.query + parts.fragment
+            if not parts.path or leaked:
+                raise ValueError(_INVALID_CACHE_REDIS_URL)
             return SecretStr(url)
         if parts.scheme not in ("redis", "rediss"):
             raise ValueError(
