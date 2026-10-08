@@ -63,28 +63,47 @@ image's `redis-cli` symlink keeps the healthcheck and `make redis-cli` working,
 the `REDIS_*` settings and the `redis://` URLs stay as they are.
 
 ## Cache Operations
-The cache layer (`src/core/cache/`) has no dedicated Redis connection — it runs on
-`app.state.redis_client`, the application client created in
-`src/main/lifespan.py` and shared with auth token storage and the health probe.
-There is no separate service or port to provision.
+The cache layer (`src/core/cache/`) runs on `app.state.redis_client`, the
+application client created in `src/main/lifespan.py` and shared with auth token
+storage and the health probe, unless `CACHE_REDIS_URL` is set: then the API
+lifespan and the worker each open a client on that instance and ping it at
+startup, so a wrong URL fails either process, and only the cache uses it. With
+`CACHE_ENABLED=false` neither opens one.
 
-The rate limiter runs on that same client: `lifespan` hands it to
-`FastAPILimiter.init`. Only taskiq keeps a connection of its own (the broker plus
-the retry schedule source), so an API container holds two Redis connection pools
-and a worker or scheduler container holds the broker's — size `maxclients` from
-that count, not from one pool per process.
+The rate limiter runs on the application client: `lifespan` hands it to
+`FastAPILimiter.init`. The pools that open connections, per container:
+
+- API: the application client and the broker (`.kiq()`), plus the cache client
+  with `CACHE_REDIS_URL`.
+- Worker: the broker, the retry schedule source (`SmartRetryMiddleware` writes
+  retries onto it) and the tasks client (`get_tasks_redis_singleton`), plus the
+  cache client with `CACHE_REDIS_URL`.
+- Scheduler: the broker, the retry schedule source and the heartbeat client.
+
+Size `maxclients` of each instance from that count, not from one pool per
+process; the cache clients count against the cache instance only.
 
 - Keep `maxmemory-policy noeviction` (`infra/redis.conf`). One instance holds
   sessions and refresh-token state, OTP and one-time challenges, rate-limit
   windows and the task queue next to the cache, and none of those may disappear
-  to make room: an evicted session logs a user out, an evicted stream entry is a
-  task that never runs, and an evicted cache version counter falls back to `0`
-  and serves a value an `invalidate()` or `invalidate_tags()` call already
-  retired. Under `noeviction` a full Redis refuses writes instead, which fails
-  loudly. Watch for it before it happens: `/health/` reports
-  `redis_memory_used_ratio` and turns `degraded` at 90% of `maxmemory`. When the
-  cache outgrows its share, move it to a separate instance with its own eviction
-  policy rather than turning eviction on here.
+  to make room: an evicted session logs a user out and an evicted stream entry is
+  a task that never runs (a cache version counter, by contrast, may go: a missing
+  counter is a miss, never a stale hit). Under `noeviction` a full Redis refuses
+  writes with `OOM` instead, which fails loudly everywhere but in the cache and
+  the rate limiter: the cache drops its writes while hits keep serving and
+  invalidation keeps working, the limiter falls back to its per-process
+  in-memory window, and both report to Sentry. Watch
+  for it before it happens: `/health/` reports `redis_memory_used_ratio` and
+  turns `degraded` at 90% of `maxmemory`. When the cache outgrows its share, move
+  it to a separate instance with an eviction policy (see `CACHE_REDIS_URL` above)
+  rather than turning eviction on here.
+- Version counters are safe to evict. A read that finds any counter of its key
+  missing is a miss, `invalidate()`/`invalidate_tags()` delete counters, and a
+  write that finds one missing starts a new generation from the Redis server
+  clock (`TIME`, microseconds), so a recreated counter never addresses a value
+  stored under an earlier generation. The one way a generation repeats is that
+  clock moving backwards - a manual clock change, or a failover onto a replica
+  whose clock lags - and the exposure is bounded by the value ttl.
 - The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
   per invocation without hash tags, so as written they run correctly against a
   single Redis instance but not against a sharded Redis Cluster — a cluster

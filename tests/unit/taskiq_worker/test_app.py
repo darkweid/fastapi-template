@@ -3,7 +3,9 @@ import json
 import os
 import subprocess
 import sys
+from unittest.mock import AsyncMock
 
+from pydantic import SecretStr
 import pytest
 from taskiq import TaskiqState
 from taskiq.schedule_sources import LabelScheduleSource
@@ -12,6 +14,7 @@ from src.core.cache.redis_cache import RedisCache
 from src.core.cache.runtime import get_cache_instance, reset_cache
 from src.main.config import config
 import taskiq_worker.app as worker_app
+import taskiq_worker.dependencies as tasks_dependencies
 from taskiq_worker.scheduler import scheduler
 from tests.fakes.redis import InMemoryRedis
 
@@ -75,7 +78,7 @@ async def test_worker_startup_wires_the_shared_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_redis = InMemoryRedis()
-    monkeypatch.setattr(worker_app, "get_tasks_redis_singleton", lambda: fake_redis)
+    monkeypatch.setattr(worker_app, "get_cache_redis_singleton", lambda: fake_redis)
 
     await worker_app.on_worker_startup(TaskiqState())
 
@@ -91,7 +94,7 @@ async def test_worker_shutdown_resets_the_cache_singleton(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_redis = InMemoryRedis()
-    monkeypatch.setattr(worker_app, "get_tasks_redis_singleton", lambda: fake_redis)
+    monkeypatch.setattr(worker_app, "get_cache_redis_singleton", lambda: fake_redis)
     await worker_app.on_worker_startup(TaskiqState())
 
     await worker_app.on_worker_shutdown(TaskiqState())
@@ -112,7 +115,7 @@ async def test_worker_shutdown_closes_every_http_client(
         closed.append(True)
 
     fake_redis = InMemoryRedis()
-    monkeypatch.setattr(worker_app, "get_tasks_redis_singleton", lambda: fake_redis)
+    monkeypatch.setattr(worker_app, "get_cache_redis_singleton", lambda: fake_redis)
     monkeypatch.setattr(worker_app, "close_http_clients", close_http_clients)
     await worker_app.on_worker_startup(TaskiqState())
 
@@ -143,3 +146,86 @@ async def test_worker_shutdown_closes_redis_when_an_http_client_fails_to_close(
         await worker_app.on_worker_shutdown(TaskiqState())
 
     assert redis_closed == [True]
+
+
+@pytest.fixture
+def dedicated_cache_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemoryRedis]:
+    dedicated = InMemoryRedis()
+    dedicated.ping = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        config.cache, "CACHE_REDIS_URL", SecretStr("redis://cache.internal:6379/0")
+    )
+    monkeypatch.setattr(
+        tasks_dependencies, "create_redis_client", lambda connection_url: dedicated
+    )
+    tasks_dependencies._cache_redis_client = None
+    yield dedicated
+    tasks_dependencies._cache_redis_client = None
+
+
+async def test_worker_cache_runs_on_the_pinged_dedicated_client(
+    clean_cache_singleton: None, dedicated_cache_client: InMemoryRedis
+) -> None:
+    """A worker caching on the main instance while the API caches elsewhere would
+    drop every task-side invalidation, and one on a wrong URL would only find out
+    at its first cache call."""
+    await worker_app.on_worker_startup(TaskiqState())
+
+    assert get_cache_instance()._redis is dedicated_cache_client  # noqa: SLF001
+    dedicated_cache_client.ping.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+async def test_worker_startup_fails_when_the_cache_instance_does_not_answer(
+    clean_cache_singleton: None, dedicated_cache_client: InMemoryRedis
+) -> None:
+    dedicated_cache_client.ping.return_value = False  # type: ignore[attr-defined]
+
+    with pytest.raises(RuntimeError, match="ping failed"):
+        await worker_app.on_worker_startup(TaskiqState())
+
+
+async def test_disabled_worker_cache_pings_no_dedicated_client(
+    clean_cache_singleton: None,
+    dedicated_cache_client: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config.cache, "CACHE_ENABLED", False)
+    monkeypatch.setattr(
+        tasks_dependencies, "get_tasks_redis_singleton", lambda: InMemoryRedis()
+    )
+
+    await worker_app.on_worker_startup(TaskiqState())
+
+    dedicated_cache_client.ping.assert_not_awaited()  # type: ignore[attr-defined]
+    assert get_cache_instance()._redis is not dedicated_cache_client  # noqa: SLF001
+
+
+async def test_worker_shutdown_closes_the_cache_client(
+    clean_cache_singleton: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cache client closes even when another close raises, and before the
+    tasks client it may be borrowing."""
+    closed: list[str] = []
+
+    async def close_cache_redis_client() -> None:
+        closed.append("cache")
+
+    async def close_tasks_redis_client() -> None:
+        closed.append("tasks")
+
+    async def close_http_clients() -> None:
+        raise RuntimeError("provider session refused to close")
+
+    monkeypatch.setattr(
+        worker_app, "close_cache_redis_client", close_cache_redis_client
+    )
+    monkeypatch.setattr(
+        worker_app, "close_tasks_redis_client", close_tasks_redis_client
+    )
+    monkeypatch.setattr(worker_app, "close_http_clients", close_http_clients)
+
+    with pytest.raises(RuntimeError, match="refused to close"):
+        await worker_app.on_worker_shutdown(TaskiqState())
+
+    assert closed == ["cache", "tasks"]

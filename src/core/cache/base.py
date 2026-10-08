@@ -17,7 +17,7 @@ class BaseCache(ABC):
     """
     Semantics shared by every Cache implementation.
 
-    Subclasses supply storage only - reading, writing, dropping a key and bumping
+    Subclasses supply storage only - reading, writing, dropping a key and retiring
     version counters. TTL validation, the `enabled` switch, serialization, key
     composition and the decode-and-drop rule live here, so the in-memory
     implementation the tests run against cannot drift from the Redis one that
@@ -62,7 +62,8 @@ class BaseCache(ABC):
         if resolved > self._version_ttl:
             raise ValueError(
                 f"Cache ttl {resolved}s exceeds version_ttl {self._version_ttl}s: "
-                "stale values would outlive their version counter."
+                "a value outliving its version counter is unreachable and only "
+                "holds memory until it expires."
             )
         return resolved
 
@@ -101,19 +102,19 @@ class BaseCache(ABC):
     async def invalidate(self, namespace: str) -> None:
         if not self._enabled:
             return
-        await self._bump_versions([version_key(self._prefix, namespace)])
+        await self._retire_counters([version_key(self._prefix, namespace)])
 
     async def invalidate_tags(self, *tags: str) -> None:
         """
         Drop every entry carrying any of these tags, across all namespaces.
 
-        Each tag is one counter, so the cost is one increment per tag regardless
+        Each tag is one counter, so the cost is one key deletion per tag regardless
         of how many entries carry it - nothing is scanned and nothing is listed.
         """
         if not self._enabled or not tags:
             return
         counters = [tag_version_key(self._prefix, tag) for tag in dict.fromkeys(tags)]
-        await self._bump_versions(counters)
+        await self._retire_counters(counters)
 
     async def get_or_set(
         self,
@@ -142,4 +143,4 @@ class BaseCache(ABC):
     async def _drop(self, key: CacheKey) -> None: ...
 
     @abstractmethod
-    async def _bump_versions(self, counters: Sequence[str]) -> None: ...
+    async def _retire_counters(self, counters: Sequence[str]) -> None: ...

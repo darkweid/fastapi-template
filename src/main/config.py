@@ -2,9 +2,16 @@ from functools import lru_cache
 import json
 import os
 from typing import Annotated, Any, Literal
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from src.core.proxy_headers import (
@@ -134,18 +141,69 @@ class RedisConfig(BaseSettings):
         )
 
 
+_INVALID_CACHE_REDIS_URL = (
+    "CACHE_REDIS_URL is not a valid redis URL; percent-encode the password"
+)
+
+
 class CacheConfig(BaseSettings):
     CACHE_ENABLED: bool = True
     CACHE_DEFAULT_TTL: int = Field(60, gt=0)
     CACHE_VERSION_TTL: int = Field(604800, gt=0)
     CACHE_KEY_PREFIX: str = "cache"
+    # Blank keeps the cache on the application's Redis. A URL moves the cache, in
+    # the API and the worker alike, to an instance of its own, which may run an
+    # eviction policy. SecretStr because the URL carries that instance's password.
+    CACHE_REDIS_URL: SecretStr = SecretStr("")
 
-    model_config = SettingsConfigDict(extra="ignore")
+    # SecretStr masks the value once parsed, but a validation error still echoes
+    # the raw input, password included, into the deploy log.
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    @field_validator("CACHE_REDIS_URL")
+    @classmethod
+    def validate_cache_redis_url(cls, value: SecretStr) -> SecretStr:
+        url = value.get_secret_value().strip()
+        if not url:
+            return SecretStr(url)
+        parts = urlsplit(url)
+        if parts.scheme == "unix":
+            # The socket path follows the credentials, so a raw reserved
+            # character in the password moves its tail, `@` included, into the
+            # path, query or fragment - and redis-py names the path it fails on.
+            leaked = "@" in parts.path + parts.query + parts.fragment
+            if not parts.path or leaked:
+                raise ValueError(_INVALID_CACHE_REDIS_URL)
+            return SecretStr(url)
+        if parts.scheme not in ("redis", "rediss"):
+            raise ValueError(
+                "CACHE_REDIS_URL must be blank or a redis://, rediss:// or "
+                "unix:// URL"
+            )
+        # A `/`, `#` or `?` left raw in the password ends the netloc early, and
+        # redis-py then fails on a "port" made of the password, quoting it. The
+        # same parse here fails first, with a message that quotes nothing.
+        try:
+            addressable = bool(parts.hostname) and parts.port != 0
+        except ValueError:
+            raise ValueError(_INVALID_CACHE_REDIS_URL) from None
+        if not addressable:
+            raise ValueError(_INVALID_CACHE_REDIS_URL)
+        return SecretStr(url)
+
+    @property
+    def dedicated_redis_url(self) -> str | None:
+        """
+        The URL of the cache's own instance, or None while the cache runs on the
+        application client - or is switched off, which needs no instance at all.
+        """
+        url = self.CACHE_REDIS_URL.get_secret_value()
+        return url if url and self.CACHE_ENABLED else None
 
     @model_validator(mode="after")
     def validate_ttl_bounds(self) -> "CacheConfig":
-        # Values must die before their namespace version counter, otherwise an
-        # expired counter resets the version to 0 and resurrects stale values.
+        # A value that outlives its version counter is unreachable (a missing
+        # counter is a miss), so it would only hold memory until it expired.
         if self.CACHE_DEFAULT_TTL > self.CACHE_VERSION_TTL:
             raise ValueError("CACHE_DEFAULT_TTL must not exceed CACHE_VERSION_TTL")
         return self

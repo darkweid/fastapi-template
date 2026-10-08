@@ -318,9 +318,9 @@ async def test_rate_limiter_reports_sentry_on_fallback_activation_with_cooldown(
     assert capture_message_mock.call_count == 2
     first_call = capture_message_mock.call_args_list[0]
     second_call = capture_message_mock.call_args_list[1]
-    assert "[RateLimiter] Redis is unavailable" in first_call.args[0]
+    assert "[RateLimiter] Redis is degraded" in first_call.args[0]
     assert first_call.kwargs["level"] == "error"
-    assert "[RateLimiter] Redis is unavailable" in second_call.args[0]
+    assert "[RateLimiter] Redis is degraded" in second_call.args[0]
 
 
 @pytest.mark.asyncio
@@ -364,7 +364,7 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
     callback.assert_not_awaited()
     assert capture_message_mock.call_count == 2
     assert (
-        "[RateLimiter] Redis is unavailable"
+        "[RateLimiter] Redis is degraded"
         in capture_message_mock.call_args_list[0].args[0]
     )
     assert capture_message_mock.call_args_list[0].kwargs["level"] == "error"

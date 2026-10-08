@@ -173,7 +173,7 @@ the same transaction, so a `GET` that starts after the `PATCH` has returned norm
 observes the new body. Two gaps are left open on purpose, both bounded by the TTL:
 a `GET` that missed the cache *before* the `PATCH` and is still computing writes its
 already-stale body after the invalidation; and if Redis is unreachable at that
-moment, the version bump is swallowed (the cache never fails a request) while the
+moment, the counter deletion is swallowed (the cache never fails a request) while the
 transaction commits, so a value cached before the outage keeps serving until it
 expires.
 
@@ -182,7 +182,20 @@ import, a role migration — instead flushes them all through the tag every user
 carries (`USER_CACHE_TAG`, `src/user/cache_keys.py`):
 `await cache.invalidate_tags(USER_CACHE_TAG)`. A tag is an extra invalidation unit
 declared on the key itself, so it cuts across namespaces, and clearing it costs one
-Redis increment however many entries carry it.
+key deletion however many entries carry it.
+
+The cache runs on the application's Redis unless `CACHE_REDIS_URL` names an
+instance of its own; the API and the worker then both cache there, while
+sessions, one-time challenges, rate limits and the task queue stay on the main
+instance. That instance may run `maxmemory-policy allkeys-lru`: an evicted
+version counter is a miss, never a stale hit. The cache fails open either way,
+never into errors: an unreachable Redis turns every cache call into a miss, and
+a full one (`OOM`) drops only the writes - hits keep serving and invalidation
+keeps working. Sentry hears of it once per incident, and of the recovery at the
+next write that succeeds, so `/health/` does not probe the cache instance. A
+custom `CACHE_REDIS_URL` must percent-encode its password. `.env` must carry
+the key, blank or not: the deploy gate
+(`scripts/ops/check_env.py`) requires every key of `.env.example`.
 
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)

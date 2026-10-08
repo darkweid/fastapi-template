@@ -34,3 +34,28 @@ async def close_tasks_redis_client() -> None:
     if _tasks_redis_client is not None:
         await _tasks_redis_client.aclose()
         _tasks_redis_client = None
+
+
+_cache_redis_client: Redis | None = None
+
+
+def get_cache_redis_singleton() -> Redis:
+    """
+    The tasks client, or a client of its own when CACHE_REDIS_URL moves the
+    cache, so task-side invalidations reach the instance the API caches on.
+    """
+    global _cache_redis_client
+    url = config.cache.dedicated_redis_url
+    if url is None:
+        return get_tasks_redis_singleton()
+    if _cache_redis_client is None:
+        _cache_redis_client = create_redis_client(connection_url=url)
+    return _cache_redis_client
+
+
+async def close_cache_redis_client() -> None:
+    """Close the dedicated cache client; a borrowed tasks client is left alone."""
+    global _cache_redis_client
+    if _cache_redis_client is not None:
+        await _cache_redis_client.aclose()
+        _cache_redis_client = None

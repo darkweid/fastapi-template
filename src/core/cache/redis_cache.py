@@ -17,11 +17,16 @@ from src.core.redis.degradation import RedisDegradationReporter
 
 logger = get_logger(__name__)
 
-# Only a lost or unresponsive connection is a cache outage worth failing open on.
+# A lost or unresponsive connection is a cache outage worth failing open on.
 # Every other RedisError - a ResponseError from a malformed argument or a broken
 # Lua script above all - is a programmer error: swallowing it would hide the bug
 # and burn the degradation reporter's cooldown on a fake outage, muting the real one.
 TRANSPORT_ERRORS = (redis_exc.ConnectionError, redis_exc.TimeoutError)
+# The one ResponseError that is an outage: under noeviction a full Redis refuses
+# writes with OOM. Raising it would turn every cache miss into a 500 while the
+# instance the cache helped fill is already in trouble.
+CAPACITY_ERRORS = (redis_exc.OutOfMemoryError,)
+FAIL_OPEN_ERRORS = TRANSPORT_ERRORS + CAPACITY_ERRORS
 
 
 class RedisCache(BaseCache):
@@ -30,10 +35,10 @@ class RedisCache(BaseCache):
 
     Reads and writes go through Lua so that resolving every version counter the
     key composes from - the namespace and each of its tags - and touching the
-    value happen in a single round trip. Transport failures are
+    value happen in a single round trip. Transport failures and OOM refusals are
     swallowed (a cache outage must not fail a request); programmer errors -
     unserializable values, a ttl outside (0, version_ttl], a rejected command -
-    are raised.
+    are raised. Only a successful write reports recovery.
     """
 
     def __init__(
@@ -61,9 +66,7 @@ class RedisCache(BaseCache):
         return f"{self._prefix}:{namespace}"
 
     async def _eval(self, script: str, counters: Sequence[str], *args: Any) -> Any:
-        result = await self._redis.eval(script, len(counters), *counters, *args)
-        self._reporter.report_recovered()
-        return result
+        return await self._redis.eval(script, len(counters), *counters, *args)
 
     async def _read_raw(self, key: CacheKey) -> str | None:
         try:
@@ -73,8 +76,8 @@ class RedisCache(BaseCache):
                 self._namespace_prefix(key.namespace),
                 key.suffix,
             )
-        except TRANSPORT_ERRORS as error:
-            self._on_transport_error("read", key, error)
+        except FAIL_OPEN_ERRORS as error:
+            self._on_redis_outage("read", key, error)
             return None
         if raw is None:
             logger.debug("[Cache] miss %s", key)
@@ -93,8 +96,12 @@ class RedisCache(BaseCache):
                 str(ttl),
                 str(self._version_ttl),
             )
-        except TRANSPORT_ERRORS as error:
-            self._on_transport_error("write", key, error)
+        except FAIL_OPEN_ERRORS as error:
+            self._on_redis_outage("write", key, error)
+            return
+        # Only a write proves recovery: under OOM a read or a DEL still succeeds,
+        # so recovering on one would restart the cooldown on every miss.
+        self._reporter.report_recovered()
 
     async def _drop(self, key: CacheKey) -> None:
         try:
@@ -104,24 +111,20 @@ class RedisCache(BaseCache):
                 self._namespace_prefix(key.namespace),
                 key.suffix,
             )
-        except TRANSPORT_ERRORS as error:
-            self._on_transport_error("delete", key, error)
+        except FAIL_OPEN_ERRORS as error:
+            self._on_redis_outage("delete", key, error)
 
-    async def _bump_versions(self, counters: Sequence[str]) -> None:
+    async def _retire_counters(self, counters: Sequence[str]) -> None:
         try:
-            versions = await self._eval(
-                CACHE_INVALIDATE_SCRIPT,
-                counters,
-                str(self._version_ttl),
-            )
-            logger.debug("[Cache] counters %s bumped to %s", list(counters), versions)
-        except TRANSPORT_ERRORS as error:
+            await self._eval(CACHE_INVALIDATE_SCRIPT, counters)
+            logger.debug("[Cache] counters %s retired", list(counters))
+        except FAIL_OPEN_ERRORS as error:
             logger.warning(
                 "[Cache] invalidate failed for counters %s: %s", list(counters), error
             )
             self._reporter.report_degraded(error)
 
-    def _on_transport_error(
+    def _on_redis_outage(
         self, operation: str, key: CacheKey, error: redis_exc.RedisError
     ) -> None:
         logger.warning("[Cache] %s failed for %s: %s", operation, key, error)
