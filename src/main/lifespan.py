@@ -4,7 +4,11 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import FastAPI
 
 from loggers import get_logger
-from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
+from src.core.cache.lifecycle import (
+    on_cache_shutdown,
+    on_cache_startup,
+    open_cache_redis_client,
+)
 from src.core.http.client import close_http_clients
 from src.core.limiter import FastAPILimiter
 from src.core.redis.core import create_redis_client
@@ -31,12 +35,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await verify_redis_client(redis_client)
         app.state.redis_client = redis_client
 
-        # Limiter and cache both reuse app.state.redis_client, so the process
-        # opens exactly one Redis connection pool.
+        # The limiter reuses app.state.redis_client, and so does the cache unless
+        # CACHE_REDIS_URL moves it to an instance of its own; sessions and the
+        # health probe always stay on the application client.
         stack.push_async_callback(FastAPILimiter.close)
         await FastAPILimiter.init(redis_client)
+        cache_client = await open_cache_redis_client(stack, redis_client)
         stack.push_async_callback(on_cache_shutdown)
-        await on_cache_startup(app)
+        await on_cache_startup(cache_client)
 
         # Kicker-side broker init: .kiq() requires a started broker. The worker
         # CLI targets taskiq_worker.app:broker directly and starts/stops the

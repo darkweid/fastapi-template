@@ -4,7 +4,14 @@ import os
 from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from src.core.proxy_headers import (
@@ -139,8 +146,24 @@ class CacheConfig(BaseSettings):
     CACHE_DEFAULT_TTL: int = Field(60, gt=0)
     CACHE_VERSION_TTL: int = Field(604800, gt=0)
     CACHE_KEY_PREFIX: str = "cache"
+    # Blank keeps the cache on the application's Redis. A URL moves the cache, in
+    # the API and the worker alike, to an instance of its own, which may run an
+    # eviction policy. SecretStr because the URL carries that instance's password.
+    CACHE_REDIS_URL: SecretStr = SecretStr("")
 
-    model_config = SettingsConfigDict(extra="ignore")
+    # SecretStr masks the value once parsed, but a validation error still echoes
+    # the raw input, password included, into the deploy log.
+    model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
+
+    @field_validator("CACHE_REDIS_URL")
+    @classmethod
+    def validate_cache_redis_url(cls, value: SecretStr) -> SecretStr:
+        url = value.get_secret_value().strip()
+        if url and not url.startswith(("redis://", "rediss://")):
+            raise ValueError(
+                "CACHE_REDIS_URL must be blank or a redis:// or rediss:// URL"
+            )
+        return SecretStr(url)
 
     @model_validator(mode="after")
     def validate_ttl_bounds(self) -> "CacheConfig":

@@ -1,15 +1,25 @@
 from collections.abc import Callable
+from contextlib import AsyncExitStack
+from functools import partial
+from unittest.mock import AsyncMock
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Request, Response
+from pydantic import SecretStr
 import pytest
 
 from src.core.cache.decorators import cached_route, validate_declared_ttls
 from src.core.cache.interface import CacheKey, CacheScope
-from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
+from src.core.cache.lifecycle import (
+    on_cache_shutdown,
+    on_cache_startup,
+    open_cache_redis_client,
+)
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.runtime import get_cache, get_cache_instance, reset_cache
 from src.main.config import config
 from tests.fakes.redis import InMemoryRedis
+
+CACHE_URL = "redis://cache.internal:6379/0"
 
 
 @pytest.fixture(autouse=True)
@@ -24,20 +34,19 @@ async def test_get_cache_instance_raises_before_startup() -> None:
         get_cache_instance()
 
 
-async def test_startup_binds_cache_to_app_redis_client() -> None:
-    app = FastAPI()
-    app.state.redis_client = InMemoryRedis()
+async def test_startup_binds_cache_to_the_given_client() -> None:
+    client = InMemoryRedis()
 
-    await on_cache_startup(app)
+    await on_cache_startup(client)
 
-    assert isinstance(get_cache_instance(), RedisCache)
-    assert await get_cache() is get_cache_instance()
+    cache = get_cache_instance()
+    assert isinstance(cache, RedisCache)
+    assert cache._redis is client
+    assert await get_cache() is cache
 
 
 async def test_shutdown_clears_instance() -> None:
-    app = FastAPI()
-    app.state.redis_client = InMemoryRedis()
-    await on_cache_startup(app)
+    await on_cache_startup(InMemoryRedis())
 
     await on_cache_shutdown()
 
@@ -45,9 +54,67 @@ async def test_shutdown_clears_instance() -> None:
         get_cache_instance()
 
 
-async def test_startup_without_redis_client_raises() -> None:
-    with pytest.raises(RuntimeError, match="Redis client"):
-        await on_cache_startup(FastAPI())
+@pytest.fixture
+def dedicated_cache_url(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Point CACHE_REDIS_URL at an instance and record every client built for it."""
+    created_with: list[str] = []
+    monkeypatch.setattr(config.cache, "CACHE_REDIS_URL", SecretStr(CACHE_URL))
+    monkeypatch.setattr(
+        "src.core.cache.lifecycle.create_redis_client",
+        partial(_record_client, created_with),
+    )
+    return created_with
+
+
+def _record_client(created_with: list[str], connection_url: str) -> InMemoryRedis:
+    created_with.append(connection_url)
+    return InMemoryRedis()
+
+
+async def test_blank_cache_url_keeps_the_application_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config.cache, "CACHE_REDIS_URL", SecretStr(""))
+    application_client = InMemoryRedis()
+
+    async with AsyncExitStack() as stack:
+        client = await open_cache_redis_client(stack, application_client)
+
+    assert client is application_client
+    assert not application_client.closed
+
+
+async def test_cache_url_opens_a_dedicated_client_closed_by_the_stack(
+    dedicated_cache_url: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verify = AsyncMock()
+    monkeypatch.setattr("src.core.cache.lifecycle.verify_redis_client", verify)
+    application_client = InMemoryRedis()
+
+    async with AsyncExitStack() as stack:
+        client = await open_cache_redis_client(stack, application_client)
+        assert client is not application_client
+        assert not client.closed
+
+    assert dedicated_cache_url == [CACHE_URL]
+    verify.assert_awaited_once_with(client)
+    assert client.closed
+    assert not application_client.closed
+
+
+async def test_dedicated_client_is_closed_when_verify_fails(
+    dedicated_cache_url: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A wrong CACHE_REDIS_URL fails startup; the pool it opened must not leak.
+    verify = AsyncMock(side_effect=RuntimeError("ping failed"))
+    monkeypatch.setattr("src.core.cache.lifecycle.verify_redis_client", verify)
+
+    with pytest.raises(RuntimeError, match="ping failed"):
+        async with AsyncExitStack() as stack:
+            await open_cache_redis_client(stack, InMemoryRedis())
+
+    assert verify.await_args is not None
+    assert verify.await_args.args[0].closed
 
 
 @pytest.fixture
@@ -94,10 +161,8 @@ async def test_startup_rejects_a_version_ttl_below_a_declared_route_ttl(
     declare_cached_route: Callable[[int], None],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app = FastAPI()
-    app.state.redis_client = InMemoryRedis()
     declare_cached_route(60)
     monkeypatch.setattr(config.cache, "CACHE_VERSION_TTL", 30)
 
     with pytest.raises(ValueError, match="CACHE_VERSION_TTL"):
-        await on_cache_startup(app)
+        await on_cache_startup(InMemoryRedis())

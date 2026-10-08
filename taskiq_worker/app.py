@@ -21,8 +21,9 @@ import src.user.auth.tasks  # noqa: F401
 import src.user.tasks  # noqa: F401
 from taskiq_worker.broker import broker
 from taskiq_worker.dependencies import (
+    close_cache_redis_client,
     close_tasks_redis_client,
-    get_tasks_redis_singleton,
+    get_cache_redis_singleton,
 )
 
 init_sentry()
@@ -33,10 +34,11 @@ register_event_subscribers()
 async def on_worker_startup(_: TaskiqState) -> None:
     # Mirror of the API's `on_cache_startup` (src/core/cache/lifecycle.py) so
     # tasks can read and invalidate the same cache the API writes. Same prefix
-    # and TTLs are what make the keys shared; the client is the worker's own.
+    # and TTLs are what make the keys shared; the client is the worker's own, on
+    # the cache instance when CACHE_REDIS_URL is set.
     set_cache(
         RedisCache(
-            redis_client=get_tasks_redis_singleton(),
+            redis_client=get_cache_redis_singleton(),
             serializer=JsonSerializer(),
             prefix=config.cache.CACHE_KEY_PREFIX,
             default_ttl=config.cache.CACHE_DEFAULT_TTL,
@@ -54,6 +56,7 @@ async def on_worker_shutdown(_: TaskiqState) -> None:
     # skips its pool disconnect; the process exits right after, so that is fine.
     async with AsyncExitStack() as stack:
         stack.push_async_callback(close_tasks_redis_client)
+        stack.push_async_callback(close_cache_redis_client)
         stack.push_async_callback(close_http_clients)
         stack.callback(reset_cache)
 

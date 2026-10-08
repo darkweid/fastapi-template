@@ -4,6 +4,7 @@ from collections.abc import Generator
 from unittest.mock import Mock
 
 from fastapi import FastAPI
+from pydantic import SecretStr
 import pytest
 
 from src.main import lifespan as lifespan_module
@@ -11,11 +12,12 @@ from src.main.lifespan import lifespan
 
 
 class FakeRedisClient:
-    def __init__(self, calls: list[str]) -> None:
+    def __init__(self, calls: list[str], name: str = "redis") -> None:
         self._calls = calls
+        self._name = name
 
     async def aclose(self) -> None:
-        self._calls.append("redis_close")
+        self._calls.append(f"{self._name}_close")
 
 
 @pytest.fixture
@@ -37,7 +39,7 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     async def limiter_close() -> None:
         calls.append("limiter_shutdown")
 
-    async def cache_startup(app: FastAPI) -> None:
+    async def cache_startup(redis_client: object) -> None:
         calls.append("cache_startup")
 
     async def cache_shutdown() -> None:
@@ -68,6 +70,7 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     monkeypatch.setattr(lifespan_module.broker, "shutdown", broker_shutdown)
     monkeypatch.setattr(lifespan_module, "close_http_clients", http_shutdown)
     monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
+    monkeypatch.setattr(lifespan_module.config.cache, "CACHE_REDIS_URL", SecretStr(""))
 
     yield calls
 
@@ -296,7 +299,7 @@ async def test_a_failed_cache_startup_closes_what_was_opened(
     """A rejected cache ttl fails startup; the limiter and the client opened
     before it must not outlive the failure, and the broker must not start."""
 
-    async def cache_startup(app: FastAPI) -> None:
+    async def cache_startup(redis_client: object) -> None:
         patched_infra_lifecycle.append("cache_startup")
         raise RuntimeError("cache ttl rejected")
 
@@ -316,3 +319,76 @@ async def test_a_failed_cache_startup_closes_what_was_opened(
         "limiter_shutdown",
         "redis_close",
     ]
+
+
+@pytest.fixture
+def cache_clients(
+    patched_infra_lifecycle: list[str], monkeypatch: pytest.MonkeyPatch
+) -> list[object]:
+    """Every client the cache was started on, in order."""
+    started_on: list[object] = []
+
+    async def cache_startup(redis_client: object) -> None:
+        patched_infra_lifecycle.append("cache_startup")
+        started_on.append(redis_client)
+
+    monkeypatch.setattr(lifespan_module, "on_cache_startup", cache_startup)
+    return started_on
+
+
+@pytest.mark.asyncio
+async def test_lifespan_starts_the_cache_on_the_dedicated_client_when_configured(
+    patched_infra_lifecycle: list[str],
+    cache_clients: list[object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the cache moves: the limiter, sessions and the health probe stay on
+    the application client, and the cache client closes after the cache stops."""
+    dedicated = FakeRedisClient(patched_infra_lifecycle, name="cache_redis")
+
+    async def verify_cache_client(client: FakeRedisClient) -> None:
+        patched_infra_lifecycle.append("cache_redis_verify")
+
+    monkeypatch.setattr(
+        lifespan_module.config.cache,
+        "CACHE_REDIS_URL",
+        SecretStr("redis://cache.internal:6379/0"),
+    )
+    monkeypatch.setattr(
+        "src.core.cache.lifecycle.create_redis_client",
+        lambda connection_url: dedicated,
+    )
+    monkeypatch.setattr(
+        "src.core.cache.lifecycle.verify_redis_client", verify_cache_client
+    )
+    app = FastAPI()
+
+    async with lifespan(app):
+        assert cache_clients == [dedicated]
+        assert app.state.redis_client is not dedicated
+
+    assert patched_infra_lifecycle == [
+        "init_sentry",
+        "redis_create",
+        "redis_verify",
+        "limiter_startup",
+        "cache_redis_verify",
+        "cache_startup",
+        "broker_startup",
+        "http_shutdown",
+        "broker_shutdown",
+        "cache_shutdown",
+        "cache_redis_close",
+        "limiter_shutdown",
+        "redis_close",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_keeps_the_cache_on_the_application_client_by_default(
+    cache_clients: list[object],
+) -> None:
+    app = FastAPI()
+
+    async with lifespan(app):
+        assert cache_clients == [app.state.redis_client]

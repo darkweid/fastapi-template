@@ -63,16 +63,18 @@ image's `redis-cli` symlink keeps the healthcheck and `make redis-cli` working,
 the `REDIS_*` settings and the `redis://` URLs stay as they are.
 
 ## Cache Operations
-The cache layer (`src/core/cache/`) has no dedicated Redis connection — it runs on
-`app.state.redis_client`, the application client created in
-`src/main/lifespan.py` and shared with auth token storage and the health probe.
-There is no separate service or port to provision.
+The cache layer (`src/core/cache/`) runs on `app.state.redis_client`, the
+application client created in `src/main/lifespan.py` and shared with auth token
+storage and the health probe, unless `CACHE_REDIS_URL` is set: then the API
+lifespan and the worker each open a client on that instance (the API pings it at
+startup and fails on a wrong URL), and only the cache uses it.
 
-The rate limiter runs on that same client: `lifespan` hands it to
+The rate limiter runs on the application client: `lifespan` hands it to
 `FastAPILimiter.init`. Only taskiq keeps a connection of its own (the broker plus
 the retry schedule source), so an API container holds two Redis connection pools
-and a worker or scheduler container holds the broker's — size `maxclients` from
-that count, not from one pool per process.
+(three with `CACHE_REDIS_URL`), a worker container holds the broker's and its own
+(plus one with `CACHE_REDIS_URL`), and a scheduler container holds the broker's -
+size `maxclients` from that count, not from one pool per process.
 
 - Keep `maxmemory-policy noeviction` (`infra/redis.conf`). One instance holds
   sessions and refresh-token state, OTP and one-time challenges, rate-limit

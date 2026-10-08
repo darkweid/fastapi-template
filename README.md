@@ -184,6 +184,16 @@ carries (`USER_CACHE_TAG`, `src/user/cache_keys.py`):
 declared on the key itself, so it cuts across namespaces, and clearing it costs one
 key deletion however many entries carry it.
 
+The cache runs on the application's Redis unless `CACHE_REDIS_URL` names an
+instance of its own; the API and the worker then both cache there, while
+sessions, one-time challenges, rate limits and the task queue stay on the main
+instance. That instance may run `maxmemory-policy allkeys-lru`: an evicted
+version counter is a miss, never a stale hit. The cache fails open either way -
+an unreachable or full (`OOM`) Redis turns cache calls into misses, reported to
+Sentry with a cooldown, never into errors - so `/health/` does not probe the
+cache instance. `.env` must carry the key, blank or not: the deploy gate
+(`scripts/ops/check_env.py`) requires every key of `.env.example`.
+
 ## Tooling
 ![Ruff](https://img.shields.io/badge/ruff-lint-2C2C2C?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/black-formatter-000000?logo=black&logoColor=white)

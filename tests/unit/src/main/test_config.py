@@ -131,6 +131,26 @@ def test_cache_config_rejects_default_ttl_above_version_ttl() -> None:
         CacheConfig(CACHE_DEFAULT_TTL=100, CACHE_VERSION_TTL=50)
 
 
+def test_cache_redis_url_is_blank_by_default() -> None:
+    assert CacheConfig().CACHE_REDIS_URL.get_secret_value() == ""
+
+
+def test_cache_redis_url_accepts_a_redis_url() -> None:
+    config = CacheConfig(CACHE_REDIS_URL="rediss://:pw@cache.internal:6380/0")
+
+    assert config.CACHE_REDIS_URL.get_secret_value().startswith("rediss://")
+
+
+def test_cache_redis_url_error_does_not_echo_the_url() -> None:
+    # The URL carries the instance password; a startup failure that printed it
+    # would leak it into deploy logs.
+    with pytest.raises(ValidationError) as error:
+        CacheConfig(CACHE_REDIS_URL="http://:hunter2-secret@cache.internal:6379/0")
+
+    assert "hunter2-secret" not in str(error.value)
+    assert "CACHE_REDIS_URL" in str(error.value)
+
+
 def test_jwt_config_rejects_short_secret() -> None:
     with pytest.raises(ValidationError):
         JWTConfig(**{**_base_jwt_config_data(), "JWT_USER_SECRET_KEY": "too-short"})

@@ -1,8 +1,10 @@
 from collections.abc import Generator
 from unittest.mock import AsyncMock
 
+from pydantic import SecretStr
 import pytest
 
+from src.main.config import config
 from src.user.auth.tasks import send_verification_email_task
 from taskiq_worker.broker import broker
 import taskiq_worker.dependencies as tasks_dependencies
@@ -16,8 +18,10 @@ from tests.helpers.providers import ProvideAsyncValue, ProvideValue
 def _reset_tasks_redis_singleton() -> Generator[None]:
     """The worker Redis client is a module-level singleton; tests must not leak it."""
     tasks_dependencies._tasks_redis_client = None
+    tasks_dependencies._cache_redis_client = None
     yield
     tasks_dependencies._tasks_redis_client = None
+    tasks_dependencies._cache_redis_client = None
 
 
 @pytest.fixture
@@ -94,3 +98,44 @@ async def test_close_tasks_redis_client_is_a_noop_without_a_client() -> None:
     await close_tasks_redis_client()
 
     assert tasks_dependencies._tasks_redis_client is None
+
+
+async def test_cache_client_is_the_tasks_client_when_no_cache_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config.cache, "CACHE_REDIS_URL", SecretStr(""))
+    tasks_client = InMemoryRedis()
+    monkeypatch.setattr(
+        tasks_dependencies, "get_tasks_redis_singleton", lambda: tasks_client
+    )
+
+    assert tasks_dependencies.get_cache_redis_singleton() is tasks_client
+
+    # Closing the cache client must not close the tasks client it borrowed.
+    await tasks_dependencies.close_cache_redis_client()
+    assert not tasks_client.closed
+
+
+async def test_cache_client_is_built_once_from_the_cache_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_with: list[str] = []
+    dedicated = InMemoryRedis()
+
+    def create_redis_client(connection_url: str) -> InMemoryRedis:
+        created_with.append(connection_url)
+        return dedicated
+
+    monkeypatch.setattr(
+        config.cache, "CACHE_REDIS_URL", SecretStr("redis://cache.internal:6379/0")
+    )
+    monkeypatch.setattr(tasks_dependencies, "create_redis_client", create_redis_client)
+
+    first = tasks_dependencies.get_cache_redis_singleton()
+    second = tasks_dependencies.get_cache_redis_singleton()
+    await tasks_dependencies.close_cache_redis_client()
+
+    assert first is second is dedicated
+    assert created_with == ["redis://cache.internal:6379/0"]
+    assert dedicated.closed
+    assert tasks_dependencies._cache_redis_client is None
