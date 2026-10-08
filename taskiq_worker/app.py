@@ -4,6 +4,8 @@ Every task module must be imported here - a task module not imported here is
 invisible to the worker.
 """
 
+from contextlib import AsyncExitStack
+
 from taskiq import TaskiqEvents, TaskiqState
 
 from src.core.cache.redis_cache import RedisCache
@@ -46,9 +48,12 @@ async def on_worker_startup(_: TaskiqState) -> None:
 
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def on_worker_shutdown(_: TaskiqState) -> None:
-    reset_cache()
-    await close_http_clients()
-    await close_tasks_redis_client()
+    # One failing close must not skip the rest. The stack runs them in reverse:
+    # the cache built on the Redis client is dropped first, the client last.
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(close_tasks_redis_client)
+        stack.push_async_callback(close_http_clients)
+        stack.callback(reset_cache)
 
 
 __all__ = ["broker"]
