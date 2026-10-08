@@ -1,3 +1,4 @@
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 import re
 
@@ -222,17 +223,26 @@ def test_only_the_liveness_probe_is_public() -> None:
     assert "live" not in _probe_location()
 
 
+PRIVATE_IPV4_RANGES = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+
+
 def test_probe_rules_deny_the_app_network_gateway_before_private_ranges() -> None:
     """Docker forwards published-port connections it proxies, every IPv6
-    client included, from the app-network gateway - a private address that an
-    `allow 172.16.0.0/12` would otherwise let in, internet clients and all."""
+    client included, from the app-network gateway - a private address that the
+    private-range allow covering it would otherwise let in, internet clients
+    and all. Whichever range a fork's subnet sits in, the deny comes first."""
     compose = yaml.safe_load(
         (PROJECT_ROOT / "infra/docker-compose.yml").read_text(encoding="utf-8")
     )
     gateway = compose["networks"]["app-network"]["ipam"]["config"][0]["gateway"]
+    covering = next(
+        network
+        for network in PRIVATE_IPV4_RANGES
+        if ip_address(gateway) in ip_network(network)
+    )
     rules = _access_rules(_probe_location())
 
-    assert rules.index(f"deny {gateway}") < rules.index("allow 172.16.0.0/12")
+    assert rules.index(f"deny {gateway}") < rules.index(f"allow {covering}")
 
 
 def test_a_denied_probe_answers_the_json_404_of_a_missing_route() -> None:
