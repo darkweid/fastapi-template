@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
+import shutil
 
 import pytest
 
 from scripts.ops import check_env
 from scripts.ops.init_project import (
+    COMPOSE_FILE,
     DEFAULT_SUBNET,
+    EDITED_FILES,
     PLACEHOLDER_MARKER,
     InitError,
+    Options,
     parse_subnet,
+    plan_edits,
     validate_name,
     validate_title,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _options(
+    name: str = "myapp",
+    title: str | None = None,
+    subnet: str | None = None,
+    dry_run: bool = False,
+) -> Options:
+    return Options(name=name, title=title, subnet=parse_subnet(subnet), dry_run=dry_run)
+
+
+@pytest.fixture
+def template_files(tmp_path: Path) -> Path:
+    for relative in EDITED_FILES:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, target)
+    return tmp_path
 
 
 @pytest.mark.parametrize("name", ["myapp", "my-app", "a1", "shop-v2-api", "a" * 30])
@@ -92,3 +118,59 @@ def test_placeholder_marker_matches_the_deploy_gate() -> None:
     check_env.py refuses; the script cannot import it, since it runs before
     the repository root is importable."""
     assert PLACEHOLDER_MARKER == check_env.PLACEHOLDER_MARKER
+
+
+def test_rename_leaves_no_template_name(template_files: Path) -> None:
+    planned = plan_edits(template_files, _options())
+
+    for relative, text in planned.items():
+        assert "fastapi-template" not in text, relative
+        assert "template-" not in text, relative
+    compose = planned[COMPOSE_FILE]
+    assert "\nname: myapp\n" in compose
+    assert "container_name: myapp-postgres" in compose
+    assert "    name: myapp-network\n" in compose
+    assert "  app-network:\n" in compose
+    assert "myapp-test-$$$$" in planned["Makefile"]
+
+
+def test_default_subnet_leaves_the_addresses_alone(template_files: Path) -> None:
+    planned = plan_edits(template_files, _options())
+
+    assert "src/main/config.py" not in planned
+    assert "infra/nginx/proxy.inc" not in planned
+    assert "subnet: 172.30.0.0/24" in planned[COMPOSE_FILE]
+
+
+def test_subnet_moves_every_value_that_names_it(template_files: Path) -> None:
+    planned = plan_edits(template_files, _options(subnet="10.42.7.0/24"))
+
+    compose = planned[COMPOSE_FILE]
+    assert "subnet: 10.42.7.0/24" in compose
+    assert "gateway: 10.42.7.1\n" in compose
+    assert "ip_range: 10.42.7.128/25" in compose
+    assert '"10.42.7.128/25"' in planned["src/main/config.py"]
+    assert (
+        'TRUST_PROXY_HOSTS=["127.0.0.1","::1","10.42.7.128/25"]'
+        in planned[".env.example"]
+    )
+    assert "10.42.7.1," in planned[".env.example"]
+    assert "deny 10.42.7.1;" in planned["infra/nginx/proxy.inc"]
+    for text in planned.values():
+        assert "172.30.0." not in text
+
+
+def test_title_becomes_the_example_project_name(template_files: Path) -> None:
+    planned = plan_edits(template_files, _options(title="Shop API #2"))
+
+    assert '\nPROJECT_NAME="Shop API #2"\n' in "\n" + planned[".env.example"]
+
+
+def test_drifted_count_fails_before_writing(template_files: Path) -> None:
+    """A template- name added to a file the script edits must stop the run, or
+    the fork keeps one container or volume colliding with every other fork."""
+    compose = template_files / COMPOSE_FILE
+    compose.write_text(compose.read_text() + "# template-extra\n")
+
+    with pytest.raises(InitError, match="infra/docker-compose.yml"):
+        plan_edits(template_files, _options())
