@@ -1,4 +1,5 @@
-# Ephemeral PostgreSQL for the integration suite (tests/integration, `make test-integration`).
+# Ephemeral PostgreSQL and Redis for the integration suite (tests/integration and the real half
+# of tests/contract, `make test-integration`).
 #
 # No volumes: nothing here has to survive a restart, and every run must start from an empty
 # database — the migration test asserts that the whole Alembic chain applies to a clean one.
@@ -18,6 +19,12 @@
 # so extensions and server settings match what the application really runs against. It carries
 # its own tag, though: sharing `template-postgres:18` would let a build from either stack
 # silently replace the image the other one is about to start.
+#
+# Redis runs the deployed image with no password and no persistence: the suite only needs
+# the scripting engine and the command semantics, and the real-Redis fixture FLUSHALLs it
+# around every test. `${REDIS_PORT}` follows the same empty-means-ephemeral rule as Postgres.
+# The image tag must equal the one in infra/docker-compose.yml and the CI service
+# (tests/unit/test_redis_image_pins.py).
 services:
   postgres:
     build:
@@ -37,3 +44,14 @@ services:
       timeout: 3s
       retries: 15
       start_period: 2s
+  redis:
+    image: 'redis:8.10'
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 1s

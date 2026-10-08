@@ -359,9 +359,10 @@ jobs:
 
     # Credentials, database name and port all mirror .env.test, which `TESTING=true`
     # loads and the suite reads its DSN from — a value changed in one place has to change
-    # in the other. Locally the same suite runs against the throwaway container
-    # `make test-integration` starts (infra/docker-compose.test.yml); here a service
-    # container is simpler, because GitHub already health-gates it before the steps run.
+    # in the other. Redis likewise: no password, as .env.test has it. Locally the same
+    # suite runs against the throwaway containers `make test-integration` starts
+    # (infra/docker-compose.test.yml); here service containers are simpler, because
+    # GitHub already health-gates them before the steps run.
     # Stock image, not infra/postgres/Dockerfile: the custom config it bakes in is not
     # what the suite tests. Keep the tag in step with that Dockerfile's base image.
     services:
@@ -375,6 +376,18 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U test -d test_db"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      # The deployed Redis image (tests/unit/test_redis_image_pins.py), no password,
+      # as in infra/docker-compose.test.yml. Its data is throwaway: the contract
+      # suite FLUSHALLs it around every test.
+      redis:
+        image: 'redis:8.10'
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -420,9 +433,12 @@ jobs:
           TESTING: 'true'
           POSTGRES_HOST: 127.0.0.1
           POSTGRES_PORT: '5432'
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: '6379'
+          REDIS_TEST_INSTANCE: '1'
         run: |
           export PATH="$PWD/.venv/bin:$PATH"
-          pytest tests/integration -m integration -v
+          pytest tests/integration tests/contract -m integration -v
 
   bandit:
     name: Bandit
