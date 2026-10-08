@@ -14,15 +14,19 @@ REDIS_BACKENDS = [
 ]
 
 
-def require_throwaway_instance() -> None:
-    """Fail unless the run says the Redis it reaches is disposable.
+def require_throwaway_instance(target: str) -> None:
+    """Fail unless the run names `target` (`host:port`) as a disposable Redis.
 
-    Only `make test-integration` and the CI job set the flag, and both start a
-    Redis of their own. Fail rather than skip: a skipped real half looks green.
+    Only `make test-integration` and the CI job set the flag, each to the Redis
+    it started itself. Naming the address, not just `1`, keeps a flag left
+    exported in a shell from vouching for whatever Redis the settings reach
+    later. Fail rather than skip: a skipped real half looks green.
     """
-    if os.environ.get(REAL_INSTANCE_FLAG) != "1":
+    declared = os.environ.get(REAL_INSTANCE_FLAG)
+    if declared != target:
         pytest.fail(
-            f"{REAL_INSTANCE_FLAG}=1 is not set: the real-Redis fixture flushes the "
-            "instance it reaches. Run it through `make test-integration`.",
+            f"{REAL_INSTANCE_FLAG}={declared!r} does not name the Redis this run "
+            f"reaches ({target}), and the real-Redis fixture flushes it. Run it "
+            "through `make test-integration`.",
             pytrace=False,
         )

@@ -33,7 +33,7 @@ def pytest_itemcollected(item: pytest.Item) -> None:
 
 @pytest.fixture
 async def real_redis() -> AsyncIterator[Redis]:
-    require_throwaway_instance()
+    require_throwaway_instance(f"{config.redis.REDIS_HOST}:{config.redis.REDIS_PORT}")
     client = create_redis_client(config.redis.dsn)
     # FLUSHALL, not FLUSHDB: the receiver's claims live in the tasks database.
     await client.flushall()
