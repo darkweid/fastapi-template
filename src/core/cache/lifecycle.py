@@ -15,7 +15,7 @@ async def on_cache_startup(app: FastAPI) -> None:
     redis_client: Redis | None = getattr(app.state, "redis_client", None)
     if redis_client is None:
         raise RuntimeError(
-            "Redis client is not initialized. Start the cache after on_redis_startup."
+            "Redis client is not initialized. Start the cache after the Redis client."
         )
 
     # Routers are imported by now, so every @cached / @cached_route ttl in the

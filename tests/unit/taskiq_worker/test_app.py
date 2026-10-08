@@ -119,3 +119,27 @@ async def test_worker_shutdown_closes_every_http_client(
     await worker_app.on_worker_shutdown(TaskiqState())
 
     assert closed == [True]
+
+
+async def test_worker_shutdown_closes_redis_when_an_http_client_fails_to_close(
+    clean_cache_singleton: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising close must not leave the worker's Redis pool open behind it."""
+    redis_closed: list[bool] = []
+
+    async def close_http_clients() -> None:
+        raise RuntimeError("provider session refused to close")
+
+    async def close_tasks_redis_client() -> None:
+        redis_closed.append(True)
+
+    monkeypatch.setattr(worker_app, "close_http_clients", close_http_clients)
+    monkeypatch.setattr(
+        worker_app, "close_tasks_redis_client", close_tasks_redis_client
+    )
+
+    with pytest.raises(RuntimeError, match="refused to close"):
+        await worker_app.on_worker_shutdown(TaskiqState())
+
+    assert redis_closed == [True]

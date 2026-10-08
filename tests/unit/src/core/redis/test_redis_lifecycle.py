@@ -8,30 +8,6 @@ from src.core.redis.dependencies import get_redis_client
 
 
 @pytest.mark.asyncio
-async def test_on_redis_startup_and_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = SimpleNamespace(
-        ping=AsyncMock(return_value=True),
-        aclose=AsyncMock(return_value=None),
-    )
-
-    monkeypatch.setattr(
-        lifecycle,
-        "create_redis_client",
-        lambda connection_url: client,
-    )
-
-    app = SimpleNamespace(state=SimpleNamespace())
-
-    await lifecycle.on_redis_startup(app, "redis://example")  # type: ignore[arg-type]
-
-    assert app.state.redis_client is client
-    client.ping.assert_awaited_once()
-
-    await lifecycle.on_redis_shutdown(app)  # type: ignore[arg-type]
-    client.aclose.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_get_redis_client_returns_from_state() -> None:
     redis_client = object()
     request = SimpleNamespace(
@@ -49,3 +25,21 @@ async def test_get_redis_client_missing_raises() -> None:
 
     with pytest.raises(RuntimeError):
         await get_redis_client(request)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_verify_redis_client_accepts_a_successful_ping() -> None:
+    client = SimpleNamespace(ping=AsyncMock(return_value=True))
+
+    await lifecycle.verify_redis_client(client)  # type: ignore[arg-type]
+
+    client.ping.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_verify_redis_client_raises_when_ping_fails() -> None:
+    """An unreachable Redis must fail startup, not every request after it."""
+    client = SimpleNamespace(ping=AsyncMock(return_value=False))
+
+    with pytest.raises(RuntimeError, match="Redis ping failed"):
+        await lifecycle.verify_redis_client(client)  # type: ignore[arg-type]

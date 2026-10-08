@@ -7,7 +7,8 @@ from loggers import get_logger
 from src.core.cache.lifecycle import on_cache_shutdown, on_cache_startup
 from src.core.http.client import close_http_clients
 from src.core.limiter import FastAPILimiter
-from src.core.redis.lifecycle import on_redis_shutdown, on_redis_startup
+from src.core.redis.core import create_redis_client
+from src.core.redis.lifecycle import verify_redis_client
 from src.core.storage.s3.dependencies import build_s3_adapter
 from src.main.config import config
 from src.main.sentry import init_sentry
@@ -19,23 +20,34 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     init_sentry()
-    await on_redis_startup(app, config.redis.dsn)
 
-    # Limiter and cache both reuse app.state.redis_client, so the process opens
-    # exactly one Redis connection pool.
-    await FastAPILimiter.init(app.state.redis_client)
-    await on_cache_startup(app)
-
-    # Kicker-side broker init: .kiq() requires a started broker. The worker
-    # CLI targets taskiq_worker.app:broker directly and starts/stops the
-    # broker itself, so this guard keeps that startup/shutdown pair scoped to
-    # the FastAPI process only.
-    if not broker.is_worker_process:
-        await broker.startup()
-
+    # Each close is pushed right before its resource starts, and every close is
+    # safe on a resource that never finished starting. A failure anywhere in
+    # startup, or an exception out of the app, therefore closes whatever was
+    # opened, in reverse: dependents first, the shared Redis client last.
     async with AsyncExitStack() as stack:
-        # Registered first so it runs last, after S3, and also when the app
-        # stops on an error.
+        redis_client = create_redis_client(connection_url=config.redis.dsn)
+        stack.push_async_callback(redis_client.aclose)
+        await verify_redis_client(redis_client)
+        app.state.redis_client = redis_client
+
+        # Limiter and cache both reuse app.state.redis_client, so the process
+        # opens exactly one Redis connection pool.
+        stack.push_async_callback(FastAPILimiter.close)
+        await FastAPILimiter.init(redis_client)
+        stack.push_async_callback(on_cache_shutdown)
+        await on_cache_startup(app)
+
+        # Kicker-side broker init: .kiq() requires a started broker. The worker
+        # CLI targets taskiq_worker.app:broker directly and starts/stops the
+        # broker itself, so this guard keeps that startup/shutdown pair scoped
+        # to the FastAPI process only. Pushed before startup: startup can fail
+        # after it has borrowed a pooled connection (XGROUP CREATE), and every
+        # step of shutdown is a no-op on a broker that never started.
+        if not broker.is_worker_process:
+            stack.push_async_callback(broker.shutdown)
+            await broker.startup()
+
         stack.push_async_callback(close_http_clients)
         # Built once per process and reused across requests instead of opening a
         # fresh aioboto3 client per call; get_s3_adapter reads it off app.state.
@@ -47,9 +59,3 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             )
 
         yield
-
-    if not broker.is_worker_process:
-        await broker.shutdown()
-    await on_cache_shutdown()
-    await FastAPILimiter.close()
-    await on_redis_shutdown(app)

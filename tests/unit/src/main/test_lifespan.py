@@ -10,19 +10,26 @@ from src.main import lifespan as lifespan_module
 from src.main.lifespan import lifespan
 
 
+class FakeRedisClient:
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    async def aclose(self) -> None:
+        self._calls.append("redis_close")
+
+
 @pytest.fixture
 def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[str]]:
     """Stub every infra startup/shutdown hook lifespan calls, recording call order."""
     calls: list[str] = []
+    redis_client = FakeRedisClient(calls)
 
-    async def redis_startup(app: FastAPI, dsn: str) -> None:
-        calls.append("redis_startup")
-        # The limiter reads the client off app.state, exactly as the real hook
-        # leaves it there.
-        app.state.redis_client = object()
+    def create_redis_client(connection_url: str) -> FakeRedisClient:
+        calls.append("redis_create")
+        return redis_client
 
-    async def redis_shutdown(app: FastAPI) -> None:
-        calls.append("redis_shutdown")
+    async def verify_redis_client(client: FakeRedisClient) -> None:
+        calls.append("redis_verify")
 
     async def limiter_init(redis_client: object) -> None:
         calls.append("limiter_startup")
@@ -36,6 +43,12 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     async def cache_shutdown() -> None:
         calls.append("cache_shutdown")
 
+    async def broker_startup() -> None:
+        calls.append("broker_startup")
+
+    async def broker_shutdown() -> None:
+        calls.append("broker_shutdown")
+
     async def http_shutdown() -> None:
         calls.append("http_shutdown")
 
@@ -44,13 +57,17 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
         "init_sentry",
         Mock(side_effect=lambda: calls.append("init_sentry")),
     )
-    monkeypatch.setattr(lifespan_module, "on_redis_startup", redis_startup)
-    monkeypatch.setattr(lifespan_module, "on_redis_shutdown", redis_shutdown)
+    monkeypatch.setattr(lifespan_module, "create_redis_client", create_redis_client)
+    monkeypatch.setattr(lifespan_module, "verify_redis_client", verify_redis_client)
     monkeypatch.setattr(lifespan_module.FastAPILimiter, "init", limiter_init)
     monkeypatch.setattr(lifespan_module.FastAPILimiter, "close", limiter_close)
     monkeypatch.setattr(lifespan_module, "on_cache_startup", cache_startup)
     monkeypatch.setattr(lifespan_module, "on_cache_shutdown", cache_shutdown)
+    monkeypatch.setattr(lifespan_module.broker, "is_worker_process", False)
+    monkeypatch.setattr(lifespan_module.broker, "startup", broker_startup)
+    monkeypatch.setattr(lifespan_module.broker, "shutdown", broker_shutdown)
     monkeypatch.setattr(lifespan_module, "close_http_clients", http_shutdown)
+    monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
 
     yield calls
 
@@ -58,23 +75,23 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
 @pytest.mark.asyncio
 async def test_lifespan_initializes_and_shutdowns(
     patched_infra_lifecycle: list[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
-
     app = FastAPI()
     async with lifespan(app):
-        pass
+        assert isinstance(app.state.redis_client, FakeRedisClient)
 
     assert patched_infra_lifecycle == [
         "init_sentry",
-        "redis_startup",
+        "redis_create",
+        "redis_verify",
         "limiter_startup",
         "cache_startup",
+        "broker_startup",
         "http_shutdown",
+        "broker_shutdown",
         "cache_shutdown",
         "limiter_shutdown",
-        "redis_shutdown",
+        "redis_close",
     ]
     assert not hasattr(app.state, "s3_adapter")
 
@@ -84,7 +101,6 @@ async def test_lifespan_skips_s3_adapter_when_disabled(
     patched_infra_lifecycle: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
     build_s3_adapter = Mock()
     monkeypatch.setattr(lifespan_module, "build_s3_adapter", build_s3_adapter)
 
@@ -129,15 +145,174 @@ async def test_lifespan_builds_and_tears_down_s3_adapter_when_enabled(
 
 
 @pytest.mark.asyncio
-async def test_http_clients_close_when_the_app_stops_on_an_error(
+async def test_every_resource_closes_in_reverse_order_when_the_app_stops_on_an_error(
     patched_infra_lifecycle: list[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An abnormal shutdown is when leaked provider sockets are least noticed."""
-    monkeypatch.setattr(lifespan_module.config.s3, "S3_ENABLED", False)
-
-    with pytest.raises(RuntimeError):
+    """An abnormal shutdown is when leaked sockets and pools are least noticed."""
+    with pytest.raises(RuntimeError, match="server crashed"):
         async with lifespan(FastAPI()):
             raise RuntimeError("server crashed")
 
-    assert "http_shutdown" in patched_infra_lifecycle
+    started = patched_infra_lifecycle.index("broker_startup")
+    assert patched_infra_lifecycle[started + 1 :] == [
+        "http_shutdown",
+        "broker_shutdown",
+        "cache_shutdown",
+        "limiter_shutdown",
+        "redis_close",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_broker_startup_still_closes_what_was_opened(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RedisStreamBroker.startup can fail after it has borrowed a pooled
+    connection (XGROUP CREATE); shutdown is safe on a broker that never started,
+    so it must run on a half-started one too."""
+
+    async def broker_startup() -> None:
+        patched_infra_lifecycle.append("broker_startup")
+        raise RuntimeError("XGROUP CREATE failed")
+
+    monkeypatch.setattr(lifespan_module.broker, "startup", broker_startup)
+
+    with pytest.raises(RuntimeError, match="XGROUP CREATE failed"):
+        async with lifespan(FastAPI()):
+            pytest.fail("the app must not start")
+
+    started = patched_infra_lifecycle.index("broker_startup")
+    assert patched_infra_lifecycle[started + 1 :] == [
+        "broker_shutdown",
+        "cache_shutdown",
+        "limiter_shutdown",
+        "redis_close",
+    ]
+    assert "http_shutdown" not in patched_infra_lifecycle
+
+
+@pytest.mark.asyncio
+async def test_a_failed_redis_ping_closes_the_client(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pool created before the ping must not outlive the failed startup."""
+
+    async def verify_redis_client(client: FakeRedisClient) -> None:
+        patched_infra_lifecycle.append("redis_verify")
+        raise RuntimeError("Redis ping failed during startup")
+
+    monkeypatch.setattr(lifespan_module, "verify_redis_client", verify_redis_client)
+    app = FastAPI()
+
+    with pytest.raises(RuntimeError, match="Redis ping failed"):
+        async with lifespan(app):
+            pytest.fail("the app must not start")
+
+    assert patched_infra_lifecycle == [
+        "init_sentry",
+        "redis_create",
+        "redis_verify",
+        "redis_close",
+    ]
+    assert not hasattr(app.state, "redis_client")
+
+
+@pytest.mark.asyncio
+async def test_worker_process_leaves_the_broker_alone(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker CLI starts and stops the broker itself; a second pair from the
+    lifespan would shut it down under the running worker."""
+    monkeypatch.setattr(lifespan_module.broker, "is_worker_process", True)
+
+    async with lifespan(FastAPI()):
+        pass
+
+    assert "broker_startup" not in patched_infra_lifecycle
+    assert "broker_shutdown" not in patched_infra_lifecycle
+
+
+@pytest.mark.asyncio
+async def test_a_failing_close_does_not_skip_the_rest(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broker that fails to shut down must not leave the Redis pool open."""
+
+    async def broker_shutdown() -> None:
+        patched_infra_lifecycle.append("broker_shutdown")
+        raise RuntimeError("broker refused to close")
+
+    monkeypatch.setattr(lifespan_module.broker, "shutdown", broker_shutdown)
+
+    with pytest.raises(RuntimeError, match="broker refused to close"):
+        async with lifespan(FastAPI()):
+            pass
+
+    stopped = patched_infra_lifecycle.index("broker_shutdown")
+    assert patched_infra_lifecycle[stopped + 1 :] == [
+        "cache_shutdown",
+        "limiter_shutdown",
+        "redis_close",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_limiter_startup_closes_the_limiter_and_the_client(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The limiter keeps state from a partial init; its close must run before
+    the client it holds is closed, and nothing after it may start."""
+
+    async def limiter_init(redis_client: object) -> None:
+        patched_infra_lifecycle.append("limiter_startup")
+        raise RuntimeError("SCRIPT LOAD failed")
+
+    monkeypatch.setattr(lifespan_module.FastAPILimiter, "init", limiter_init)
+
+    with pytest.raises(RuntimeError, match="SCRIPT LOAD failed"):
+        async with lifespan(FastAPI()):
+            pytest.fail("the app must not start")
+
+    assert patched_infra_lifecycle == [
+        "init_sentry",
+        "redis_create",
+        "redis_verify",
+        "limiter_startup",
+        "limiter_shutdown",
+        "redis_close",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cache_startup_closes_what_was_opened(
+    patched_infra_lifecycle: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected cache ttl fails startup; the limiter and the client opened
+    before it must not outlive the failure, and the broker must not start."""
+
+    async def cache_startup(app: FastAPI) -> None:
+        patched_infra_lifecycle.append("cache_startup")
+        raise RuntimeError("cache ttl rejected")
+
+    monkeypatch.setattr(lifespan_module, "on_cache_startup", cache_startup)
+
+    with pytest.raises(RuntimeError, match="cache ttl rejected"):
+        async with lifespan(FastAPI()):
+            pytest.fail("the app must not start")
+
+    assert patched_infra_lifecycle == [
+        "init_sentry",
+        "redis_create",
+        "redis_verify",
+        "limiter_startup",
+        "cache_startup",
+        "cache_shutdown",
+        "limiter_shutdown",
+        "redis_close",
+    ]
