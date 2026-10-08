@@ -183,8 +183,9 @@ Rules specific to this suite:
 ### Redis contract suite
 
 `tests/contract/redis/` runs every Lua script the template ships through the component
-that owns it - refresh rotation, single-use challenges, the receiver's claims, the cache
-version scripts, the rate limiter - against both `InMemoryRedis` and a real Redis.
+that owns it - refresh rotation, single-use challenges, the receiver's claims and the cache
+version scripts against both `InMemoryRedis` and a real Redis, the rate limiter script
+against a real Redis only.
 
 - Take `redis_backend`: it is parametrized `fake` and `real`. The `real` param carries
   the `integration` marker, so `make test` runs the fake half without Docker and
@@ -194,10 +195,13 @@ version scripts, the rate limiter - against both `InMemoryRedis` and a real Redi
   the limiter (the fake answers `evalsha` from overrides) - takes `real_redis`, plus
   `redis_client_factory` for extra connections. Those fixtures mark the test
   `integration` by themselves.
-- The real fixtures FLUSHALL the instance and refuse to run unless `REDIS_TEST_INSTANCE=1`,
-  which only `make test-integration` and CI set.
-- When a `[real]` item fails and its `[fake]` twin passes, the fake is wrong: fix
-  `tests/fakes/redis.py`, never the script or the expectation.
+- The real fixtures FLUSHALL the instance and refuse to run unless `REDIS_TEST_INSTANCE`
+  names the `host:port` the settings reach (`REDIS_HOST:REDIS_PORT`); only
+  `make test-integration` and CI set it, each to the Redis it started.
+- When a `[real]` item fails and its `[fake]` twin passes, decide which behaviour is
+  intended: real Redis shows what the script does, not what it should do. If the script
+  is right, fix `tests/fakes/redis.py`; if it is not, fix the script. Never relax the
+  expectation to make both agree.
 - A new Lua script, or a change to how the fake answers one, comes with scenarios here.
 - No scenario waits for a TTL: assert `ttl`/`pttl`, or delete the key.
 
