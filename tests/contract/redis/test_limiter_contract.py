@@ -123,11 +123,13 @@ async def test_a_refused_call_never_answers_zero(limiter_redis: Redis) -> None:
     through uncounted and report a recovery the write never proved. OOM keeps
     the expired window from being rewritten, so every answer comes from the
     refused branch until the key is gone."""
-    limiter = RateLimiter(times=1, milliseconds=20)
+    # The window outlasts a slow runner's round trips, so the key is still there
+    # when the refusals start, and is short enough to poll down to its end.
+    limiter = RateLimiter(times=1, milliseconds=200)
     key = f"{PREFIX}:last-millisecond"
-    assert await limiter._eval_redis_limit(key) == 0  # noqa: SLF001
     answers: list[int] = []
     original = (await limiter_redis.config_get("maxmemory"))["maxmemory"]
+    assert await limiter._eval_redis_limit(key) == 0  # noqa: SLF001
     await limiter_redis.config_set("maxmemory", 1)
     try:
         with pytest.raises(redis_exc.OutOfMemoryError):
