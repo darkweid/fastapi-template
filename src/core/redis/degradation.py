@@ -48,7 +48,7 @@ class RedisDegradationReporter:
             self._last_report_ms = now_ms
 
         sentry_sdk.capture_message(
-            f"[{self._component}] Redis is unavailable. "
+            f"[{self._component}] Redis is degraded. "
             f"Error: {type(error).__name__}: {error}",
             level="error",
         )

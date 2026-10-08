@@ -211,3 +211,47 @@ async def test_disabled_cache_never_touches_redis(fake_redis: InMemoryRedis) -> 
 
     assert await cache.get(KEY) is None
     assert fake_redis.cache_eval_calls == 0
+
+
+OOM = redis_exc.OutOfMemoryError("command not allowed when used memory > 'maxmemory'.")
+
+
+async def test_read_fails_open_when_redis_is_out_of_memory(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    # Under noeviction a full Redis answers OOM. That is an outage of the shared
+    # instance, and a cache that raised it would turn every miss into a 500.
+    fake_redis.fail_next_commands(1, error=OOM)
+
+    assert await cache.get(KEY) is None
+    assert sentry_capture.call_count == 1
+
+
+async def test_write_fails_open_when_redis_is_out_of_memory(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    fake_redis.fail_next_commands(1, error=OOM)
+
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+
+    assert sentry_capture.call_count == 1
+
+
+async def test_delete_fails_open_when_redis_is_out_of_memory(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    fake_redis.fail_next_commands(1, error=OOM)
+
+    await cache.delete(KEY)
+
+    assert sentry_capture.call_count == 1
+
+
+async def test_invalidate_fails_open_when_redis_is_out_of_memory(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    fake_redis.fail_next_commands(1, error=OOM)
+
+    await cache.invalidate(KEY.namespace)
+
+    assert sentry_capture.call_count == 1

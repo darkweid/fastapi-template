@@ -62,3 +62,15 @@ def test_recovery_without_degradation_is_silent(capture: MagicMock) -> None:
     reporter.report_recovered()
 
     assert capture.call_count == 0
+
+
+def test_degradation_report_names_the_cause(capture: MagicMock) -> None:
+    # A full Redis is reachable; a report saying "unavailable" would send the
+    # on-call engineer after the network instead of maxmemory.
+    reporter = RedisDegradationReporter("Cache", clock=_clock([0]))
+
+    reporter.report_degraded(RuntimeError("OOM command not allowed"))
+
+    message = capture.call_args.args[0]
+    assert "unavailable" not in message
+    assert "RuntimeError: OOM command not allowed" in message

@@ -17,11 +17,16 @@ from src.core.redis.degradation import RedisDegradationReporter
 
 logger = get_logger(__name__)
 
-# Only a lost or unresponsive connection is a cache outage worth failing open on.
+# A lost or unresponsive connection is a cache outage worth failing open on.
 # Every other RedisError - a ResponseError from a malformed argument or a broken
 # Lua script above all - is a programmer error: swallowing it would hide the bug
 # and burn the degradation reporter's cooldown on a fake outage, muting the real one.
 TRANSPORT_ERRORS = (redis_exc.ConnectionError, redis_exc.TimeoutError)
+# The one ResponseError that is an outage: under noeviction a full Redis refuses
+# writes with OOM. Raising it would turn every cache miss into a 500 while the
+# instance the cache helped fill is already in trouble.
+CAPACITY_ERRORS = (redis_exc.OutOfMemoryError,)
+FAIL_OPEN_ERRORS = TRANSPORT_ERRORS + CAPACITY_ERRORS
 
 
 class RedisCache(BaseCache):
@@ -30,8 +35,8 @@ class RedisCache(BaseCache):
 
     Reads and writes go through Lua so that resolving every version counter the
     key composes from - the namespace and each of its tags - and touching the
-    value happen in a single round trip. Transport failures are
-    swallowed (a cache outage must not fail a request); programmer errors -
+    value happen in a single round trip. Transport failures and
+    OOM refusals are swallowed (a cache outage must not fail a request); programmer errors -
     unserializable values, a ttl outside (0, version_ttl], a rejected command -
     are raised.
     """
@@ -73,8 +78,8 @@ class RedisCache(BaseCache):
                 self._namespace_prefix(key.namespace),
                 key.suffix,
             )
-        except TRANSPORT_ERRORS as error:
-            self._on_transport_error("read", key, error)
+        except FAIL_OPEN_ERRORS as error:
+            self._on_redis_outage("read", key, error)
             return None
         if raw is None:
             logger.debug("[Cache] miss %s", key)
@@ -93,8 +98,8 @@ class RedisCache(BaseCache):
                 str(ttl),
                 str(self._version_ttl),
             )
-        except TRANSPORT_ERRORS as error:
-            self._on_transport_error("write", key, error)
+        except FAIL_OPEN_ERRORS as error:
+            self._on_redis_outage("write", key, error)
 
     async def _drop(self, key: CacheKey) -> None:
         try:
@@ -104,8 +109,8 @@ class RedisCache(BaseCache):
                 self._namespace_prefix(key.namespace),
                 key.suffix,
             )
-        except TRANSPORT_ERRORS as error:
-            self._on_transport_error("delete", key, error)
+        except FAIL_OPEN_ERRORS as error:
+            self._on_redis_outage("delete", key, error)
 
     async def _bump_versions(self, counters: Sequence[str]) -> None:
         try:
@@ -115,13 +120,13 @@ class RedisCache(BaseCache):
                 str(self._version_ttl),
             )
             logger.debug("[Cache] counters %s bumped to %s", list(counters), versions)
-        except TRANSPORT_ERRORS as error:
+        except FAIL_OPEN_ERRORS as error:
             logger.warning(
                 "[Cache] invalidate failed for counters %s: %s", list(counters), error
             )
             self._reporter.report_degraded(error)
 
-    def _on_transport_error(
+    def _on_redis_outage(
         self, operation: str, key: CacheKey, error: redis_exc.RedisError
     ) -> None:
         logger.warning("[Cache] %s failed for %s: %s", operation, key, error)

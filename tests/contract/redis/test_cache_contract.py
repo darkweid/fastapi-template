@@ -1,3 +1,6 @@
+from unittest.mock import MagicMock
+
+import pytest
 from redis.asyncio import Redis
 
 from src.core.cache.interface import CacheKey
@@ -134,3 +137,35 @@ async def test_a_write_pushes_its_counters_back_to_the_version_ttl(
     for counter in counters:
         assert SHRUNK_TTL_SECONDS < await redis_backend.ttl(counter)
         assert await redis_backend.ttl(counter) <= VERSION_TTL_SECONDS
+
+
+@pytest.fixture
+def sentry_capture(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    capture = MagicMock()
+    monkeypatch.setattr(
+        "src.core.redis.degradation.sentry_sdk.capture_message", capture
+    )
+    return capture
+
+
+async def test_cache_fails_open_when_redis_is_out_of_memory(
+    real_redis: Redis, sentry_capture: MagicMock
+) -> None:
+    """Pins what no fake can: an OOM raised by redis.call inside EVAL reaches
+    redis-py as OutOfMemoryError, not as a generic script error that the
+    fail-open set would let through as a 500."""
+    cache = _cache(real_redis)
+    key = CacheKey("users", "1")
+    original = (await real_redis.config_get("maxmemory"))["maxmemory"]
+    await real_redis.config_set("maxmemory", 1)
+    try:
+        await cache.set(key, {"name": "Ada"})
+        assert await cache.get(key) is None
+    finally:
+        await real_redis.config_set("maxmemory", original)
+
+    # A script without flags still runs under OOM until its first write, so the
+    # read answers (a miss) and closes the incident with a recovery notice.
+    degraded = sentry_capture.call_args_list[0]
+    assert "OutOfMemoryError" in degraded.args[0]
+    assert degraded.kwargs["level"] == "error"
