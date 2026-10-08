@@ -7,13 +7,18 @@ import shutil
 import pytest
 
 from scripts.ops import check_env
+from scripts.ops.check_env import parse_env
 from scripts.ops.init_project import (
     COMPOSE_FILE,
     DEFAULT_SUBNET,
     EDITED_FILES,
+    PASSWORD_KEYS,
     PLACEHOLDER_MARKER,
+    SECRET_KEYS,
     InitError,
     Options,
+    build_env,
+    env_hints,
     parse_subnet,
     plan_edits,
     validate_name,
@@ -21,6 +26,7 @@ from scripts.ops.init_project import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+SECRET_MIN_LENGTH = 32  # src/main/config.py SECRET_MIN_LENGTH
 
 
 def _options(
@@ -174,3 +180,62 @@ def test_drifted_count_fails_before_writing(template_files: Path) -> None:
 
     with pytest.raises(InitError, match="infra/docker-compose.yml"):
         plan_edits(template_files, _options())
+
+
+def _parsed(text: str, tmp_path: Path) -> dict[str, str]:
+    path = tmp_path / "generated.env"
+    path.write_text(text, encoding="utf-8")
+    return parse_env(path)
+
+
+def test_env_gets_distinct_secrets_and_passwords(tmp_path: Path) -> None:
+    """Sharing one value across purposes lets a token minted for one pass the
+    check of another; CSRF_SECRET_KEY is outside the startup validator's reach."""
+    text, _ = build_env((REPO_ROOT / ".env.example").read_text(encoding="utf-8"))
+    env = _parsed(text, tmp_path)
+
+    generated = [env[key] for key in (*SECRET_KEYS, *PASSWORD_KEYS)]
+    assert len(set(generated)) == len(generated)
+    for value in generated:
+        assert len(value) >= SECRET_MIN_LENGTH
+        assert value.isascii()
+        assert PLACEHOLDER_MARKER not in value
+
+
+def test_env_lists_what_is_still_a_placeholder(tmp_path: Path) -> None:
+    text, remaining = build_env(
+        (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    )
+    env = _parsed(text, tmp_path)
+
+    assert "EMAIL_PASSWORD" in remaining
+    assert "SENTRY_DSN" in remaining
+    assert not set(remaining) & {*SECRET_KEYS, *PASSWORD_KEYS}
+    assert set(remaining) == {
+        key for key, value in env.items() if PLACEHOLDER_MARKER in value
+    }
+
+
+def test_env_keeps_every_example_key(tmp_path: Path) -> None:
+    """check_env.py fails a deploy on any .env.example key missing from .env."""
+    example_text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    text, _ = build_env(example_text)
+
+    assert _parsed(text, tmp_path).keys() == _parsed(example_text, tmp_path).keys()
+
+
+def test_hints_name_what_an_existing_env_needs() -> None:
+    options = Options(
+        name="myapp", title="Shop", subnet=parse_subnet("10.42.7.0/24"), dry_run=False
+    )
+
+    assert env_hints(options) == (
+        'PROJECT_NAME="Shop"',
+        'TRUST_PROXY_HOSTS=["127.0.0.1","::1","10.42.7.128/25"]',
+    )
+    assert (
+        env_hints(
+            Options(name="myapp", title=None, subnet=DEFAULT_SUBNET, dry_run=False)
+        )
+        == ()
+    )

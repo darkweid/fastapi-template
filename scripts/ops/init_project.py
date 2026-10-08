@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import ipaddress
 from pathlib import Path
 import re
+import secrets
 
 DEFAULT_SUBNET = ipaddress.IPv4Network("172.30.0.0/24")
 SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -61,6 +62,18 @@ PROJECT_NAME_LINE = re.compile(r"^PROJECT_NAME=.*$", re.MULTILINE)
 # The three addresses of the default subnet, never a prefix of a longer one
 # (172.30.0.1 is a prefix of 172.30.0.128).
 DEFAULT_SUBNET_ADDRESS = re.compile(r"(?<![\d.])172\.30\.0\.(0/24|128/25|1)(?![\d./])")
+# Signing secrets: distinct per purpose (docs/readme/bootstrap.md, "Signing secrets").
+SECRET_KEYS = (
+    "JWT_USER_SECRET_KEY",
+    "JWT_USER_VERIFY_SECRET_KEY",
+    "JWT_USER_RESET_PASSWORD_SECRET_KEY",
+    "CSRF_SECRET_KEY",
+)
+# token_urlsafe is ASCII, which DOCS_PASSWORD needs (HTTP Basic reaches FastAPI
+# as ASCII), and 32 bytes encode to 43 characters, above SECRET_MIN_LENGTH.
+PASSWORD_KEYS = ("POSTGRES_PASSWORD", "REDIS_PASSWORD", "DOCS_PASSWORD")
+SECRET_BYTES = 48
+PASSWORD_BYTES = 32
 EDITED_FILES = tuple(sorted(set(NAME_PREFIX_COUNTS) | set(SUBNET_ADDRESS_COUNTS)))
 
 
@@ -205,3 +218,38 @@ def plan_edits(root: Path, options: Options) -> dict[str, str]:
         if text != original:
             planned[path] = text
     return planned
+
+
+def build_env(example_text: str) -> tuple[str, tuple[str, ...]]:
+    """Fills the secrets and passwords of an (already edited) .env.example and
+    keeps every other line, so check_env.py finds each example key in .env.
+
+    Returns the .env text and the keys whose value is still a placeholder."""
+    lines = []
+    remaining = []
+    for line in example_text.splitlines(keepends=True):
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or key.startswith("#"):
+            lines.append(line)
+        elif key in SECRET_KEYS:
+            lines.append(f"{key}={secrets.token_urlsafe(SECRET_BYTES)}\n")
+        elif key in PASSWORD_KEYS:
+            lines.append(f"{key}={secrets.token_urlsafe(PASSWORD_BYTES)}\n")
+        else:
+            if PLACEHOLDER_MARKER in value:
+                remaining.append(key)
+            lines.append(line)
+    return "".join(lines), tuple(remaining)
+
+
+def env_hints(options: Options) -> tuple[str, ...]:
+    """The lines an existing .env, which the run never touches, needs by hand."""
+    hints = []
+    if options.title is not None:
+        hints.append(f'PROJECT_NAME="{options.title}"')
+    if options.subnet != DEFAULT_SUBNET:
+        hints.append(
+            f'TRUST_PROXY_HOSTS=["127.0.0.1","::1","{trusted_proxy_range(options.subnet)}"]'
+        )
+    return tuple(hints)
