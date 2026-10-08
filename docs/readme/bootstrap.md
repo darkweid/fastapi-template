@@ -230,7 +230,7 @@ Basic otherwise.
 ```bash
 make lint             # ruff, black, mypy via pre-commit
 make test             # unit suite, no Docker needed
-make test-integration # optional here: throwaway PostgreSQL, needs Docker
+make test-integration # optional here: throwaway PostgreSQL and Redis, needs Docker
 ```
 
 Green on a fresh clone. If not, fix that before writing any code — you are
