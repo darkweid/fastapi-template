@@ -50,6 +50,8 @@ async def on_worker_startup(_: TaskiqState) -> None:
 async def on_worker_shutdown(_: TaskiqState) -> None:
     # One failing close must not skip the rest. The stack runs them in reverse:
     # the cache built on the Redis client is dropped first, the client last.
+    # A raised close still propagates into the broker's own shutdown, which then
+    # skips its pool disconnect; the process exits right after, so that is fine.
     async with AsyncExitStack() as stack:
         stack.push_async_callback(close_tasks_redis_client)
         stack.push_async_callback(close_http_clients)

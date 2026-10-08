@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Each close is pushed right before its resource starts, and every close is
     # safe on a resource that never finished starting. A failure anywhere in
     # startup, or an exception out of the app, therefore closes whatever was
-    # opened, in reverse: consumers first, the Redis client they share last.
+    # opened, in reverse: dependents first, the shared Redis client last.
     async with AsyncExitStack() as stack:
         redis_client = create_redis_client(connection_url=config.redis.dsn)
         stack.push_async_callback(redis_client.aclose)
@@ -41,8 +41,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # Kicker-side broker init: .kiq() requires a started broker. The worker
         # CLI targets taskiq_worker.app:broker directly and starts/stops the
         # broker itself, so this guard keeps that startup/shutdown pair scoped
-        # to the FastAPI process only. RedisStreamBroker.startup opens its pools
-        # before the step that can fail; shutdown only disconnects them.
+        # to the FastAPI process only. Pushed before startup: startup can fail
+        # after it has borrowed a pooled connection (XGROUP CREATE), and every
+        # step of shutdown is a no-op on a broker that never started.
         if not broker.is_worker_process:
             stack.push_async_callback(broker.shutdown)
             await broker.startup()
