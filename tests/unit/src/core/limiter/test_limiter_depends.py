@@ -374,3 +374,42 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
     )
     assert "Downtime: 500ms" in capture_message_mock.call_args_list[1].args[0]
     assert capture_message_mock.call_args_list[1].kwargs["level"] == "info"
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_does_not_report_recovery_on_a_refused_call(
+    limiter_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused call only reads, which an out-of-memory Redis still answers;
+    counting it as recovery would file a recovery and a fresh degradation for
+    every refused request while the outage lasts."""
+    FastAPILimiter.redis = object()
+    FastAPILimiter.lua_sha = "sha"
+    callback = AsyncMock()
+    capture_message_mock = Mock()
+    limiter = RateLimiter(times=1, seconds=1, callback=callback)
+    request = build_request(path="/test", endpoint=sample_endpoint)
+    response = Response()
+    monkeypatch.setattr(
+        "src.core.redis.degradation.sentry_sdk.capture_message",
+        capture_message_mock,
+    )
+    out_of_memory = redis_exc.OutOfMemoryError("command not allowed when OOM")
+    monkeypatch.setattr(
+        limiter,
+        "_eval_redis_limit",
+        AsyncMock(side_effect=[out_of_memory, 750, out_of_memory, 0]),
+    )
+
+    await limiter(request, response)
+    await limiter(request, response)
+    await limiter(request, response)
+
+    assert capture_message_mock.call_count == 1
+    assert "Redis is degraded" in capture_message_mock.call_args.args[0]
+
+    await limiter(request, response)
+
+    assert capture_message_mock.call_count == 2
+    assert "Redis recovered" in capture_message_mock.call_args.args[0]

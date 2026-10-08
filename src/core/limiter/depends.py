@@ -184,10 +184,15 @@ class RateLimiter:
     async def _check_limit(self, key: str) -> int:
         try:
             result = await self._eval_redis_limit(key)
-            self._degradation_reporter.report_recovered()
-            return result
         except (redisExc.ConnectionError, redisExc.RedisError) as exc:
             return self._check_limit_with_fallback(key, exc)
+        # Only an admitted call writes (INCR/SET); a refused one reads with GET
+        # and PTTL, which an out-of-memory Redis still answers. Recovery counts
+        # only once a write went through, or every refusal would close the
+        # incident and the next admitted call reopen it.
+        if result == 0:
+            self._degradation_reporter.report_recovered()
+        return result
 
     async def __call__(self, request: Request, response: Response) -> None:
         """
