@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,6 +9,7 @@ from src.core.cache.interface import CacheKey
 from src.core.cache.keys import tag_version_key, value_key, version_key
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.serializer import JsonSerializer
+from tests.fakes.redis import InMemoryRedis
 
 PREFIX = "contract"
 DEFAULT_TTL_SECONDS = 60
@@ -276,8 +279,58 @@ async def test_cache_fails_open_when_redis_is_out_of_memory(
     finally:
         await real_redis.config_set("maxmemory", original)
 
-    # A script without flags still runs under OOM until its first write, so the
-    # read answers (a miss) and closes the incident with a recovery notice.
-    degraded = sentry_capture.call_args_list[0]
-    assert "OutOfMemoryError" in degraded.args[0]
-    assert degraded.kwargs["level"] == "error"
+    sentry_capture.assert_called_once()
+    assert "OutOfMemoryError" in sentry_capture.call_args.args[0]
+    assert sentry_capture.call_args.kwargs["level"] == "error"
+
+
+@asynccontextmanager
+async def _out_of_memory(redis_backend: Redis) -> AsyncIterator[None]:
+    if isinstance(redis_backend, InMemoryRedis):
+        redis_backend.out_of_memory = True
+        yield
+        return
+    original = (await redis_backend.config_get("maxmemory"))["maxmemory"]
+    await redis_backend.config_set("maxmemory", 1)
+    try:
+        yield
+    finally:
+        await redis_backend.config_set("maxmemory", original)
+
+
+async def test_a_sustained_out_of_memory_is_reported_once(
+    redis_backend: Redis, sentry_capture: MagicMock
+) -> None:
+    """Under OOM a read still runs and only the write is refused. Were a read to
+    report recovery, every miss would file a recovery and a fresh degradation,
+    and the cooldown would never hold."""
+    cache = _cache(redis_backend)
+    key = CacheKey("users", "1")
+
+    async with _out_of_memory(redis_backend):
+        await cache.set(key, {"name": "Ada"})
+        assert await cache.get(key) is None
+        await cache.set(key, {"name": "Ada"})
+        assert await cache.get(key) is None
+
+    sentry_capture.assert_called_once()
+    assert "OutOfMemoryError" in sentry_capture.call_args.args[0]
+
+
+async def test_a_value_misses_after_its_counter_is_evicted_and_a_sibling_writes(
+    redis_backend: Redis,
+) -> None:
+    """An evicted counter must not restart at a generation an earlier value still
+    lives under: read as 0 when absent, the sibling write would bring back the
+    generation the first write used, and the value invalidated since would be
+    served again."""
+    cache = _cache(redis_backend)
+    key = CacheKey("users", "1")
+    await cache.set(key, {"name": "Ada"})
+    await cache.invalidate("users")
+    await cache.set(key, {"name": "Grace"})
+    await redis_backend.delete(version_key(PREFIX, "users"))
+
+    await cache.set(CacheKey("users", "2"), {"name": "Grace"})
+
+    assert await cache.get(key) is None

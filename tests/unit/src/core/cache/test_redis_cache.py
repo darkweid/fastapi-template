@@ -278,3 +278,47 @@ async def test_invalidate_fails_open_when_redis_is_out_of_memory(
     await cache.invalidate(KEY.namespace)
 
     assert sentry_capture.call_count == 1
+
+
+async def test_a_read_delete_or_invalidation_does_not_report_recovery(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    # Under OOM these still succeed; recovering on one would close the incident
+    # and reopen it on the next refused write, once per miss.
+    fake_redis.fail_next_commands(1)
+    await cache.get(KEY)
+
+    await cache.get(KEY)
+    await cache.delete(KEY)
+    await cache.invalidate(KEY.namespace)
+
+    assert sentry_capture.call_count == 1
+
+
+async def test_a_successful_write_reports_recovery(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    fake_redis.fail_next_commands(1)
+    await cache.get(KEY)
+
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+
+    assert sentry_capture.call_count == 2
+    assert "recovered" in sentry_capture.call_args_list[1].args[0]
+
+
+async def test_fake_out_of_memory_refuses_only_the_write(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    """The fake refuses what real Redis refuses under OOM and nothing else: one
+    that also refused reads would hide a recovery reported on a read."""
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
+    fake_redis.out_of_memory = True
+
+    assert await cache.get(KEY) == {"name": "ada"}
+    await cache.set(KEY, {"name": "grace"}, ttl=60)
+    await cache.invalidate(KEY.namespace)
+
+    assert sentry_capture.call_count == 1
+    assert "OutOfMemoryError" in sentry_capture.call_args.args[0]
+    assert await cache.get(KEY) is None

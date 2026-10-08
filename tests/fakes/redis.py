@@ -72,6 +72,11 @@ class InMemoryRedis:
         self.cache_eval_calls = 0
         self._failures = 0
         self._failure_error: Exception = redis_exc.ConnectionError("fake redis down")
+        # A full instance under noeviction. Real Redis refuses only commands that
+        # may grow memory, so only the cache write script is refused: reads, DEL
+        # and EXPIRE keep working, and a fake refusing them too would hide code
+        # that treats a successful read as proof the instance recovered.
+        self.out_of_memory = False
 
     def set_evalsha_result(self, key: str, result: int) -> None:
         self._evalsha_overrides[key] = result
@@ -364,10 +369,13 @@ class InMemoryRedis:
     # produce. They reach the store through _read/_write/_drop/_expire for the
     # same reason: the public commands yield.
     def _cache_versions(self, counters: list[str]) -> list[str] | None:
-        versions = [self._read(counter) for counter in counters]
-        if any(version is None for version in versions):
-            return None
-        return [version for version in versions if version is not None]
+        versions: list[str] = []
+        for counter in counters:
+            version = self._read(counter)
+            if version is None:
+                return None
+            versions.append(version)
+        return versions
 
     @staticmethod
     def _cache_value_key(versions: list[str], prefix_ns: str, suffix: str) -> str:
@@ -391,8 +399,12 @@ class InMemoryRedis:
 
     def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
         self.cache_eval_calls += 1
+        if self.out_of_memory:
+            raise redis_exc.OutOfMemoryError(
+                "command not allowed when used memory > 'maxmemory'."
+            )
         generation = self._next_cache_generation()
-        versions = []
+        versions: list[str] = []
         for counter in counters:
             version = self._read(counter) or generation
             self._write(counter, version, ttl_seconds=int(args[4]))

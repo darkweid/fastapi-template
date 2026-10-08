@@ -299,8 +299,12 @@ missing is a miss, and the next write starts a new generation from the Redis
 server clock, so a deleted or evicted counter never readdresses a stored value.
 
 **Fail-open, and what it costs:** a lost connection, a timeout or an `OOM` refusal
-from a full Redis is swallowed — reads report a miss, writes and counter deletions
-are dropped — so a Redis outage degrades the API instead of breaking it. Everything
+from a full Redis is swallowed — so a Redis outage degrades the API instead of
+breaking it. An unreachable Redis turns reads into misses and drops writes and
+counter deletions; a full one refuses only the writes, so hits keep serving and
+invalidation keeps working. The outage is reported once per cooldown, and the
+recovery only at the next successful write, since under `OOM` a read proves
+nothing. Everything
 else Redis can raise (a
 malformed command, a broken script) propagates, because that is a bug and hiding
 it would also burn the degradation reporter's cooldown and mute the report of a
