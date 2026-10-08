@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from redis.asyncio import Redis
+import redis.exceptions as redis_exc
 
 from src.core.limiter import FastAPILimiter
 from src.core.limiter.depends import RateLimiter
@@ -114,3 +115,26 @@ async def test_a_sustained_out_of_memory_is_reported_once(
 
     capture.assert_called_once()
     assert "OutOfMemoryError" in capture.call_args.args[0]
+
+
+async def test_a_refused_call_never_answers_zero(limiter_redis: Redis) -> None:
+    """Zero is the admitted answer, and PTTL reads 0 in a key's last millisecond
+    while the key still exists. A refusal answering 0 would let that request
+    through uncounted and report a recovery the write never proved. OOM keeps
+    the expired window from being rewritten, so every answer comes from the
+    refused branch until the key is gone."""
+    limiter = RateLimiter(times=1, milliseconds=20)
+    key = f"{PREFIX}:last-millisecond"
+    assert await limiter._eval_redis_limit(key) == 0  # noqa: SLF001
+    answers: list[int] = []
+    original = (await limiter_redis.config_get("maxmemory"))["maxmemory"]
+    await limiter_redis.config_set("maxmemory", 1)
+    try:
+        with pytest.raises(redis_exc.OutOfMemoryError):
+            while True:
+                answers.append(await limiter._eval_redis_limit(key))  # noqa: SLF001
+    finally:
+        await limiter_redis.config_set("maxmemory", original)
+
+    assert answers
+    assert min(answers) >= 1
