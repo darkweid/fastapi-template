@@ -23,7 +23,10 @@ async def limiter_redis(real_redis: Redis) -> AsyncIterator[Redis]:
     await FastAPILimiter.init(real_redis, prefix=PREFIX)
     # Class-level, so another test's outage would otherwise carry into this one.
     RateLimiter._fallback_windows = {}
-    RateLimiter._degradation_reporter = RedisDegradationReporter("RateLimiter")
+    # The quiet window would mask a recovery reported by the wrong operation.
+    RateLimiter._degradation_reporter = RedisDegradationReporter(
+        "RateLimiter", recovery_quiet_ms=0
+    )
     try:
         yield real_redis
     finally:
