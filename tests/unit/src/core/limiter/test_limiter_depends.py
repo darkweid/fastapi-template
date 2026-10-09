@@ -10,7 +10,10 @@ import redis.exceptions as redis_exc
 from src.core.limiter import FastAPILimiter
 import src.core.limiter.depends as limiter_depends
 from src.core.limiter.depends import RateLimiter
-from src.core.redis.degradation import RedisDegradationReporter
+from src.core.redis.degradation import (
+    DEFAULT_RECOVERY_QUIET_MS,
+    RedisDegradationReporter,
+)
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.requests import build_request
 
@@ -332,7 +335,7 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
     FastAPILimiter.lua_sha = "sha"
     callback = AsyncMock()
     capture_message_mock = Mock()
-    limiter = RateLimiter(times=1, seconds=1, callback=callback)
+    limiter = RateLimiter(times=2, seconds=1, callback=callback)
     request = build_request(path="/test", endpoint=sample_endpoint)
     response = Response()
 
@@ -352,6 +355,7 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
     eval_redis_limit_mock = AsyncMock(
         side_effect=[
             redis_exc.ConnectionError("down"),
+            redis_exc.ConnectionError("down"),
             0,
         ]
     )
@@ -359,6 +363,8 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
 
     await limiter(request, response)
     current_time_ms = 1_500
+    await limiter(request, response)
+    current_time_ms = 1_500 + DEFAULT_RECOVERY_QUIET_MS
     await limiter(request, response)
 
     callback.assert_not_awaited()
@@ -372,7 +378,10 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
         "[RateLimiter] Redis recovered"
         in capture_message_mock.call_args_list[1].args[0]
     )
-    assert "Downtime: 500ms" in capture_message_mock.call_args_list[1].args[0]
+    assert (
+        "after 2 failure(s): the first 60500ms ago, the last 60000ms ago"
+        in capture_message_mock.call_args_list[1].args[0]
+    )
     assert capture_message_mock.call_args_list[1].kwargs["level"] == "info"
 
 
@@ -391,6 +400,10 @@ async def test_rate_limiter_does_not_report_recovery_on_a_refused_call(
     limiter = RateLimiter(times=1, seconds=1, callback=callback)
     request = build_request(path="/test", endpoint=sample_endpoint)
     response = Response()
+    now_ms = [0]
+    RateLimiter._degradation_reporter = RedisDegradationReporter(
+        "RateLimiter", clock=lambda: now_ms[0]
+    )
     monkeypatch.setattr(
         "src.core.redis.degradation.sentry_sdk.capture_message",
         capture_message_mock,
@@ -399,11 +412,11 @@ async def test_rate_limiter_does_not_report_recovery_on_a_refused_call(
     monkeypatch.setattr(
         limiter,
         "_eval_redis_limit",
-        AsyncMock(side_effect=[out_of_memory, 750, out_of_memory, 0]),
+        AsyncMock(side_effect=[out_of_memory, 750, 0]),
     )
 
     await limiter(request, response)
-    await limiter(request, response)
+    now_ms[0] = DEFAULT_RECOVERY_QUIET_MS
     await limiter(request, response)
 
     assert capture_message_mock.call_count == 1

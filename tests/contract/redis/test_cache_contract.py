@@ -9,6 +9,7 @@ from src.core.cache.interface import CacheKey
 from src.core.cache.keys import tag_version_key, value_key, version_key
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.serializer import JsonSerializer
+from src.core.redis.degradation import RedisDegradationReporter
 from tests.fakes.redis import InMemoryRedis
 
 PREFIX = "contract"
@@ -24,6 +25,8 @@ def _cache(redis_client: Redis) -> RedisCache:
         prefix=PREFIX,
         default_ttl=DEFAULT_TTL_SECONDS,
         version_ttl=VERSION_TTL_SECONDS,
+        # The quiet window would mask a recovery reported by the wrong operation.
+        reporter=RedisDegradationReporter("Cache", recovery_quiet_ms=0),
     )
 
 

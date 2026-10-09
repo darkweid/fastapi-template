@@ -78,8 +78,11 @@ Redis-backed **fixed window** counter via Lua script:
 - Capped at 100,000 entries (~20-25 MB).
 - Oldest entries evicted when at capacity.
 - State transitions (degraded/recovered) reported to Sentry, recovery only at
-  the next admitted call: a full Redis (`OOM`) still answers the reads a refused
+  an admitted call: a full Redis (`OOM`) still answers the reads a refused
   call makes, so only a call whose window write succeeds proves it recovered.
+  That call closes the incident only after a minute without a failure, so a
+  Redis at the edge of `maxmemory` that flaps faster than once a minute is one
+  incident, not one per flap.
 
 **Why it matters:** Rate limiting is the first line of defense against brute-force, credential stuffing, and abuse. The fallback ensures protection continues during Redis outages instead of silently disabling.
 
@@ -305,8 +308,9 @@ from a full Redis is swallowed — so a Redis outage degrades the API instead of
 breaking it. An unreachable Redis turns reads into misses and drops writes and
 counter deletions; a full one refuses only the writes, so hits keep serving and
 invalidation keeps working. The outage is reported once per cooldown, and the
-recovery only at the next successful write, since under `OOM` a read proves
-nothing. Everything
+recovery only at a successful write, since under `OOM` a read proves nothing,
+and only after a minute without a failure, so a Redis at the edge of `maxmemory`
+that refuses a write more often than once a minute stays one incident. Everything
 else Redis can raise (a
 malformed command, a broken script) propagates, because that is a bug and hiding
 it would also burn the degradation reporter's cooldown and mute the report of a

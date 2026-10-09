@@ -15,6 +15,10 @@ from src.core.cache.interface import CacheKey
 from src.core.cache.keys import tag_version_key, value_key, version_key
 from src.core.cache.redis_cache import RedisCache
 from src.core.cache.serializer import JsonSerializer
+from src.core.redis.degradation import (
+    DEFAULT_RECOVERY_QUIET_MS,
+    RedisDegradationReporter,
+)
 from tests.fakes.redis import InMemoryRedis
 
 KEY = CacheKey(namespace="user:1", suffix="summary")
@@ -34,6 +38,8 @@ def cache(fake_redis: InMemoryRedis) -> RedisCache:
         prefix="cache",
         default_ttl=60,
         version_ttl=604800,
+        # The quiet window would mask a recovery reported by the wrong operation.
+        reporter=RedisDegradationReporter("Cache", recovery_quiet_ms=0),
     )
 
 
@@ -295,14 +301,27 @@ async def test_a_read_delete_or_invalidation_does_not_report_recovery(
     assert sentry_capture.call_count == 1
 
 
-async def test_a_successful_write_reports_recovery(
-    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+async def test_a_successful_write_reports_recovery_after_the_quiet_window(
+    fake_redis: InMemoryRedis, sentry_capture: MagicMock
 ) -> None:
+    now_ms = [0]
+    cache = RedisCache(
+        redis_client=fake_redis,
+        serializer=JsonSerializer(),
+        prefix="cache",
+        default_ttl=60,
+        version_ttl=604800,
+        reporter=RedisDegradationReporter("Cache", clock=lambda: now_ms[0]),
+    )
     fake_redis.fail_next_commands(1)
     await cache.get(KEY)
 
+    now_ms[0] = DEFAULT_RECOVERY_QUIET_MS - 1
     await cache.set(KEY, {"name": "ada"}, ttl=60)
+    assert sentry_capture.call_count == 1
 
+    now_ms[0] = DEFAULT_RECOVERY_QUIET_MS
+    await cache.set(KEY, {"name": "ada"}, ttl=60)
     assert sentry_capture.call_count == 2
     assert "recovered" in sentry_capture.call_args_list[1].args[0]
 
