@@ -17,7 +17,11 @@ from redis.asyncio import Redis
 from src.core.auth.errors import TokenExpiredError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.realm import AuthRealm
-from src.core.auth.token_helpers import invalidate_all_sessions, is_within_reuse_grace
+from src.core.auth.token_helpers import (
+    REUSE_DETECTED_MESSAGE,
+    invalidate_session,
+    is_replay_of_live_pair,
+)
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 
@@ -65,7 +69,9 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
 
     A valid signature is not enough: the jti must still be the one Redis holds
     for that session, so a token that was rotated out or revoked fails here
-    while verifying cryptographically. Expiry raises TokenExpiredError, whose
+    while verifying cryptographically. The one exception is a refresh token
+    rotated inside the grace window whose successor refresh token has not been
+    rotated yet: it passes, and rotation answers it with that pair. Expiry raises TokenExpiredError, whose
     own error code lets a client tell "refresh and retry" apart from "this
     token is not ours"; everything else answers the generic 401.
 
@@ -103,14 +109,22 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
         )
 
         if used_marker is not None:
-            # Inside the grace window this is a benign double-submit, not
-            # theft: reject the request but keep the session family alive.
-            if await is_within_reuse_grace(used_marker, redis_client):
+            # A token rotated moments ago whose successor refresh token has not
+            # been rotated yet belongs to a client that lost the rotation's
+            # answer: it goes on to rotation, which answers that same pair. Any
+            # other rotated-out token is reuse and ends its session - unless a
+            # logout or a wipe already ended it, which is not reuse.
+            if await is_replay_of_live_pair(
+                used_marker, subject_id, session_id, redis_client, keys=realm.keys
+            ):
+                return payload_typed
+            refresh_key = realm.keys.refresh(subject_id, session_id)
+            if not await redis_client.exists(refresh_key):
                 raise UnauthorizedException("Token invalidated or expired")
-            await invalidate_all_sessions(subject_id, redis_client, keys=realm.keys)
-            raise UnauthorizedException(
-                "Token reuse detected. All sessions invalidated."
+            await invalidate_session(
+                subject_id, session_id, redis_client, keys=realm.keys
             )
+            raise UnauthorizedException(REUSE_DETECTED_MESSAGE)
 
     active_key = realm.keys.session_key(mode, subject_id, session_id)
     stored_jti = await redis_client.get(active_key)

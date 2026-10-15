@@ -1,4 +1,6 @@
 import asyncio
+import json
+from typing import Any
 from unittest.mock import AsyncMock
 
 import jwt
@@ -32,6 +34,12 @@ def _base_payload() -> dict[str, str | int]:
         "exp": 9999999999,
         "mode": "refresh_token",
     }
+
+
+def _decode(token: str | None) -> Any:
+    return jwt.decode(
+        token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -99,11 +107,11 @@ async def test_used_marker_ttl_tracks_the_refresh_token_lifetime(
 
 
 @pytest.mark.asyncio
-async def test_rotation_stores_a_unix_timestamp_in_the_used_marker(
+async def test_rotation_stamps_the_instant_and_the_new_pair_on_the_used_marker(
     fake_redis: InMemoryRedis,
 ) -> None:
-    # The marker value is the rotation instant: the grace check compares it
-    # against the Redis server clock, so anything else breaks the window math.
+    # The grace check compares the instant against the Redis server clock, and a
+    # replay inside the window is answered by signing this exact pair again.
     payload = _base_payload()
     fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
@@ -112,124 +120,208 @@ async def test_rotation_stores_a_unix_timestamp_in_the_used_marker(
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
 
-    await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+    tokens = await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
 
+    refresh = _decode(tokens.refresh_token)
+    access = _decode(tokens.access_token)
     used_key = AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"]))
-    assert await fake_redis.get(used_key) == str(FROZEN_NOW)
+    marker = await fake_redis.get(used_key)
+    assert marker is not None
+    assert json.loads(marker) == {
+        "at": FROZEN_NOW,
+        "refresh_jti": refresh["jti"],
+        "refresh_expires_at": refresh["exp"],
+        "access_jti": access["jti"],
+        "access_expires_at": access["exp"],
+    }
+
+
+async def _rotate_once(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch, grace: int
+) -> tuple[dict[str, str | int], TokenModel]:
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", grace)
+    payload = _base_payload()
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
+    await fake_redis.set(
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    rotated = await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+    return payload, rotated
 
 
 @pytest.mark.asyncio
-async def test_second_rotation_within_grace_rejects_without_family_wipe(
+async def test_a_replay_inside_the_grace_window_gets_the_same_pair(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """
-    Given: the same refresh token is submitted twice within the grace window
-    (a network retry / double-submit, not an attack).
-    When: the second rotation runs.
-    Then: it is rejected with the generic invalid-token answer, and the
-    session family is NOT wiped.
-    """
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
-    payload = _base_payload()
-    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
-    await fake_redis.set(
-        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
-        str(payload["jti"]),
-        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
-    )
-    await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
-
+    """A mobile client whose refresh response was lost retries with the token it
+    still holds; a 401 there signs it out for a network blip, and a new pair
+    would leave the first one live beside it."""
+    payload, rotated = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    live_keys = {
+        key: await fake_redis.get(key)
+        for key in (
+            AUTH_KEYS.refresh("user-id", "old-session"),
+            AUTH_KEYS.access("user-id", "old-session"),
+            AUTH_KEYS.latest_access("user-id", "old-session"),
+        )
+    }
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 30)
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
-    with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
-        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+    replayed = await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
 
+    assert replayed == rotated
+    for key, value in live_keys.items():
+        assert await fake_redis.get(key) == value
     invalidate_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_replay_after_the_grace_window_wipes_the_family(
+async def test_a_replay_after_the_pair_rotated_on_is_reuse(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
-    payload = _base_payload()
-    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
-    await fake_redis.set(
-        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
-        str(payload["jti"]),
-        ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+    """Once the pair was used, whoever presents the token it replaced is not the
+    client that lost an answer: inside the window too, that is reuse."""
+    payload, rotated = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    await rotate_session_tokens(
+        _decode(rotated.refresh_token), fake_redis, realm=USER_AUTH_REALM
     )
-    await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
-
-    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 11)
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
         await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
+    invalidate_mock.assert_awaited_once_with(
+        "user-id", "old-session", fake_redis, keys=AUTH_KEYS
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_replay_after_a_wipe_does_not_bring_the_session_back(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A password change seconds after a refresh ends the session; the old
+    token's marker must not re-sign a pair the wipe already revoked."""
+    payload, _ = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    await token_helpers.invalidate_all_sessions("user-id", fake_redis, keys=AUTH_KEYS)
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+
+    assert await fake_redis.exists(AUTH_KEYS.refresh("user-id", "old-session")) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_replay_after_the_grace_window_ends_only_its_session(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stolen refresh token reaches only its own session; ending every session
+    would let anyone holding an old token sign the subject out everywhere."""
+    payload, _ = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    await fake_redis.set(AUTH_KEYS.refresh("user-id", "other-session"), "other-jti")
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 31)
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+
+    assert await fake_redis.exists(AUTH_KEYS.refresh("user-id", "old-session")) == 0
+    assert (
+        await fake_redis.get(AUTH_KEYS.refresh("user-id", "other-session"))
+        == "other-jti"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_replay_does_not_extend_the_grace_window(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replay writes nothing; if it restamped the marker, a thief could keep
+    re-signing the owner's pair for as long as they kept replaying."""
+    payload, rotated = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 10)
+    assert (
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+        == rotated
+    )
+    fake_redis.wall_clock = lambda: float(FROZEN_NOW + 31)
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+
+
+@pytest.mark.asyncio
+async def test_a_replay_after_a_logout_is_refused_without_calling_it_reuse(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user ended this session; a retry of the token it rotated out must
+    neither bring it back nor report a theft that did not happen."""
+    payload, _ = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    await token_helpers.invalidate_session(
+        "user-id", "old-session", fake_redis, keys=AUTH_KEYS
+    )
+    token = jwt.encode(payload, TEST_JWT_USER_SECRET_KEY, algorithm="HS256")
+
+    with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
+
+    assert await fake_redis.exists(AUTH_KEYS.refresh("user-id", "old-session")) == 0
+    assert await fake_redis.exists(AUTH_KEYS.access("user-id", "old-session")) == 0
 
 
 @pytest.mark.asyncio
 async def test_zero_grace_disables_the_window(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 0)
+    payload, _ = await _rotate_once(fake_redis, monkeypatch, grace=0)
+    invalidate_mock = AsyncMock()
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
+
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+
+    invalidate_mock.assert_awaited_once_with(
+        "user-id", "old-session", fake_redis, keys=AUTH_KEYS
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_marker_without_a_readable_pair_is_reuse(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A marker that names no pair (corrupted, or written before markers carried
+    one) has nothing to answer with, and is never forgiven by default."""
     payload = _base_payload()
-    fake_redis.wall_clock = lambda: float(FROZEN_NOW)
     await fake_redis.set(
         AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
         str(payload["jti"]),
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
-    await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
-
+    await fake_redis.setex(
+        AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"])),
+        100,
+        str(int(fake_redis.wall_clock())),
+    )
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
     with pytest.raises(UnauthorizedException, match="Token reuse detected"):
         await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
-
-
-@pytest.mark.asyncio
-async def test_rotate_session_tokens_reuse_detected(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """
-    Given: used marker for the incoming refresh jti already exists, with a
-    non-numeric value (legacy or corrupted marker - no timestamp to compare).
-    When: refresh token rotation is executed for that payload.
-    Then: the grace window cannot apply, UnauthorizedException is raised and
-    all sessions for the user are invalidated.
-    """
-    payload = _base_payload()
-    await fake_redis.setex(
-        AUTH_KEYS.used(str(payload["sub"]), str(payload["jti"])),
-        100,
-        "used",
+    invalidate_mock.assert_awaited_once_with(
+        "user-id", "old-session", fake_redis, keys=AUTH_KEYS
     )
-    invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
-
-    with pytest.raises(UnauthorizedException):
-        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
-
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
 async def test_rotate_session_tokens_invalid_state(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """
-    Given: stored refresh jti does not match jti from payload.
-    When: refresh token rotation is executed.
-    Then: UnauthorizedException is raised and all sessions for the user are invalidated.
-    """
+    """A jti the session does not hold was never minted for it; the session is
+    ended, and only that one."""
     payload = _base_payload()
     await fake_redis.set(
         AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])),
@@ -237,12 +329,14 @@ async def test_rotate_session_tokens_invalid_state(
         ex=config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
     )
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
-    with pytest.raises(UnauthorizedException):
+    with pytest.raises(UnauthorizedException, match="invalidated or expired"):
         await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
 
-    invalidate_mock.assert_awaited_once_with(payload["sub"], fake_redis, keys=AUTH_KEYS)
+    invalidate_mock.assert_awaited_once_with(
+        "user-id", "old-session", fake_redis, keys=AUTH_KEYS
+    )
 
 
 @pytest.mark.asyncio

@@ -714,3 +714,45 @@ async def test_logout_with_the_rotated_access_token_ends_the_session(
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_retried_after_a_lost_answer_gets_the_same_pair(
+    async_client,
+    dependency_overrides: DependencyOverrides,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry of a just-rotated token must pass the route's own token check
+    before rotation and come back with the pair the lost answer carried,
+    cookie included."""
+    user = build_user()
+    first = await issue_session_pair(
+        realm=USER_AUTH_REALM,
+        subject_id=str(user.id),
+        claims={},
+        redis_client=fake_redis,
+        session_id="session-live",
+    )
+    rotated = await rotate_session_tokens(
+        jwt.decode(first.refresh_token, options={"verify_signature": False}),
+        fake_redis,
+        realm=USER_AUTH_REALM,
+    )
+    monkeypatch.setattr(
+        "src.core.auth.dependencies.load_principal", AsyncMock(return_value=user)
+    )
+    dependency_overrides.set(get_redis_client, ProvideValue(fake_redis))
+
+    response = await async_client.post(
+        "/v1/users/auth/login/refresh",
+        headers={"Authorization": f"Bearer {first.refresh_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"] == rotated.access_token
+    set_cookie = response.headers.get_list("set-cookie")
+    assert any(
+        h.startswith(f"{REFRESH_COOKIE_NAME}={rotated.refresh_token};")
+        for h in set_cookie
+    )

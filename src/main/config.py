@@ -284,12 +284,15 @@ class JWTConfig(BaseSettings):
     RESET_PASSWORD_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
 
     # How long after a rotation a replay of the rotated-out refresh token is
-    # treated as a benign double-submit (plain 401) instead of theft (family
-    # wipe). 0 disables the window and makes every replay a wipe. The cost of
-    # the window: when a thief rotates first and the owner's replay lands
-    # inside it, the theft goes undetected and only the owner is logged out -
-    # keep it seconds-short, hence the hard upper bound.
-    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(10, ge=0, le=60)
+    # answered with the pair that rotation handed out, as long as the refresh
+    # token of that pair has not been rotated yet: the client lost the answer,
+    # typically on a mobile network. 0 disables the window and makes every
+    # replay a reuse that ends the session. The cost of the window: a thief
+    # replaying inside it gets the same pair as the owner. The theft is caught
+    # only if both go on refreshing, when one presents a token the other
+    # already rotated; a thief who stops after the replay keeps the access
+    # token until it expires - hence the hard upper bound.
+    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = Field(30, ge=0, le=60)
 
     model_config = SettingsConfigDict(extra="ignore")
 

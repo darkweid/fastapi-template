@@ -84,7 +84,7 @@ Then: expected business outcome is returned.
 ```text
 Given: refresh token reuse marker already exists for this user.
 When: refresh token rotation is executed with the same jti.
-Then: all user sessions are invalidated and UnauthorizedException is raised.
+Then: the token's session is invalidated and UnauthorizedException is raised.
 ```
 - Assert only observable behavior:
 - return value

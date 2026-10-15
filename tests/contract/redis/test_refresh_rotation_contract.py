@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+import json
 from typing import Any, cast
 from uuid import uuid4
 
@@ -74,30 +75,55 @@ async def test_rotation_registers_the_new_pair_as_the_live_session(
     assert 0 < refresh_ttl <= config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
 
 
-async def test_second_use_inside_the_grace_window_keeps_the_session(
+async def test_second_use_inside_the_grace_window_gets_the_same_pair(
     redis_backend: Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A client retrying a refresh over a flaky connection is not a thief; wiping
-    its sessions would log it out for a network blip."""
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    """A client whose refresh answer was lost retries with the token it still
+    holds; it must get the pair it missed, and no second pair may go live."""
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 30)
     subject_id = str(uuid4())
     old = await _login(redis_backend, subject_id)
     rotated = await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
 
-    with pytest.raises(UnauthorizedException, match="invalidated or expired"):
-        await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
+    replayed = await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
 
+    assert replayed == rotated
     assert (
         await redis_backend.get(KEYS.refresh(subject_id, old["session_id"]))
         == _claims(rotated.refresh_token)["jti"]
     )
+    assert (
+        await redis_backend.get(KEYS.access(subject_id, old["session_id"]))
+        == _claims(rotated.access_token)["jti"]
+    )
 
 
-async def test_reuse_after_the_grace_window_wipes_every_session(
+async def test_second_use_after_the_pair_was_used_is_reuse(
     redis_backend: Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A rotated-out token presented again means it leaked; every session of the
-    subject goes, not only the one the token belonged to."""
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 30)
+    subject_id = str(uuid4())
+    old = await _login(redis_backend, subject_id)
+    rotated = await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
+    await rotate_session_tokens(
+        cast(JWTPayload, _claims(rotated.refresh_token)),
+        redis_backend,
+        realm=USER_AUTH_REALM,
+    )
+
+    with pytest.raises(UnauthorizedException, match="reuse detected"):
+        await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
+
+    assert (
+        await redis_backend.exists(*_session_keys(subject_id, old["session_id"])) == 0
+    )
+
+
+async def test_reuse_after_the_grace_window_ends_only_that_session(
+    redis_backend: Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rotated-out token presented again means it leaked, but it reaches only
+    its own session: the subject's other sessions stay signed in."""
     monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 0)
     subject_id = str(uuid4())
     first = await _login(redis_backend, subject_id)
@@ -107,41 +133,60 @@ async def test_reuse_after_the_grace_window_wipes_every_session(
     with pytest.raises(UnauthorizedException, match="reuse detected"):
         await rotate_session_tokens(first, redis_backend, realm=USER_AUTH_REALM)
 
-    for session_id in (first["session_id"], second["session_id"]):
-        assert await redis_backend.exists(*_session_keys(subject_id, session_id)) == 0
-    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == []
+    assert (
+        await redis_backend.exists(*_session_keys(subject_id, first["session_id"])) == 0
+    )
+    assert (
+        await redis_backend.exists(*_session_keys(subject_id, second["session_id"]))
+        == 3
+    )
+    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == [
+        second["session_id"]
+    ]
 
 
 @pytest.mark.parametrize(
     "used_marker",
     [
-        pytest.param(lambda now: str(now - 60), id="stale"),
-        pytest.param(lambda now: "not-a-timestamp", id="unreadable"),
+        pytest.param(
+            lambda now, live_jti: json.dumps(
+                {
+                    "at": now - 60,
+                    "refresh_jti": live_jti,
+                    "refresh_expires_at": now + 600,
+                    "access_jti": "a",
+                    "access_expires_at": now + 60,
+                }
+            ),
+            id="stale",
+        ),
+        pytest.param(lambda now, live_jti: str(now), id="no-pair"),
+        pytest.param(lambda now, live_jti: "not-a-marker", id="unreadable"),
     ],
 )
 async def test_a_marker_outside_the_grace_window_is_reuse(
     redis_backend: Redis,
     monkeypatch: pytest.MonkeyPatch,
-    used_marker: Callable[[int], str],
+    used_marker: Callable[[int, str], str],
 ) -> None:
-    """The grace window forgives a retry, not a replay a minute later; and a
-    marker whose age cannot be read must not be forgiven by default."""
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    """The grace window forgives a lost answer, not a replay a minute later; and
+    a marker that names no readable pair must not be forgiven by default."""
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 30)
     subject_id = str(uuid4())
     first = await _login(redis_backend, subject_id)
-    second = await _login(redis_backend, subject_id)
-    await rotate_session_tokens(first, redis_backend, realm=USER_AUTH_REALM)
+    rotated = await rotate_session_tokens(first, redis_backend, realm=USER_AUTH_REALM)
     now_seconds, _ = await redis_backend.time()
     await redis_backend.set(
-        KEYS.used(subject_id, first["jti"]), used_marker(int(now_seconds))
+        KEYS.used(subject_id, first["jti"]),
+        used_marker(int(now_seconds), _claims(rotated.refresh_token)["jti"]),
     )
 
     with pytest.raises(UnauthorizedException, match="reuse detected"):
         await rotate_session_tokens(first, redis_backend, realm=USER_AUTH_REALM)
 
-    for session_id in (first["session_id"], second["session_id"]):
-        assert await redis_backend.exists(*_session_keys(subject_id, session_id)) == 0
-    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == []
+    assert (
+        await redis_backend.exists(*_session_keys(subject_id, first["session_id"])) == 0
+    )
 
 
 async def test_rotation_prunes_lapsed_sessions_from_the_index(
@@ -183,7 +228,7 @@ async def test_the_rotated_access_jti_outlives_the_access_token(
     assert access_seconds < latest_access_ttl <= refresh_seconds
 
 
-async def test_a_jti_the_session_never_held_is_invalid_and_wipes(
+async def test_a_jti_the_session_never_held_is_invalid_and_ends_the_session(
     redis_backend: Redis,
 ) -> None:
     """A refresh token whose jti is not the session's live one was never minted
@@ -200,14 +245,15 @@ async def test_a_jti_the_session_never_held_is_invalid_and_wipes(
     )
 
 
-async def test_concurrent_rotations_of_one_token_let_exactly_one_through(
+async def test_concurrent_rotations_of_one_token_register_exactly_one_pair(
     real_redis: Redis,
     redis_client_factory: Callable[[], Redis],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two tabs refreshing at once must not both come back with a live pair:
-    that is the race the rotation script exists to close."""
-    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 10)
+    """Two tabs refreshing at once must not register two live pairs - that is
+    the race the rotation script exists to close; the ones that lose it are
+    answered with the pair the winner registered."""
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 30)
     subject_id = str(uuid4())
     old = await _login(real_redis, subject_id)
 
@@ -219,14 +265,10 @@ async def test_concurrent_rotations_of_one_token_let_exactly_one_through(
         return_exceptions=True,
     )
 
-    winners = [result for result in results if isinstance(result, TokenModel)]
-    assert len(winners) == 1
-    assert all(
-        isinstance(result, UnauthorizedException)
-        for result in results
-        if not isinstance(result, TokenModel)
-    )
+    assert all(isinstance(result, TokenModel) for result in results)
+    pairs = {cast(TokenModel, result).refresh_token for result in results}
+    assert len(pairs) == 1
     assert (
         await real_redis.get(KEYS.refresh(subject_id, old["session_id"]))
-        == _claims(winners[0].refresh_token)["jti"]
+        == _claims(cast(TokenModel, results[0]).refresh_token)["jti"]
     )

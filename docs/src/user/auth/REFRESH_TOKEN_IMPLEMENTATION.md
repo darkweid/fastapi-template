@@ -124,7 +124,7 @@ CSRF check fails → 403 (`CsrfFailedError`, `csrf_failed`).
   - Strips `Bearer` prefix if present and decodes JWT with the realm's secret (`JWT_USER_SECRET_KEY` for this realm).
   - Extracts `jti`, `mode`, `sub` (user_id), `session_id`.
   - For refresh tokens:
-    - Reads `user:used:<user_id>:<jti>`; a marker younger than `REFRESH_TOKEN_REUSE_GRACE_SECONDS` answers a plain 401 without a wipe (benign double-submit), an older or unreadable one invalidates all user sessions and returns 401 (“Token reuse detected”).
+    - Reads `user:used:<user_id>:<jti>`. A marker younger than `REFRESH_TOKEN_REUSE_GRACE_SECONDS` whose pair is still the session's live refresh token lets the token through to rotation, which answers that pair again (the client lost the answer); any other marker ends the session and returns 401 (“Token reuse detected”).
   - Verifies the active JTI in Redis: key `user:<mode_without_suffix>:<user_id>:<session_id>` must equal the token JTI; otherwise 401 (“Token invalidated or expired”).
 - Dependency returns `(user, payload)` to the use case.
 
@@ -143,11 +143,12 @@ CSRF check fails → 403 (`CsrfFailedError`, `csrf_failed`).
 ## 4) Rotation execution
 - `rotate_session_tokens` (`src/core/auth/tokens.py`):
   - `validate_token_structure` ensures `sub`, `session_id` and `jti` are present; on failure invalidates all sessions.
-  - Signs the replacement pair first - a refresh and an access token for the same `session_id`, each with a new `jti`, both naming the old token's subject.
+  - Picks the replacement pair - a new `jti` and expiry instant for a refresh and an access token of the same `session_id` - and signs whichever pair the rotation answers, both naming the old token's subject.
   - `execute_token_rotation` runs one Lua script over `user:refresh:<user_id>:<session_id>`, `user:used:<user_id>:<jti>`, `user:access:<user_id>:<session_id>`, `user:sessions:<user_id>` and `user:latest-access:<user_id>:<session_id>`.
-    - If `used` exists and is older than the grace window (or unreadable) → invalidate all sessions, error “Token reuse detected”; within the window → plain 401 without a wipe.
-    - If stored JTI mismatch or missing → invalidate all sessions, error “Token invalidated or expired”.
-    - Otherwise: set `user:used:<user_id>:<jti>` to the rotation instant (Redis server clock), store the new refresh and access jtis with their TTLs, record the access jti as `user:latest-access:<user_id>:<session_id>` (TTL: the longer of the two lifetimes), refresh the session's entry in the index, and return `OK`.
+    - If `used` exists, is inside the grace window and its pair is still the session's live refresh token → `REPLAY`: the caller signs that pair again, nothing is written.
+    - If `used` exists otherwise (older, the pair already rotated on, the session gone, no readable pair) → end the session, error “Token reuse detected”.
+    - If stored JTI mismatch or missing → end the session, error “Token invalidated or expired”.
+    - Otherwise: set `user:used:<user_id>:<jti>` to the rotation instant (Redis server clock) and the new pair's jtis and expiry instants, as JSON, store the new refresh and access jtis with their TTLs, record the access jti as `user:latest-access:<user_id>:<session_id>` (TTL: the longer of the two lifetimes), refresh the session's entry in the index, and return `OK`.
     - The marker TTL equals `REFRESH_TOKEN_EXPIRE_MINUTES * 60`: the marker must cover the rotated-out token's whole possible lifetime, so there is no separate knob.
   - Registering the new pair inside the script is what makes a session wipe (password change, logout everywhere) reliable: a wipe either finds the new keys in the index or leaves the old refresh key gone, so the rotation answers `INVALID`. Written in later round-trips, the pair could land after the wipe and survive it.
 
@@ -155,4 +156,4 @@ CSRF check fails → 403 (`CsrfFailedError`, `csrf_failed`).
 - The use case returns both new tokens (`TokenModel`); the router then passes them through `TokenCookieResponder.apply` with the resolved transport, which either writes the refresh cookie and strips it from the body (`cookie`) or leaves the body untouched (`body`).
 
 ## 6) Invalidation helpers
-- `invalidate_all_sessions` (`src/core/auth/token_helpers.py`) walks the realm's `user:sessions:<user_id>` index (ZSET scored by refresh expiry) and deletes every indexed session's `user:access:`, `user:refresh:` and `user:latest-access:` keys; `user:used:*` markers are left to their TTL - the refresh keys are gone, so a replay cannot rotate. Used when reuse/invalid structure is detected or when rotation fails the invariants. It is realm-generic: it takes the realm's key namespace as an argument, so it can wipe a session index for any realm, not only this one.
+- `invalidate_all_sessions` (`src/core/auth/token_helpers.py`) walks the realm's `user:sessions:<user_id>` index (ZSET scored by refresh expiry) and deletes every indexed session's `user:access:`, `user:refresh:` and `user:latest-access:` keys; `user:used:*` markers are left to their TTL - the refresh keys are gone, so a replay cannot rotate. Used when a token of an impossible structure is detected (password change and logout everywhere call it too); a detected reuse ends only the token's own session through `invalidate_session`. It is realm-generic: it takes the realm's key namespace as an argument, so it can wipe a session index for any realm, not only this one.

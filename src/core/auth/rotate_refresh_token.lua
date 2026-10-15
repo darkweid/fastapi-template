@@ -11,18 +11,29 @@ local new_refresh_jti = ARGV[5]
 local refresh_ttl_seconds = tonumber(ARGV[6])
 local new_access_jti = ARGV[7]
 local access_ttl_seconds = tonumber(ARGV[8])
+local new_refresh_expires_at = tonumber(ARGV[9])
+local new_access_expires_at = tonumber(ARGV[10])
 
 -- The Redis server clock, not the app's: every app instance compares reuse
 -- against the same clock, so the grace window needs no clock sync between them.
 local now = tonumber(redis.call('TIME')[1])
 
--- A marker younger than the grace window is a benign double-submit (network
--- retry, two tabs racing); older, or carrying no readable timestamp, is reuse.
-local used_at = redis.call('GET', used_key)
-if used_at then
-    local used_at_number = tonumber(used_at)
-    if used_at_number and grace_seconds > 0 and (now - used_at_number) <= grace_seconds then
-        return 'GRACE'
+-- A marker names the pair its rotation handed out. Presented again inside the
+-- grace window while that pair is still the session's live refresh token, the
+-- rotation's answer never reached the client (a lost response, two tabs
+-- racing), and the caller re-signs the same pair. Anything else - older, the
+-- pair already rotated on, the session gone, a marker without a readable pair -
+-- is reuse.
+local marker = redis.call('GET', used_key)
+if marker then
+    local decoded, used = pcall(cjson.decode, marker)
+    if decoded and type(used) == 'table' then
+        local used_at = tonumber(used['at'])
+        if used_at and grace_seconds > 0 and (now - used_at) <= grace_seconds
+            and type(used['refresh_jti']) == 'string'
+            and redis.call('GET', refresh_key) == used['refresh_jti'] then
+            return {'REPLAY', marker}
+        end
     end
     return 'REUSED'
 end
@@ -32,8 +43,15 @@ if stored_jti ~= expected_jti then
     return 'INVALID'
 end
 
--- Mark the token as consumed, stamping the rotation instant for the grace check
-redis.call('SETEX', used_key, used_ttl_seconds, tostring(now))
+-- Mark the token as consumed with the rotation instant and the pair it was
+-- exchanged for: everything a replay inside the grace window needs to re-sign.
+redis.call('SETEX', used_key, used_ttl_seconds, cjson.encode({
+    at = now,
+    refresh_jti = new_refresh_jti,
+    refresh_expires_at = new_refresh_expires_at,
+    access_jti = new_access_jti,
+    access_expires_at = new_access_expires_at,
+}))
 
 -- The replacement pair and its index entry land in the same unit as the check.
 -- A wipe of every session (ZRANGE, DEL, ZREM) that starts before this script
