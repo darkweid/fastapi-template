@@ -23,9 +23,11 @@ class RefreshAccessUseCase(Generic[PrincipalT]):
     token, so there is nothing left to enumerate. Realm-agnostic code has no
     email to mask, so the rejection is logged against the subject id.
 
-    Rotation detects reuse, and a detected reuse wipes every session of the
-    subject rather than only failing this request. Both new tokens name the
-    refresh token's subject, which is the one the principal was loaded from.
+    Rotation detects reuse, and a detected reuse ends the token's session
+    rather than only failing this request; a replay of a token rotated moments
+    ago, whose successor refresh token has not been rotated yet, gets that
+    pair again. Both tokens name the refresh
+    token's subject, which is the one the principal was loaded from.
     """
 
     def __init__(

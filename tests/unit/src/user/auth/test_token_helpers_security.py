@@ -343,108 +343,131 @@ async def test_validate_token_structure_missing_fields(
     invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
 
 
+SUCCESSOR = token_helpers.SessionPair(
+    refresh_jti="j2",
+    refresh_expires_at=FROZEN_NOW + 600,
+    access_jti="a2",
+    access_expires_at=FROZEN_NOW + 60,
+)
+
+
+async def _rotate(fake_redis: InMemoryRedis) -> token_helpers.SessionPair:
+    return await token_helpers.execute_token_rotation(
+        "u1", "s1", "j1", fake_redis, keys=AUTH_KEYS, successor=SUCCESSOR
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_token_rotation_reused(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """
-    Given: used-token marker already exists for user and jti.
-    When: refresh token rotation is executed for the same jti.
-    Then: UnauthorizedException is raised and all sessions for that user are invalidated.
-    """
+    """A marker that names no pair can only be answered as reuse, and reuse ends
+    the token's own session, not the subject's others."""
     await fake_redis.setex(used_refresh_key("u1", "j1"), 100, "used")
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
-    with pytest.raises(UnauthorizedException):
-        await token_helpers.execute_token_rotation(
-            "u1",
-            "s1",
-            "j1",
-            fake_redis,
-            keys=AUTH_KEYS,
-            new_refresh_jti="j2",
-            new_access_jti="a2",
-        )
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await _rotate(fake_redis)
 
-    invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
+    invalidate_mock.assert_awaited_once_with("u1", "s1", fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
 async def test_execute_token_rotation_invalid(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """
-    Given: stored refresh jti differs from provided jti.
-    When: refresh token rotation is executed.
-    Then: UnauthorizedException is raised and all sessions for that user are invalidated.
-    """
     await fake_redis.set(refresh_jti_key("u1", "s1"), "wrong-jti", ex=600)
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
-    with pytest.raises(UnauthorizedException):
-        await token_helpers.execute_token_rotation(
-            "u1",
-            "s1",
-            "j1",
-            fake_redis,
-            keys=AUTH_KEYS,
-            new_refresh_jti="j2",
-            new_access_jti="a2",
-        )
+    with pytest.raises(UnauthorizedException, match="invalidated or expired"):
+        await _rotate(fake_redis)
 
-    invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
+    invalidate_mock.assert_awaited_once_with("u1", "s1", fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        pytest.param("SOMETHING-ELSE", id="unknown-string"),
+        pytest.param(["REPLAY", "not-a-marker"], id="replay-without-a-pair"),
+    ],
+)
 async def test_execute_token_rotation_treats_an_unknown_verdict_as_reuse(
-    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str | list[str],
 ) -> None:
-    """Only 'OK' may return. A verdict this code does not recognise means the
-    script, the client or something between them is not what the caller thinks
-    it is, and rotation is where reading it as success hands out a session."""
-    monkeypatch.setattr(fake_redis, "eval", AsyncMock(return_value="SOMETHING-ELSE"))
+    """Only 'OK' and a readable 'REPLAY' may return. A verdict this code does
+    not recognise means the script, the client or something between them is
+    not what the caller thinks it is, and rotation is where reading it as
+    success hands out a session."""
+    monkeypatch.setattr(fake_redis, "eval", AsyncMock(return_value=verdict))
     invalidate_mock = AsyncMock()
-    monkeypatch.setattr(token_helpers, "invalidate_all_sessions", invalidate_mock)
+    monkeypatch.setattr(token_helpers, "invalidate_session", invalidate_mock)
 
-    with pytest.raises(UnauthorizedException):
-        await token_helpers.execute_token_rotation(
-            "u1",
-            "s1",
-            "j1",
-            fake_redis,
-            keys=AUTH_KEYS,
-            new_refresh_jti="j2",
-            new_access_jti="a2",
-        )
+    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+        await _rotate(fake_redis)
 
-    invalidate_mock.assert_awaited_once_with("u1", fake_redis, keys=AUTH_KEYS)
+    invalidate_mock.assert_awaited_once_with("u1", "s1", fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio
 async def test_execute_token_rotation_ok(fake_redis: InMemoryRedis) -> None:
-    """
-    Given: active refresh key exists and no used-token marker is present.
-    When: refresh token rotation is executed with matching jti.
-    Then: rotation returns OK, old refresh key is removed, and used marker is created.
-    """
     await fake_redis.set(refresh_jti_key("u1", "s1"), "j1", ex=600)
+
+    result = await _rotate(fake_redis)
+
+    assert result == SUCCESSOR
+    assert await fake_redis.exists(used_refresh_key("u1", "j1")) == 1
+    assert await fake_redis.get(refresh_jti_key("u1", "s1")) == "j2"
+    assert await fake_redis.get(access_jti_key("u1", "s1")) == "a2"
+    assert await fake_redis.zrange(AUTH_KEYS.sessions("u1"), 0, -1) == ["s1"]
+
+
+@pytest.mark.asyncio
+async def test_execute_token_rotation_replay_answers_the_first_pair(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """The replay must answer the pair the session holds, not the one this call
+    proposed: registering a second pair would leave the first one live."""
+    await fake_redis.set(refresh_jti_key("u1", "s1"), "j1", ex=600)
+    await _rotate(fake_redis)
+
     result = await token_helpers.execute_token_rotation(
         "u1",
         "s1",
         "j1",
         fake_redis,
         keys=AUTH_KEYS,
-        new_refresh_jti="j2",
-        new_access_jti="a2",
+        successor=SUCCESSOR._replace(refresh_jti="j3", access_jti="a3"),
     )
 
-    assert result == "OK"
-    assert await fake_redis.exists(used_refresh_key("u1", "j1")) == 1
+    assert result == SUCCESSOR
     assert await fake_redis.get(refresh_jti_key("u1", "s1")) == "j2"
     assert await fake_redis.get(access_jti_key("u1", "s1")) == "a2"
-    assert await fake_redis.zrange(AUTH_KEYS.sessions("u1"), 0, -1) == ["s1"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("1755000000", id="bare-timestamp"),
+        pytest.param("used", id="not-json"),
+        pytest.param("[]", id="not-an-object"),
+        pytest.param('{"at": 1, "refresh_jti": "j2"}', id="missing-fields"),
+        pytest.param(
+            '{"at": 1, "refresh_jti": 2, "refresh_expires_at": 3,'
+            ' "access_jti": "a2", "access_expires_at": 4}',
+            id="jti-not-a-string",
+        ),
+    ],
+)
+def test_parse_used_marker_refuses_anything_the_script_did_not_write(
+    value: str,
+) -> None:
+    assert token_helpers.parse_used_marker(value) is None
 
 
 @pytest.mark.asyncio

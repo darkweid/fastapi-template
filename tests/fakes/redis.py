@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 import fnmatch
 import hashlib
+import json
 import time
 from typing import Any
 
@@ -446,7 +447,7 @@ class InMemoryRedis:
         self,
         numkeys: int,
         *keys_and_args: Any,
-    ) -> str:
+    ) -> str | list[str]:
         if numkeys != 5:
             raise ValueError("ROTATE_REFRESH_TOKEN_SCRIPT expects 5 keys.")
 
@@ -461,27 +462,48 @@ class InMemoryRedis:
         refresh_ttl_seconds = int(keys_and_args[10])
         new_access_jti = _normalize_value(keys_and_args[11])
         access_ttl_seconds = int(keys_and_args[12])
+        new_refresh_expires_at = int(keys_and_args[13])
+        new_access_expires_at = int(keys_and_args[14])
 
         now = int(self.wall_clock())
 
-        used_at = self._read(used_key)
-        if used_at is not None:
+        marker = self._read(used_key)
+        if marker is not None:
             try:
-                used_at_number: int | None = int(used_at)
+                used = json.loads(marker)
             except ValueError:
-                used_at_number = None
-            if (
-                used_at_number is not None
-                and grace_seconds > 0
-                and (now - used_at_number) <= grace_seconds
-            ):
-                return "GRACE"
+                used = None
+            if isinstance(used, dict):
+                try:
+                    used_at: int | None = int(used.get("at"))
+                except (TypeError, ValueError):
+                    used_at = None
+                if (
+                    used_at is not None
+                    and grace_seconds > 0
+                    and (now - used_at) <= grace_seconds
+                    and isinstance(used.get("refresh_jti"), str)
+                    and self._read(refresh_key) == used["refresh_jti"]
+                ):
+                    return ["REPLAY", marker]
             return "REUSED"
 
         if self._read(refresh_key) != expected_jti:
             return "INVALID"
 
-        self._write(used_key, str(now), ttl_seconds=used_ttl_seconds)
+        self._write(
+            used_key,
+            json.dumps(
+                {
+                    "at": now,
+                    "refresh_jti": new_refresh_jti,
+                    "refresh_expires_at": new_refresh_expires_at,
+                    "access_jti": new_access_jti,
+                    "access_expires_at": new_access_expires_at,
+                }
+            ),
+            ttl_seconds=used_ttl_seconds,
+        )
         self._write(refresh_key, new_refresh_jti, ttl_seconds=refresh_ttl_seconds)
         self._write(access_key, new_access_jti, ttl_seconds=access_ttl_seconds)
         self._write(

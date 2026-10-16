@@ -20,14 +20,18 @@ Key compromise is isolated: leaking the reset-password key does not allow forgin
 `src/core/auth/rotate_refresh_token.lua`, `src/core/auth/token_helpers.py`
 
 Every refresh request atomically (via Lua script):
-1. Checks if the presented JTI was already consumed - within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` of the rotation that consumed it the replay is treated as a benign double-submit (`GRACE`, plain 401, no wipe); later it is `REUSED`.
+1. Checks if the presented JTI was already consumed. Within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` (default 30, at most 60) of the rotation that consumed it, while the refresh token that rotation handed out is still the session's live one (not rotated yet), the replay is a client that lost the answer (`REPLAY`): it gets that same pair again, signed byte for byte, and nothing in Redis changes. Otherwise it is `REUSED`.
 2. Validates the JTI matches the stored active token (`INVALID`).
-3. Marks the old JTI as used, stamped with the rotation instant, with a TTL equal to the refresh token lifetime.
+3. Marks the old JTI as used, stamped with the rotation instant and the new pair's JTIs and expiry instants, with a TTL equal to the refresh token lifetime.
 4. Stores the new refresh and access JTIs in place of the old pair, records the access JTI as the session's `latest-access` (the one token logout accepts), and refreshes the session's entry in the per-subject index, so a concurrent wipe of every session (password change, logout everywhere) cannot miss the new pair.
 
-If a consumed token is presented again past the grace window, **all user sessions are invalidated immediately**. This detects stolen refresh tokens: an attacker replaying a token that the legitimate client already rotated triggers a full session wipe.
+A consumed token presented again in any other case **ends its session immediately** - that session only. This detects stolen refresh tokens: an attacker replaying a token the legitimate client already rotated, or the client replaying one the attacker rotated, kills the session both hold. The subject's other sessions stay: a stolen refresh token reaches no other session, and ending them all would let anyone holding an old token sign the subject out everywhere.
 
-**Why it matters:** Without reuse detection, a stolen refresh token grants indefinite access. Token family tracking turns a silent compromise into a detectable event.
+A late network retry of a token the client itself already rotated on also counts as reuse and ends the session, even inside the window: the pair it would answer is gone.
+
+The window has a cost: a thief who replays inside it gets the same pair as the owner. The theft is caught only if both go on refreshing, when one of the two presents a token the other already rotated; a thief who stops after the replay keeps the access token until it expires - hence the hard cap on the window.
+
+**Why it matters:** Without reuse detection, a stolen refresh token grants indefinite access. Rotation-chain tracking turns a silent compromise into a detectable event.
 
 ## Password Hashing
 

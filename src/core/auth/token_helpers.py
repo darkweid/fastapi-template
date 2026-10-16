@@ -4,7 +4,8 @@ session removes, and what rotating a refresh token does atomically.
 """
 
 from collections.abc import Awaitable
-from typing import cast
+import json
+from typing import NamedTuple, cast
 
 from redis.asyncio import Redis
 
@@ -16,6 +17,8 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 
 logger = get_logger(__name__)
+
+REUSE_DETECTED_MESSAGE = "Token reuse detected. Session invalidated."
 
 
 async def invalidate_all_sessions(
@@ -91,26 +94,79 @@ async def validate_token_structure(
     return subject_id, session_id, jti
 
 
-async def is_within_reuse_grace(used_marker: str | None, redis_client: Redis) -> bool:
-    """A used marker younger than the grace window marks a benign double-submit.
+class SessionPair(NamedTuple):
+    """The jtis and expiry instants (unix seconds) of one access/refresh pair.
 
-    Takes the already-fetched marker value so the caller's existence check and
-    this age check share one GET instead of an EXISTS/GET pair that could
-    disagree between round-trips.
+    Everything a token's signature covers besides the subject, the session and
+    the mode, so the same pair can be signed again byte for byte.
+    """
+
+    refresh_jti: str
+    refresh_expires_at: int
+    access_jti: str
+    access_expires_at: int
+
+
+class UsedMarker(NamedTuple):
+    """What the rotation script stamped on a rotated-out refresh token."""
+
+    rotated_at: int
+    successor: SessionPair
+
+
+def parse_used_marker(value: str) -> UsedMarker | None:
+    """Read a used marker the rotation script wrote; None for any other shape.
+
+    A marker that cannot be read is never forgiven: callers treat None as reuse.
+    """
+    try:
+        raw = json.loads(value)
+        if not isinstance(raw, dict):
+            return None
+        refresh_jti = raw["refresh_jti"]
+        access_jti = raw["access_jti"]
+        if not isinstance(refresh_jti, str) or not isinstance(access_jti, str):
+            return None
+        return UsedMarker(
+            rotated_at=int(raw["at"]),
+            successor=SessionPair(
+                refresh_jti=refresh_jti,
+                refresh_expires_at=int(raw["refresh_expires_at"]),
+                access_jti=access_jti,
+                access_expires_at=int(raw["access_expires_at"]),
+            ),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def is_replay_of_live_pair(
+    used_marker: str,
+    subject_id: str,
+    session_id: str,
+    redis_client: Redis,
+    *,
+    keys: AuthRedisKeyBuilder,
+) -> bool:
+    """Whether a rotated-out refresh token may still be answered with its pair.
+
+    True only inside the grace window and while the pair its rotation handed
+    out is still the session's live one: the client never received that pair.
+    The rotation script applies the same rule atomically; this read is a
+    pre-check, so a token that fails it is refused before any rotation runs.
     """
     grace = config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS
-    if grace <= 0 or used_marker is None:
-        return False
-
-    try:
-        used_at_number = int(used_marker)
-    except (TypeError, ValueError):
+    marker = parse_used_marker(used_marker)
+    if grace <= 0 or marker is None:
         return False
 
     # The Redis server clock - the same one the rotation script stamped the
     # marker with, so the comparison needs no clock sync between app instances.
     seconds, _ = await redis_client.time()
-    return (int(seconds) - used_at_number) <= grace
+    if int(seconds) - marker.rotated_at > grace:
+        return False
+    live_refresh_jti = await redis_client.get(keys.refresh(subject_id, session_id))
+    return bool(live_refresh_jti == marker.successor.refresh_jti)
 
 
 async def execute_token_rotation(
@@ -120,32 +176,35 @@ async def execute_token_rotation(
     redis_client: Redis,
     *,
     keys: AuthRedisKeyBuilder,
-    new_refresh_jti: str,
-    new_access_jti: str,
-) -> str:
+    successor: SessionPair,
+) -> SessionPair:
     """
-    Run the rotation script and translate its verdict.
+    Run the rotation script and answer the pair the session now holds.
 
-    On 'OK' the script has already registered `new_refresh_jti` and
-    `new_access_jti` as the session's live pair (the access jti also as the
-    one logout accepts) and refreshed its index entry,
-    in the same unit as the check, so the caller writes nothing more.
+    On 'OK' that is `successor`, which the script has already registered as
+    the session's live pair (the access jti also as the one logout accepts)
+    together with its index entry, in the same unit as the check. On 'REPLAY'
+    the token was rotated moments ago and its successor refresh token has not
+    been rotated yet, so the
+    answer is that earlier pair: the caller signs it again and nothing changes
+    in Redis.
 
-    Answers 'OK' or raises; there is no other return. GRACE is a double-submit
-    inside the reuse window and leaves the session family intact; every other
-    verdict wipes each of the subject's sessions first. All of them raise 401
-    under one error code, but the message a detected reuse carries differs from
-    the rest and reaches the client - only the code is uniform.
+    Every other verdict ends the token's session - only that one: a stolen
+    refresh token reaches no other session of the subject, and ending them all
+    would let anyone holding an old token sign the subject out everywhere.
+    All of them raise 401 under one error code, but the message a detected
+    reuse carries differs from the rest and reaches the client.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
     # The used marker lives exactly as long as a refresh token can: shorter and
-    # a late replay reads INVALID instead of REUSED, longer buys nothing. There
-    # is no separate knob because no other value is correct.
+    # a late replay of a stolen token is no longer recognised as reuse - it
+    # reads INVALID, which says nothing about theft - longer buys nothing.
+    # There is no separate knob because no other value is correct.
     used_ttl_seconds = refresh_ttl_seconds
 
-    result: str = await cast(
-        Awaitable[str],
+    result: str | list[str] = await cast(
+        Awaitable[str | list[str]],
         redis_client.eval(
             ROTATE_REFRESH_TOKEN_SCRIPT,
             5,  # Number of keys
@@ -158,35 +217,47 @@ async def execute_token_rotation(
             str(used_ttl_seconds),
             str(config.jwt.REFRESH_TOKEN_REUSE_GRACE_SECONDS),
             session_id,
-            new_refresh_jti,
+            successor.refresh_jti,
             str(refresh_ttl_seconds),
-            new_access_jti,
+            successor.access_jti,
             str(config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES * 60),
+            str(successor.refresh_expires_at),
+            str(successor.access_expires_at),
         ),
     )
 
     if result == "OK":
-        return result
+        return successor
 
-    if result == "GRACE":
-        # A double-submit inside the grace window: reject the request but do
-        # not treat it as theft - the family wipe would log out a subject whose
-        # client merely retried a refresh over a flaky connection.
-        raise UnauthorizedException("Token invalidated or expired")
+    if isinstance(result, list) and len(result) == 2 and result[0] == "REPLAY":
+        marker = parse_used_marker(result[1])
+        if marker is not None:
+            # The one path that hands a session's live pair to whoever holds
+            # its previous refresh token: worth a trace for a later inquiry.
+            logger.info(
+                "[RotateRefreshToken] Replayed rotation answered with its pair; "
+                "subject=%s session=%s rotated_at=%s",
+                subject_id,
+                session_id,
+                marker.rotated_at,
+            )
+            return marker.successor
+        # The script only answers REPLAY over a marker it could read; one this
+        # code cannot read falls through to the reuse branch below.
 
-    # Everything that is not one of the script's four verdicts lands here, and
-    # lands on the side of wiping. A verdict this code does not recognise means
-    # the script, the client or whatever sits between them is not what this
-    # function thinks it is, and rotation is the one place where guessing
+    # Everything that is not one of the script's verdicts lands here, and lands
+    # on the side of ending the session. A verdict this code does not recognise
+    # means the script, the client or whatever sits between them is not what
+    # this function thinks it is, and rotation is the one place where guessing
     # "probably fine" hands out a session against a token nothing verified.
     if result != "REUSED" and result != "INVALID":
         logger.error(
             "[RotateRefreshToken] Unrecognised rotation verdict %r; "
-            "treating it as a reuse and wiping every session of the subject",
+            "treating it as a reuse and ending the session",
             result,
         )
 
-    await invalidate_all_sessions(subject_id, redis_client, keys=keys)
-    if result == "REUSED":
-        raise UnauthorizedException("Token reuse detected. All sessions invalidated.")
-    raise UnauthorizedException("Token invalidated or expired")
+    await invalidate_session(subject_id, session_id, redis_client, keys=keys)
+    if result == "INVALID":
+        raise UnauthorizedException("Token invalidated or expired")
+    raise UnauthorizedException(REUSE_DETECTED_MESSAGE)
