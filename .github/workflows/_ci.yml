@@ -567,6 +567,10 @@ jobs:
           # gitleaks-action requires a license for repositories owned by an
           # organization; without it the action exits before scanning.
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          # The action's default (8.24.3) predates the `[[allowlists]]` table
+          # .gitleaks.toml uses and ignores it without a warning, so every
+          # allowlisted test placeholder would fail the scan.
+          GITLEAKS_VERSION: 8.30.1
 
   # The artifact's name is the whole record: `changes` only asks whether one
   # with this tree exists, and a hit skips every check. So every check has to
