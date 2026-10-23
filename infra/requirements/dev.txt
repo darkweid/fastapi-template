@@ -289,7 +289,7 @@ uvicorn==0.54.0
     #   uvicorn-worker
 uvicorn-worker==0.4.0
     # via -r base.in
-virtualenv==21.14.3
+virtualenv==21.14.9
     # via pre-commit
 watchdog==6.0.0
     # via taskiq
