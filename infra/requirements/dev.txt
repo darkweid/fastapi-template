@@ -48,7 +48,7 @@ asyncpg==0.31.0
     # via -r base.in
 attrs==26.1.0
     # via aiohttp
-black==26.5.1
+black==26.10.1
     # via -r dev.in
 boto3==1.40.61
     # via aiobotocore
