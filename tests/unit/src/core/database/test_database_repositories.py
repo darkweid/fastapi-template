@@ -967,6 +967,16 @@ def test_base_repository_rejects_non_column_sortable_field() -> None:
         BrokenRepository()
 
 
+def test_base_repository_rejects_ascending_tiebreak_on_unsortable_field() -> None:
+    class BrokenRepository(BaseRepository[ListingModel]):
+        model = ListingModel
+        sortable_fields = ("created_at",)
+        ascending_tiebreak_fields = ("name",)
+
+    with pytest.raises(TypeError):
+        BrokenRepository()
+
+
 def test_base_repository_rejects_unknown_default_order_by() -> None:
     class BrokenRepository(BaseRepository[ListingModel]):
         model = ListingModel

@@ -237,17 +237,26 @@ class ListQuery:
         model: type[DeclarativeBase],
         sortable_fields: Sequence[str],
         default_order_by: str | None,
+        ascending_tiebreak_fields: Sequence[str] = (),
     ) -> list[UnaryExpression[Any]]:
         """
         Build the ORDER BY clauses, always ending with the primary key.
 
         The primary key tiebreaker is not optional: limit/offset pagination over
         a non-unique sort column silently duplicates and skips rows between pages.
+        It follows the query's direction, except under a field listed in
+        `ascending_tiebreak_fields`: a coarse rank such as a priority is read
+        top rank first, and inside one rank the oldest row first.
         """
-        column = self._resolve_order_column(model, sortable_fields, default_order_by)
+        field, column = self._resolve_order_column(
+            model, sortable_fields, default_order_by
+        )
         clauses: list[UnaryExpression[Any]] = []
         if column is not None:
             clauses.append(self._directed(column))
+        tiebreak_order: SortOrder = (
+            "asc" if field in ascending_tiebreak_fields else self.order
+        )
 
         # `getattr(model, name)` yields an `InstrumentedAttribute`; `.expression`
         # normalizes it to a `Column`-like object comparable with the raw `Column`
@@ -266,7 +275,7 @@ class ListQuery:
         for primary_key_column in inspect(model).primary_key:
             if chosen_name is not None and primary_key_column.name == chosen_name:
                 continue
-            clauses.append(self._directed(primary_key_column))
+            clauses.append(self._directed(primary_key_column, tiebreak_order))
 
         return clauses
 
@@ -275,22 +284,27 @@ class ListQuery:
         model: type[DeclarativeBase],
         sortable_fields: Sequence[str],
         default_order_by: str | None,
-    ) -> Any:
+    ) -> tuple[str | None, Any]:
+        """The field the list sorts by and its column, `(None, None)` when the
+        model has none to fall back to."""
         if self.order_by is not None:
             if self.order_by not in sortable_fields:
                 raise FilteringError("Ordering by the requested field is not supported")
-            return getattr(model, self.order_by)
+            return self.order_by, getattr(model, self.order_by)
 
         for candidate in (default_order_by, "created_at"):
             if candidate is None:
                 continue
             column = getattr(model, candidate, None)
             if column is not None:
-                return column
-        return None
+                return candidate, column
+        return None, None
 
-    def _directed(self, column: Any) -> UnaryExpression[Any]:
-        """Order one column in this query's direction, NULLs last.
+    def _directed(
+        self, column: Any, order: SortOrder | None = None
+    ) -> UnaryExpression[Any]:
+        """Order one column in `order`, by default this query's direction,
+        NULLs last.
 
         `NULLS LAST` is added only where a NULL can occur. On a `NOT NULL`
         column it changes no result, but `DESC NULLS LAST` does not match a
@@ -298,7 +312,8 @@ class ListQuery:
         it would turn an index scan into a `Sort` over the whole table. An
         expression whose nullability is unknown (a hybrid property) keeps it.
         """
-        ordered = column.asc() if self.order == "asc" else column.desc()
+        direction = order if order is not None else self.order
+        ordered = column.asc() if direction == "asc" else column.desc()
         if _may_be_null(column):
             ordered = ordered.nulls_last()
         # SQLAlchemy's operator mixins type `.asc()`/`.nulls_last()` as

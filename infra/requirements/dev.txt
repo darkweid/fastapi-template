@@ -81,7 +81,7 @@ email-validator==2.3.0
     # via -r base.in
 fastapi==0.142.2
     # via -r base.in
-filelock==4.0.9
+filelock==4.2.4
     # via
     #   python-discovery
     #   virtualenv
