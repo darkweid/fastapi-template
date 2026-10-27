@@ -42,6 +42,9 @@ class BaseRepository(Generic[T]):
     searchable_fields: tuple[str, ...] = ()
     sortable_fields: tuple[str, ...] = ()
     default_order_by: str | None = None
+    # Sort fields under which the primary key tiebreaker stays ascending
+    # whatever the requested direction (`ListQuery.build_order_by`).
+    ascending_tiebreak_fields: tuple[str, ...] = ()
 
     def __init__(self) -> None:
         if not hasattr(self, "model"):
@@ -72,6 +75,13 @@ class BaseRepository(Generic[T]):
             if not isinstance(expression, ColumnClause):
                 raise TypeError(
                     f"{self.model.__name__} has no orderable attribute '{field}'"
+                )
+
+        for field in self.ascending_tiebreak_fields:
+            if field not in orderable_fields:
+                raise TypeError(
+                    f"{self.model.__name__}.{field} has an ascending tiebreak "
+                    "but is not sortable"
                 )
 
         for field in self.searchable_fields:
@@ -272,7 +282,10 @@ class BaseRepository(Generic[T]):
         filters = self._scope_filters(filters)
         list_query = query if query is not None else ListQuery()
         order_by = list_query.build_order_by(
-            self.model, self.sortable_fields, self.default_order_by
+            self.model,
+            self.sortable_fields,
+            self.default_order_by,
+            self.ascending_tiebreak_fields,
         )
         # The count must carry the same predicates as the selection, or `total`
         # and `items` describe different result sets. Eager options are left out:

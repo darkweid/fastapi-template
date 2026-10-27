@@ -363,6 +363,41 @@ def test_build_order_by_appends_primary_key_tiebreaker() -> None:
     assert clauses[1] == "query_models.id ASC"
 
 
+def test_build_order_by_keeps_tiebreaker_ascending_under_listed_field() -> None:
+    """A priority queue read urgent first must still show the oldest row of a
+    rank first; a tiebreaker following `desc` put the newest on top."""
+    clauses = [
+        str(clause)
+        for clause in ListQuery(order_by="name", order="desc").build_order_by(
+            QueryModel, ("created_at", "name"), "created_at", ("name",)
+        )
+    ]
+
+    assert clauses == ["query_models.name DESC", "query_models.id ASC"]
+
+
+def test_build_order_by_applies_ascending_tiebreak_to_default_field() -> None:
+    clauses = [
+        str(clause)
+        for clause in ListQuery().build_order_by(
+            QueryModel, ("created_at", "name"), "name", ("name",)
+        )
+    ]
+
+    assert clauses == ["query_models.name DESC", "query_models.id ASC"]
+
+
+def test_build_order_by_ascending_tiebreak_leaves_other_fields_alone() -> None:
+    clauses = [
+        str(clause)
+        for clause in ListQuery(order_by="created_at").build_order_by(
+            QueryModel, ("created_at", "name"), "created_at", ("name",)
+        )
+    ]
+
+    assert clauses[1] == "query_models.id DESC"
+
+
 def test_build_order_by_does_not_duplicate_primary_key() -> None:
     clauses = order_by_strings(ListQuery(order_by="id"), sortable=("id",))
 
