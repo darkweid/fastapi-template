@@ -74,6 +74,8 @@ def _is_unbounded_integer(schema: JsonSchema) -> bool:
         schema.get("type") == "integer"
         and "maximum" not in schema
         and "exclusiveMaximum" not in schema
+        and "enum" not in schema
+        and "const" not in schema
     )
 
 
@@ -94,6 +96,15 @@ def test_every_integer_input_has_an_upper_bound(app: FastAPI) -> None:
     Every integer a client sends - body, query, path, header - carries a
     `maximum` (`INT32_MAX` / `INT64_MAX` in `src/core/schemas.py` at most)."""
     assert _unbounded_inputs(app, _is_unbounded_integer) == []
+
+
+def test_an_integer_fixed_by_enum_or_const_needs_no_maximum() -> None:
+    """A `Literal[30, 90]` or an `IntEnum` already fixes every value a client
+    may send, and pydantic declares it without a `maximum`: the integer check
+    must not demand one, as the string check already does not."""
+    assert not _is_unbounded_integer({"type": "integer", "enum": [30, 90]})
+    assert not _is_unbounded_integer({"type": "integer", "const": 7})
+    assert _is_unbounded_integer({"type": "integer"})
 
 
 def test_every_string_input_has_a_max_length(app: FastAPI) -> None:
