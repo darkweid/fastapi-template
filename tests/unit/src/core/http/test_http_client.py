@@ -746,3 +746,159 @@ async def test_many_open_clients_are_reported(client_log: Records) -> None:
         client._http()  # noqa: SLF001
 
     assert any("HTTP clients open" in line for line in client_log.lines)
+
+
+def websocket_route(
+    then: Callable[[web.WebSocketResponse], Awaitable[None]],
+) -> tuple[Handler, list[web.Request]]:
+    """Accepts the upgrade, runs `then` on the open stream; keeps the requests."""
+    seen: list[web.Request] = []
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        seen.append(request)
+        stream = web.WebSocketResponse()
+        await stream.prepare(request)
+        await then(stream)
+        await stream.close()
+        return stream
+
+    return handler, seen
+
+
+async def test_ws_connect_sends_the_client_headers() -> None:
+    """A provider authenticates the upgrade with the client's own headers, and
+    a WAF refuses the library's default User-Agent there as on any request."""
+
+    async def greet(stream: web.WebSocketResponse) -> None:
+        await stream.send_str("hello")
+
+    handler, seen = websocket_route(greet)
+    async with serve(handler) as server:
+        client = client_for(
+            server,
+            headers={"Authorization": aiohttp.encode_basic_auth("ari", "secret")},
+        )
+        stream = await client.ws_connect(
+            "/ari/events", operation="test.events", params={"app": "calls"}
+        )
+        message = await stream.receive()
+        await stream.close()
+        await client.aclose()
+
+    assert message.data == "hello"
+    assert seen[0].headers.getall("User-Agent") == [USER_AGENT]
+    assert seen[0].headers["Authorization"] == (
+        aiohttp.encode_basic_auth("ari", "secret")
+    )
+    assert seen[0].path == "/ari/events"
+    assert seen[0].query["app"] == "calls"
+
+
+async def test_ws_connect_rejected_handshake_raises_http_transport_error() -> None:
+    """A refused upgrade is a failure, not a status the caller reads: there is
+    no stream to hand back. The body may echo the request, so it stays out."""
+
+    async def refuse(request: web.Request) -> web.Response:
+        return web.Response(status=401, text="bad password for ari:secret")
+
+    async with serve(refuse) as server:
+        client = client_for(server)
+        with pytest.raises(HttpTransportError) as caught:
+            await client.ws_connect("/ari/events", operation="test.events")
+        await client.aclose()
+
+    error = caught.value
+    assert error.operation == "test.events"
+    assert error.message == "test.events: WSServerHandshakeError status=401"
+    assert error.transient is False
+    assert error.__cause__ is None
+    assert error.__suppress_context__
+
+
+async def test_ws_connect_a_handshake_refused_by_an_overloaded_server_is_transient() -> (
+    None
+):
+    handler, _ = statuses(503)
+
+    async with serve(handler) as server:
+        client = client_for(server)
+        with pytest.raises(HttpTransportError) as caught:
+            await client.ws_connect("/ari/events", operation="test.events")
+        await client.aclose()
+
+    assert caught.value.transient is True
+
+
+async def test_ws_connect_a_refused_connection_never_quotes_the_url(
+    client_log: Records,
+) -> None:
+    with pytest.raises(HttpTransportError) as caught:
+        await refused_client().ws_connect(
+            "/bot1:secret/events", operation="test.events"
+        )
+
+    error = caught.value
+    assert error.message == "test.events: ClientConnectorError"
+    assert error.transient is True
+    assert error.__cause__ is None
+    assert not [line for line in client_log.lines if "secret" in line]
+    assert any("ClientConnectorError" in line for line in client_log.lines)
+
+
+async def test_ws_connect_outlives_the_total_timeout() -> None:
+    """An event stream lives for hours on a client whose requests are capped at
+    seconds: the client's total deadline bounds the handshake, not the stream."""
+
+    async def later(stream: web.WebSocketResponse) -> None:
+        await asyncio.sleep(0.5)
+        await stream.send_str("late event")
+
+    handler, _ = websocket_route(later)
+    async with serve(handler) as server:
+        client = client_for(
+            server,
+            timeout=HttpTimeout(
+                connect_seconds=0.2, read_seconds=0.2, total_seconds=0.2
+            ),
+        )
+        stream = await client.ws_connect("/ari/events", operation="test.events")
+        message = await stream.receive()
+        still_open = not stream.closed
+        await stream.close()
+        await client.aclose()
+
+    assert message.type is aiohttp.WSMsgType.TEXT
+    assert message.data == "late event"
+    assert still_open
+
+
+async def test_ws_connect_a_path_must_be_absolute() -> None:
+    with pytest.raises(ValueError, match="must start with '/'"):
+        await refused_client().ws_connect("ari/events", operation="test.events")
+
+
+async def test_ws_connect_without_a_heartbeat_is_refused() -> None:
+    """Without pings a peer that vanished leaves the stream open for good: the
+    stream has no read deadline to end it."""
+    with pytest.raises(ValueError, match="heartbeat_seconds"):
+        await refused_client().ws_connect(
+            "/ari/events", operation="test.events", heartbeat_seconds=0
+        )
+
+
+async def test_closing_every_client_ends_its_open_streams() -> None:
+    """The shutdown hook is the only close an integration gets; a stream left
+    open would keep the worker's socket and the provider's session alive."""
+
+    async def hold(stream: web.WebSocketResponse) -> None:
+        await stream.receive()
+
+    handler, _ = websocket_route(hold)
+    async with serve(handler) as server:
+        client = client_for(server)
+        stream = await client.ws_connect("/ari/events", operation="test.events")
+        await close_http_clients()
+        message = await stream.receive()
+
+    assert message.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR)
+    assert stream.closed

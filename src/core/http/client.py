@@ -25,7 +25,7 @@ from src.core.http.options import (
     HttpTimeout,
 )
 from src.core.http.response import HttpResponse
-from src.core.http.retry import RetryPolicy, parse_retry_after
+from src.core.http.retry import RETRYABLE_STATUSES, RetryPolicy, parse_retry_after
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
@@ -34,6 +34,8 @@ READ_CHUNK_BYTES = 64 * 1024
 # A process talks to a handful of providers. Far more open clients means a
 # factory runs per call instead of once per process.
 OPEN_CLIENTS_WARNING = 50
+# How long closing a WebSocket stream waits for the peer's close frame.
+WS_CLOSE_SECONDS = 10.0
 
 _open_clients: set["HttpClient"] = set()
 
@@ -272,6 +274,77 @@ class HttpClient:
                 cause,
             )
             await self._sleep(delay)
+
+    async def ws_connect(
+        self,
+        path: str,
+        *,
+        operation: str,
+        params: Mapping[str, str] | None = None,
+        heartbeat_seconds: float = 20.0,
+    ) -> aiohttp.ClientWebSocketResponse:
+        """Opens a WebSocket stream on the client's session, with its headers.
+
+        The client's timeouts bound the handshake only: the stream has no read
+        deadline, and a peer that stops answering pings for `heartbeat_seconds`
+        ends it. The caller closes the stream; `close_http_clients` ends any
+        still open. No retry: a caller that keeps a stream reconnects itself.
+
+        Raises `HttpTransportError` when the handshake fails, a refused upgrade
+        included; its reason carries the status, never the body.
+        """
+        validate_request(
+            "GET",
+            path,
+            operation,
+            policy=None,
+            headers=None,
+            params=params,
+            json=None,
+            data=None,
+        )
+        if heartbeat_seconds <= 0:
+            raise ValueError(f"{operation}: heartbeat_seconds must be positive")
+        started = self._clock()
+        try:
+            stream = await self._http().ws_connect(
+                f"{self._base_url}{path}",
+                params=params,
+                timeout=aiohttp.ClientWSTimeout(
+                    ws_receive=None, ws_close=WS_CLOSE_SECONDS
+                ),
+                heartbeat=heartbeat_seconds,
+            )
+        except aiohttp.WSServerHandshakeError as error:
+            # The request info it carries quotes the URL: only the status
+            # leaves this block. aiohttp never reads a refused upgrade's body.
+            reason = f"{type(error).__name__} status={error.status}"
+            self._log_ws_failure(operation, reason, started)
+            raise HttpTransportError(
+                operation, reason, transient=error.status in RETRYABLE_STATUSES
+            ) from None
+        except (aiohttp.ClientError, TimeoutError) as error:
+            reason = type(error).__name__
+            self._log_ws_failure(operation, reason, started)
+            raise HttpTransportError(
+                operation, reason, transient=is_transient(error)
+            ) from None
+        logger.debug(
+            "WebSocket operation=%s host=%s opened elapsed_ms=%d",
+            operation,
+            self._host,
+            (self._clock() - started) * 1000,
+        )
+        return stream
+
+    def _log_ws_failure(self, operation: str, reason: str, started: float) -> None:
+        logger.debug(
+            "WebSocket operation=%s host=%s failed=%s elapsed_ms=%d",
+            operation,
+            self._host,
+            reason,
+            (self._clock() - started) * 1000,
+        )
 
     def _next_delay(
         self,
