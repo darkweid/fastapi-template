@@ -1,7 +1,12 @@
 # Docker settings
 COMPOSE_BASE = infra/docker-compose.yml
 COMPOSE_DEV = infra/docker-compose.override.yml
-DOCKER_COMPOSE = docker compose --env-file .env -f $(COMPOSE_BASE)
+# On a deployed box .env names its resource profile, and every target built on
+# DOCKER_COMPOSE carries that overlay, so `make run` there keeps the box's sizing
+# the way infra/deploy/deploy.sh does. Locally RESOURCE_PROFILE is empty (or .env
+# is missing) and the base file alone applies; the dev stack never takes one.
+RESOURCE_PROFILE = $(shell python3 scripts/ops/check_env.py --get RESOURCE_PROFILE 2>/dev/null)
+DOCKER_COMPOSE = docker compose --env-file .env -f $(COMPOSE_BASE)$(if $(RESOURCE_PROFILE), -f infra/resources/$(RESOURCE_PROFILE)/compose.yml)
 DOCKER_COMPOSE_DEV = docker compose --env-file .env -f $(COMPOSE_BASE) -f $(COMPOSE_DEV)
 DOCKER_COMPOSE_EXEC = $(DOCKER_COMPOSE) exec
 

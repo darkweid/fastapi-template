@@ -304,15 +304,17 @@ def test_a_new_secret_key_in_the_example_is_generated(tmp_path: Path) -> None:
 
 def test_pending_list_matches_the_deploy_gate(tmp_path: Path) -> None:
     """The summary must name exactly what check_env.py will refuse at the first
-    deploy: placeholders outside dormant S3 keys, and a localhost
-    PUBLIC_BASE_URL."""
+    deploy: placeholders outside dormant S3 keys, a localhost
+    PUBLIC_BASE_URL and an empty RESOURCE_PROFILE."""
     text = build_env(EXAMPLE_TEXT)
     gate = collect_problems(_parsed(EXAMPLE_TEXT, tmp_path), _parsed(text, tmp_path))
 
     pending = _problem_keys(pending_before_deploy(text))
 
     assert pending == _problem_keys(gate)
-    assert {"EMAIL_PASSWORD", "SENTRY_DSN", "PUBLIC_BASE_URL"} <= pending
+    assert {"EMAIL_PASSWORD", "SENTRY_DSN", "PUBLIC_BASE_URL", "RESOURCE_PROFILE"} <= (
+        pending
+    )
     assert not any(key.startswith("S3_") for key in pending)
 
 

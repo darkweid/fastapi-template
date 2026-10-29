@@ -29,7 +29,10 @@ if [ "$BUILD" = "0" ] && [ -z "$APP_IMAGE_WAS_GIVEN" ]; then
   exit 1
 fi
 
+# Completed with the box's resource profile once .env has passed check_env
+# (below); nothing runs compose before that.
 COMPOSE=(docker compose --env-file .env -f infra/docker-compose.yml)
+RESOURCE_PROFILE_PATTERN='^[a-z0-9][a-z0-9_-]*$'
 
 # A new app container gets this long to turn healthy before it is removed. The
 # app healthcheck in infra/docker-compose.yml reports one that never answers
@@ -298,6 +301,25 @@ test -f .env || {
 }
 python3 scripts/ops/check_env.py
 
+# RESOURCE_PROFILE names infra/resources/<profile>/, the overlay sizing this
+# box: container limits, gunicorn workers, Redis maxmemory and the PostgreSQL
+# settings its postgres image is built with. check_env.py above has already
+# refused an empty one; it reads .env the way compose does.
+RESOURCE_PROFILE="$(python3 scripts/ops/check_env.py --get RESOURCE_PROFILE)"
+if ! [[ "$RESOURCE_PROFILE" =~ $RESOURCE_PROFILE_PATTERN ]]; then
+  echo "[deploy] RESOURCE_PROFILE=${RESOURCE_PROFILE} is not a profile name (lowercase letters, digits, '-' and '_')"
+  exit 1
+fi
+RESOURCE_PROFILE_DIR="infra/resources/${RESOURCE_PROFILE}"
+for required in compose.yml postgres/sizing.conf; do
+  if [ ! -f "${RESOURCE_PROFILE_DIR}/${required}" ]; then
+    echo "[deploy] ${RESOURCE_PROFILE_DIR}/${required} does not exist - RESOURCE_PROFILE=${RESOURCE_PROFILE} names no complete profile"
+    exit 1
+  fi
+done
+COMPOSE+=(-f "${RESOURCE_PROFILE_DIR}/compose.yml")
+echo "[deploy] resource profile ${RESOURCE_PROFILE}"
+
 # The nginx configuration this checkout ships is tested in a fresh container
 # with the new mounts before anything is rolled: a broken vhost or a missing
 # certificate aborts the deploy with the previous stack still serving. It goes
@@ -324,10 +346,11 @@ fi
 
 # The database image stays box-local in both modes - CD ships application code,
 # never the database. It is rebuilt every deploy because `up` reuses an existing
-# tag: the image carries postgresql.conf, which the server reads at every start,
-# so a changed setting or a patch release of the base image (--pull) reaches the
-# server when `up` below recreates the container on the new image - a database
-# restart the serving app rides out through pool_pre_ping.
+# tag: the image carries postgresql.conf and the resource profile's sizing,
+# which the server reads at every start, so a changed setting or a patch release
+# of the base image (--pull) reaches the server when `up` below recreates the
+# container on the new image - a database restart the serving app rides out
+# through pool_pre_ping.
 echo "[deploy] building the postgres image"
 "${COMPOSE[@]}" build --pull postgres
 
@@ -347,8 +370,9 @@ echo "[deploy] applying migrations before any new code serves traffic"
 
 # Before the roll, which relies on the running nginx reading app_upstream.inc.
 # Starts nginx on the first deploy; later a no-op unless the nginx service
-# itself changed in infra/docker-compose.yml (its image, its mounts, its
-# environment), which recreates it and drops the connections it holds.
+# itself changed in infra/docker-compose.yml or in the resource profile's
+# overlay (its image, its mounts, its environment, its limits), which recreates
+# it and drops the connections it holds.
 "${COMPOSE[@]}" up -d --no-deps nginx
 
 echo "[deploy] rolling the app"

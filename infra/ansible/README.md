@@ -94,6 +94,8 @@ Then:
 1. Put `.env` in place once the clone exists: `scp -P <sshd_port> .env ops@<host>:`
    and on the server
    `sudo install -o deploy -g deploy -m 0600 .env /srv/<app_name>/.env && rm .env`.
+   Its `RESOURCE_PROFILE` names the `infra/resources/` profile sized for this
+   server; the deploy refuses an empty one.
 2. Copy the values the summary printed into the GitHub environment: `SSH_USER`,
    `SERVER_IP`, `SSH_KNOWN_HOSTS` as secrets, `SSH_PORT` and `APP_DIR` as
    variables. `SSH_KNOWN_HOSTS` comes from the server over the connection you already

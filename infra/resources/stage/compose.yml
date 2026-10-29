@@ -1,0 +1,66 @@
+# Resource profile for a 4 CPU / 8 GB box (RESOURCE_PROFILE=stage), loaded by
+# infra/deploy/deploy.sh (and the Makefile's compose targets) on top of
+# infra/docker-compose.yml.
+#
+# Memory limits during a roll, two app containers: 1G postgres + 2 x 2G app +
+# 1G worker + 512M scheduler + 256M nginx + 1G redis = 7.75G, leaving ~0.25G
+# for the host - tight, so an app at its limit during a roll can push the box
+# into swap. CPU limits are ceilings, not reservations, and may add up past the
+# box.
+
+services:
+  postgres:
+    shm_size: 256m
+    # Bakes postgres/*.conf of this profile into the image (infra/postgres/
+    # Dockerfile), where postgresql.conf includes it last. Baked, not mounted: a
+    # changed file then changes the image the deploy rebuilds, and `up`
+    # recreates the server on it.
+    build:
+      args:
+        RESOURCE_PROFILE: stage
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  app:
+    environment:
+      # Workers per app container; postgres/sizing.conf max_connections counts them.
+      WEB_CONCURRENCY: "4"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  worker:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  scheduler:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  redis:
+    # The base command plus maxmemory, half the container limit: an RDB/AOF
+    # rewrite fork needs the other half.
+    command: redis-server /etc/redis/redis.conf --requirepass ${REDIS_PASSWORD} --maxmemory 512mb
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G

@@ -1,6 +1,8 @@
 from ipaddress import ip_address, ip_network
 import json
 from pathlib import Path
+import re
+import shlex
 from typing import Any
 
 import yaml
@@ -64,3 +66,144 @@ def test_redis_gets_its_own_password_and_no_other_secret() -> None:
     assert "env_file" not in redis
     assert redis["environment"] == {"REDISCLI_AUTH": "${REDIS_PASSWORD}"}
     assert " -a " not in " ".join(redis["healthcheck"]["test"])
+
+
+RESOURCES_DIR = PROJECT_ROOT / "infra/resources"
+POSTGRES_CONF = PROJECT_ROOT / "infra/postgres/postgresql.conf"
+PROFILE_CONF_DIR = "/etc/postgresql/conf.d"
+SIZED_SERVICES = {"postgres", "app", "worker", "scheduler", "nginx", "redis"}
+
+
+def _profiles() -> list[Path]:
+    return sorted(path for path in RESOURCES_DIR.iterdir() if path.is_dir())
+
+
+def _profile_compose(profile: Path) -> dict[str, Any]:
+    loaded: dict[str, Any] = yaml.safe_load(
+        (profile / "compose.yml").read_text(encoding="utf-8")
+    )
+    return loaded
+
+
+def _settings(path: Path) -> dict[str, str]:
+    settings = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line and "=" in line:
+            key, _, value = line.partition("=")
+            settings[key.strip()] = value.strip()
+    return settings
+
+
+def test_the_shipped_profiles_are_complete() -> None:
+    """deploy.sh refuses a profile missing either file, so a half-written one
+    fails a deploy instead of a test."""
+    assert {profile.name for profile in _profiles()} >= {"stage", "production"}
+    for profile in _profiles():
+        assert (profile / "compose.yml").is_file(), profile.name
+        assert (profile / "postgres/sizing.conf").is_file(), profile.name
+
+
+def test_a_profile_sizes_only_services_the_base_file_declares() -> None:
+    """An overlay naming a service the base lacks creates a half-defined one;
+    a misspelled name leaves the real service on the local default."""
+    base_services = set(_compose()["services"])
+    for profile in _profiles():
+        services = _profile_compose(profile)["services"]
+
+        assert set(services) <= base_services, profile.name
+        assert set(services) == SIZED_SERVICES, profile.name
+        for name, service in services.items():
+            limits = service["deploy"]["resources"]["limits"]
+            assert {"cpus", "memory"} <= set(limits), f"{profile.name}/{name}"
+        assert services["app"]["environment"]["WEB_CONCURRENCY"].isdigit()
+        assert "shm_size" in services["postgres"]
+
+
+def test_a_profile_builds_its_own_sizing_into_postgres() -> None:
+    """The sizing is baked into the image, so a changed file is a new image
+    `up` recreates the server on; a bind mount would leave it running on the
+    old values. An overlay naming another profile would size the box wrongly."""
+    dockerfile = (PROJECT_ROOT / "infra/postgres/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    for profile in _profiles():
+        postgres = _profile_compose(profile)["services"]["postgres"]
+
+        assert postgres["build"]["args"]["RESOURCE_PROFILE"] == profile.name
+        assert "volumes" not in postgres, profile.name
+
+    assert "ARG RESOURCE_PROFILE=" in dockerfile
+    # Only the selected profile's postgres/ joins the build cache key: a wider
+    # mount would recreate the server on an edit to any profile or compose.yml.
+    assert (
+        "source=infra/${RESOURCE_PROFILE:+resources/$RESOURCE_PROFILE/}postgres,"
+        in dockerfile
+    )
+    assert "install -m 0644 /tmp/profile/*.conf /etc/postgresql/conf.d/" in dockerfile
+
+
+def test_a_profile_keeps_the_base_redis_command() -> None:
+    """The overlay replaces the command whole: dropping --requirepass would
+    leave Redis open on the network."""
+    base_command = _compose()["services"]["redis"]["command"]
+    for profile in _profiles():
+        command = _profile_compose(profile)["services"]["redis"]["command"]
+
+        assert re.fullmatch(
+            re.escape(base_command) + r" --maxmemory \d+[kmg]b", command
+        ), profile.name
+
+
+def _worker_processes() -> int:
+    argv = shlex.split(_compose()["services"]["worker"]["command"])
+    return int(argv[argv.index("--workers") + 1])
+
+
+def test_the_worker_pins_its_process_count() -> None:
+    """Every worker process holds its own pools, so max_connections is sized
+    for a count taskiq's default could change under it."""
+    assert _worker_processes() >= 1
+
+
+def test_a_profile_has_connections_for_a_rolling_deploy() -> None:
+    """During a roll two app containers hold their pools at once beside the
+    worker and the scheduler; past max_connections the new container fails its
+    first queries."""
+    example = parse_env(PROJECT_ROOT / ".env.example")
+    api_pool = int(example["DB_POOL_SIZE"]) + int(example["DB_MAX_OVERFLOW"])
+    tasks_pool = int(example["DB_TASKS_POOL_SIZE"]) + int(
+        example["DB_TASKS_MAX_OVERFLOW"]
+    )
+    worker_processes = _worker_processes()
+    for profile in _profiles():
+        web_workers = int(
+            _profile_compose(profile)["services"]["app"]["environment"][
+                "WEB_CONCURRENCY"
+            ]
+        )
+        sizing = _settings(profile / "postgres/sizing.conf")
+        app_containers = 2 * web_workers * api_pool
+        worker = worker_processes * (tasks_pool + api_pool)
+        scheduler = tasks_pool + api_pool
+        migration, psql = 1, 1
+        needed = app_containers + worker + scheduler + migration + psql
+
+        assert int(sizing["max_connections"]) >= needed, profile.name
+
+
+def test_postgres_reads_the_profile_last() -> None:
+    """A later setting wins, so an include ahead of the base sizing would let
+    the base values override the profile."""
+    directives = [
+        line.strip()
+        for line in POSTGRES_CONF.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    dockerfile = (PROJECT_ROOT / "infra/postgres/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert directives[-1] == f"include_dir '{PROFILE_CONF_DIR}'"
+    # The server refuses to start on an include_dir that does not exist.
+    assert f"mkdir -p {PROFILE_CONF_DIR}" in dockerfile
