@@ -300,13 +300,20 @@ jobs:
           setting() { sed -n "s/^$1[[:space:]]*=[[:space:]]*\([^[:space:]#]*\).*/\1/p" "$2"; }
           effective() {
             docker run --rm --user postgres --entrypoint sh "$1" -c \
-              'mkdir -p "$PGDATA" && exec postgres -C "$0" -c config_file=/etc/postgresql/postgresql.conf' "$2" 2>/dev/null
+              'mkdir -p "$PGDATA" && exec postgres -C "$0" -c config_file=/etc/postgresql/postgresql.conf' "$2"
           }
+          stderr_file="$(mktemp)"
+          trap 'rm -f "$stderr_file"' EXIT
           check() {
             local image="sizing-check:${1:-base}" want got
             docker build --quiet --build-arg RESOURCE_PROFILE="$1" -f infra/postgres/Dockerfile -t "$image" . >/dev/null
             want="$(setting max_connections "$2")"
-            got="$(effective "$image" max_connections)"
+            # stderr apart from the value: the server logs a LOG line even on
+            # success, and it is what explains a failure.
+            got="$(effective "$image" max_connections 2>"$stderr_file")" || {
+              echo "${1:-base}: postgres -C failed: $(cat "$stderr_file")" >&2
+              exit 1
+            }
             if [ -z "$want" ] || [ "$got" != "$want" ]; then
               echo "${1:-base}: max_connections is '$got', $2 says '$want'" >&2
               exit 1
