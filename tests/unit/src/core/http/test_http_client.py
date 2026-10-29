@@ -902,3 +902,69 @@ async def test_closing_every_client_ends_its_open_streams() -> None:
 
     assert message.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR)
     assert stream.closed
+
+
+@pytest.mark.parametrize("cross_origin", [False, True])
+async def test_ws_connect_never_follows_a_redirect(cross_origin: bool) -> None:
+    """aiohttp's upgrade follows redirects and strips only Authorization: a
+    custom key header would reach whatever host Location names."""
+    reached: list[str] = []
+
+    async def target(request: web.Request) -> web.Response:
+        reached.append(request.headers.get("X-Api-Key", ""))
+        return web.Response()
+
+    async with serve(target) as elsewhere:
+
+        async def redirect(request: web.Request) -> web.Response:
+            if request.path == "/moved":
+                return await target(request)
+            location = str(elsewhere.make_url("/moved")) if cross_origin else "/moved"
+            raise web.HTTPFound(location)
+
+        async with serve(redirect) as server:
+            client = client_for(server, headers={"X-Api-Key": "secret"})
+            with pytest.raises(HttpTransportError) as caught:
+                await client.ws_connect("/ari/events", operation="test.events")
+            await client.aclose()
+
+    error = caught.value
+    assert error.message == "test.events: Redirect status=302"
+    assert error.transient is False
+    assert error.__cause__ is None
+    assert reached == []
+
+
+async def test_ws_connect_the_handshake_is_bounded_by_the_client_timeout() -> None:
+    async def stall(request: web.Request) -> web.Response:
+        await asyncio.sleep(1)
+        return web.Response()
+
+    async with serve(stall) as server:
+        client = client_for(server, timeout=HttpTimeout(total_seconds=0.1))
+        with pytest.raises(HttpTransportError) as caught:
+            await client.ws_connect("/ari/events", operation="test.events")
+        await client.aclose()
+
+    assert caught.value.message == "test.events: TimeoutError"
+    assert caught.value.transient is True
+
+
+async def test_ws_connect_a_message_over_the_size_cap_closes_the_stream() -> None:
+    """The client's response cap holds for stream messages too, not aiohttp's
+    own 4 MiB default."""
+
+    async def flood(stream: web.WebSocketResponse) -> None:
+        await stream.send_bytes(b"x" * 2048)
+        await stream.receive()
+
+    handler, _ = websocket_route(flood)
+    async with serve(handler) as server:
+        client = client_for(server, limits=HttpLimits(max_response_bytes=1024))
+        stream = await client.ws_connect("/ari/events", operation="test.events")
+        message = await stream.receive()
+        await client.aclose()
+
+    assert message.type is aiohttp.WSMsgType.ERROR
+    assert stream.closed
+    assert stream.close_code == aiohttp.WSCloseCode.MESSAGE_TOO_BIG

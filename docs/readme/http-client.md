@@ -49,8 +49,10 @@ stream = await self._http.ws_connect(
 async for message in stream: ...
 ```
 
-- **Timeouts.** The client's `HttpTimeout` bounds the handshake only. The open stream has no read deadline and is not ended by `total_seconds`, so a client whose requests are capped at a few seconds can hold a stream for hours. A peer that stops answering pings for `heartbeat_seconds` (20 by default) ends it; closing waits at most `WS_CLOSE_SECONDS` for the peer's close frame.
+- **Timeouts.** The client's `HttpTimeout` bounds the handshake only. The open stream has no read deadline and is not ended by `total_seconds`, so a client whose requests are capped at a few seconds can hold a stream for hours. Liveness is the heartbeat: after `heartbeat_seconds` (20 by default) without incoming data a ping goes out, and no pong within half that closes the stream, so a silent dead peer is noticed within about 1.5 x `heartbeat_seconds`. Closing waits at most `WS_CLOSE_SECONDS` for the peer's close frame.
 - **A failed handshake raises `HttpTransportError`**, a refused upgrade included, since there is no stream to hand back. A refusal's message is `<operation>: WSServerHandshakeError status=<status>`, never the URL or the body; `transient` is True for a refused connection and for a status `RETRY_IDEMPOTENT` would repeat (408, 429, 500, 502, 503, 504), False otherwise, a 401 among them.
+- **Redirects are not followed** here either: a 3xx to the upgrade raises `HttpTransportError` with `<operation>: Redirect status=<status>` and `transient=False`, and nothing is sent to the `Location` host.
+- **Message size.** A message over `HttpLimits.max_response_bytes` closes the stream with code 1009 (`MESSAGE_TOO_BIG`); the caller's `receive()` gets a `WSMsgType.ERROR` message and the stream is closed.
 - **No retry policy applies.** A caller that keeps a stream reconnects on its own schedule.
 - **Closing.** The caller closes the stream when it is done; `close_http_clients()` closes the session and with it any stream still open. `FakeHttpClient` has no WebSocket side: test a stream against `aiohttp.test_utils.TestServer`.
 
