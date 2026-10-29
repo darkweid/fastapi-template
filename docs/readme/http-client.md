@@ -38,6 +38,24 @@ if is_permanent_failure(response.status): ...
 - **`HttpTransportError` means no status came back.** Its message is `<operation>: <exception class>` and never the URL, so a token in a path stays out of logs and Sentry. `request_sent` is False only when nothing was written to a connection - a refused connection, a DNS or TLS failure, a deadline spent waiting for a pooled connection - so repeating it cannot duplicate anything. `transient` is False for a TLS failure (a certificate, a broken handshake), a malformed URL and an answer over the size cap; `is_transient(error)` is that classification for a caller that sorts aiohttp errors of its own.
 - **Closing.** Every client opened in the process is closed by `close_http_clients()` at API and worker shutdown, so an integration has no shutdown hook of its own. A session belongs to the event loop that opened it: using the client from another running loop while that session is open raises `RuntimeError`; a session whose loop has already closed is dropped with a warning and a new one opened; a client used after the hook opens a new session. Closing works from anywhere a running loop can reach the owner: on the owner itself, through `run_coroutine_threadsafe` when the owner runs in another thread; a close while the owner sits idle raises `RuntimeError` and leaves the client open for its own loop to close.
 
+## WebSocket streams
+
+A provider that pushes events over a WebSocket is reached through the same client, so the stream carries the client's `base_url`, headers and `User-Agent` and shares its session:
+
+```python
+stream = await self._http.ws_connect(
+    "/events", operation="telephony.events", params={"app": "calls"}
+)
+async for message in stream: ...
+```
+
+- **Timeouts.** The client's `HttpTimeout` bounds the handshake only. The open stream has no read deadline and is not ended by `total_seconds`, so a client whose requests are capped at a few seconds can hold a stream for hours. Liveness is the heartbeat: after `heartbeat_seconds` (20 by default) without incoming data a ping goes out, and no pong within half that closes the stream, so a silent dead peer is noticed within about 1.5 x `heartbeat_seconds`. Closing waits at most `WS_CLOSE_SECONDS` for the peer's close frame.
+- **A failed handshake raises `HttpTransportError`**, a refused upgrade included, since there is no stream to hand back. A refusal's message is `<operation>: WSServerHandshakeError status=<status>`, never the URL or the body; `transient` is True for a refused connection and for a status `RETRY_IDEMPOTENT` would repeat (408, 429, 500, 502, 503, 504), False otherwise, a 401 among them.
+- **Redirects are not followed** here either: a 3xx to the upgrade raises `HttpTransportError` with `<operation>: Redirect status=<status>` and `transient=False`, and nothing is sent to the `Location` host.
+- **Message size.** A message over `HttpLimits.max_response_bytes` closes the stream with code 1009 (`MESSAGE_TOO_BIG`); the caller's `receive()` gets a `WSMsgType.ERROR` message and the stream is closed.
+- **No retry policy applies.** A caller that keeps a stream reconnects on its own schedule.
+- **Closing.** The caller closes the stream when it is done; `close_http_clients()` closes the session and with it any stream still open. `FakeHttpClient` has no WebSocket side: test a stream against `aiohttp.test_utils.TestServer`.
+
 ## Choosing a retry policy
 
 | Policy | Repeats | Use for |

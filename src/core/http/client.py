@@ -5,7 +5,11 @@ import random
 import time
 
 import aiohttp
-from aiohttp import TraceConfig, TraceRequestHeadersSentParams
+from aiohttp import (
+    TraceConfig,
+    TraceRequestHeadersSentParams,
+    TraceRequestRedirectParams,
+)
 from multidict import CIMultiDict
 from yarl import URL
 
@@ -25,7 +29,7 @@ from src.core.http.options import (
     HttpTimeout,
 )
 from src.core.http.response import HttpResponse
-from src.core.http.retry import RetryPolicy, parse_retry_after
+from src.core.http.retry import RETRYABLE_STATUSES, RetryPolicy, parse_retry_after
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
@@ -34,6 +38,8 @@ READ_CHUNK_BYTES = 64 * 1024
 # A process talks to a handful of providers. Far more open clients means a
 # factory runs per call instead of once per process.
 OPEN_CLIENTS_WARNING = 50
+# How long closing a WebSocket stream waits for the peer's close frame.
+WS_CLOSE_SECONDS = 10.0
 
 _open_clients: set["HttpClient"] = set()
 
@@ -85,6 +91,24 @@ async def _mark_headers_sent(
     progress = getattr(context, "trace_request_ctx", None)
     if isinstance(progress, _Progress):
         progress.headers_sent = True
+
+
+class _RedirectRefused(Exception):
+    def __init__(self, status: int) -> None:
+        super().__init__(status)
+        self.status = status
+
+
+async def _refuse_redirect(
+    session: aiohttp.ClientSession,
+    context: object,
+    params: TraceRequestRedirectParams,
+) -> None:
+    # `request` passes allow_redirects=False, so only a WebSocket upgrade gets
+    # here: aiohttp's ws_connect always follows redirects, and a cross-origin
+    # one would carry every custom key header to the host Location names.
+    params.response.close()
+    raise _RedirectRefused(params.response.status)
 
 
 class HttpClient:
@@ -152,6 +176,7 @@ class HttpClient:
             )
         trace = TraceConfig()
         trace.on_request_headers_sent.append(_mark_headers_sent)
+        trace.on_request_redirect.append(_refuse_redirect)
         self._session = aiohttp.ClientSession(
             headers=self._headers,
             trace_configs=[trace],
@@ -272,6 +297,86 @@ class HttpClient:
                 cause,
             )
             await self._sleep(delay)
+
+    async def ws_connect(
+        self,
+        path: str,
+        *,
+        operation: str,
+        params: Mapping[str, str] | None = None,
+        heartbeat_seconds: float = 20.0,
+    ) -> aiohttp.ClientWebSocketResponse:
+        """Opens a WebSocket stream on the client's session, with its headers.
+
+        The client's timeouts bound the handshake only: the stream has no read
+        deadline. After `heartbeat_seconds` without incoming data a ping goes
+        out, and no pong within half that closes the stream, so a silent dead
+        peer is noticed within about 1.5 x `heartbeat_seconds`. A message over
+        `limits.max_response_bytes` closes the stream with code 1009. The
+        caller closes the stream; `close_http_clients` ends any still open. No
+        retry: a caller that keeps a stream reconnects itself.
+
+        Raises `HttpTransportError` when the handshake fails, a refused upgrade
+        or a redirect included (a redirect is never followed); its reason
+        carries the status, never the body.
+        """
+        validate_request(
+            "GET",
+            path,
+            operation,
+            policy=None,
+            headers=None,
+            params=params,
+            json=None,
+            data=None,
+        )
+        if heartbeat_seconds <= 0:
+            raise ValueError(f"{operation}: heartbeat_seconds must be positive")
+        started = self._clock()
+        try:
+            stream = await self._http().ws_connect(
+                f"{self._base_url}{path}",
+                params=params,
+                timeout=aiohttp.ClientWSTimeout(
+                    ws_receive=None, ws_close=WS_CLOSE_SECONDS
+                ),
+                heartbeat=heartbeat_seconds,
+                max_msg_size=self._limits.max_response_bytes,
+            )
+        except _RedirectRefused as error:
+            reason = f"Redirect status={error.status}"
+            self._log_ws_failure(operation, reason, started)
+            raise HttpTransportError(operation, reason, transient=False) from None
+        except aiohttp.WSServerHandshakeError as error:
+            # The request info it carries quotes the URL: only the status
+            # leaves this block. aiohttp never reads a refused upgrade's body.
+            reason = f"{type(error).__name__} status={error.status}"
+            self._log_ws_failure(operation, reason, started)
+            raise HttpTransportError(
+                operation, reason, transient=error.status in RETRYABLE_STATUSES
+            ) from None
+        except (aiohttp.ClientError, TimeoutError) as error:
+            reason = type(error).__name__
+            self._log_ws_failure(operation, reason, started)
+            raise HttpTransportError(
+                operation, reason, transient=is_transient(error)
+            ) from None
+        logger.debug(
+            "WebSocket operation=%s host=%s opened elapsed_ms=%d",
+            operation,
+            self._host,
+            (self._clock() - started) * 1000,
+        )
+        return stream
+
+    def _log_ws_failure(self, operation: str, reason: str, started: float) -> None:
+        logger.debug(
+            "WebSocket operation=%s host=%s failed=%s elapsed_ms=%d",
+            operation,
+            self._host,
+            reason,
+            (self._clock() - started) * 1000,
+        )
 
     def _next_delay(
         self,
