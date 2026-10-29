@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import sys
 from urllib.parse import urlparse
 
 # Keys carrying credentials. A value here that still equals the one in
@@ -29,6 +30,11 @@ FORBIDDEN_BOOLEANS = {
 # URLs that must point somewhere the outside world can reach. A deploy that
 # keeps the example value here mails every user a link to their own machine.
 PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
+
+# Blank in .env.example because a local stack runs without them, required on a
+# deployed box. RESOURCE_PROFILE picks infra/resources/<profile>/; deploy.sh
+# also refuses a name with no profile behind it.
+REQUIRED_IN_DEPLOY_KEYS = ("RESOURCE_PROFILE",)
 
 # get_s3_adapter refuses to build a client at all while S3 is disabled, so a
 # placeholder credential sitting under this prefix costs nothing and should
@@ -121,6 +127,9 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
         if forbidden is not None and as_bool(value) is forbidden:
             problems.append(f"{key}={value} is not allowed outside local development")
 
+        if key in REQUIRED_IN_DEPLOY_KEYS and not value.strip():
+            problems.append(f"{key} is empty: a deploy needs it set")
+
         if key in PUBLIC_URL_KEYS and points_at_localhost(value):
             problems.append(
                 f"{key}={value} points at localhost: users receive email links "
@@ -150,5 +159,26 @@ def check_env_file() -> None:
     print("All required keys are present in .env.")
 
 
+def print_env_value(key: str) -> None:
+    """Prints one value of .env as compose reads it, empty when the key is absent,
+    so shell callers (deploy.sh, the Makefile) need no dotenv parser of their own."""
+    try:
+        entries = parse_env(Path(".env"))
+    except FileNotFoundError as e:
+        print(f"File not found: {e}", file=sys.stderr)
+        raise SystemExit(1) from e
+    print(entries.get(key, ""))
+
+
+def main(argv: list[str]) -> None:
+    if not argv:
+        check_env_file()
+    elif len(argv) == 2 and argv[0] == "--get":
+        print_env_value(argv[1])
+    else:
+        print("usage: check_env.py [--get KEY]", file=sys.stderr)
+        raise SystemExit(2)
+
+
 if __name__ == "__main__":
-    check_env_file()
+    main(sys.argv[1:])

@@ -288,6 +288,36 @@ jobs:
           export PATH="$PWD/.venv/bin:$PATH"
           make test-cov
 
+      # The unit tests read the profile files; this checks the image the deploy
+      # builds from them. Per profile, the postgres image built with that
+      # RESOURCE_PROFILE must report the max_connections of its sizing.conf, and
+      # the image built without one the base postgresql.conf value. `postgres -C`
+      # needs the data directory to exist, never an initialized cluster.
+      - name: Check that a resource profile's PostgreSQL sizing wins
+        shell: bash
+        run: |
+          set -euo pipefail
+          setting() { sed -n "s/^$1[[:space:]]*=[[:space:]]*\([^[:space:]#]*\).*/\1/p" "$2"; }
+          effective() {
+            docker run --rm --user postgres --entrypoint sh "$1" -c \
+              'mkdir -p "$PGDATA" && exec postgres -C "$0" -c config_file=/etc/postgresql/postgresql.conf' "$2" 2>/dev/null
+          }
+          check() {
+            local image="sizing-check:${1:-base}" want got
+            docker build --quiet --build-arg RESOURCE_PROFILE="$1" -f infra/postgres/Dockerfile -t "$image" . >/dev/null
+            want="$(setting max_connections "$2")"
+            got="$(effective "$image" max_connections)"
+            if [ -z "$want" ] || [ "$got" != "$want" ]; then
+              echo "${1:-base}: max_connections is '$got', $2 says '$want'" >&2
+              exit 1
+            fi
+            echo "${1:-base}: max_connections $got"
+          }
+          check "" infra/postgres/postgresql.conf
+          for dir in infra/resources/*/; do
+            check "$(basename "$dir")" "${dir}postgres/sizing.conf"
+          done
+
       # The init script runs on the host before any virtualenv, under whatever
       # python3 is there, and macOS still ships 3.9. Not put on PATH: only the
       # init step below calls it, by path.
@@ -322,6 +352,7 @@ jobs:
             exit 1
           fi
           docker compose --env-file .env -f infra/docker-compose.yml config --quiet
+          for p in infra/resources/*/; do docker compose --env-file .env -f infra/docker-compose.yml -f "${p}compose.yml" config --quiet; done
           TESTING=true pytest -q -p no:cacheprovider tests/unit/test_docker_compose_config.py tests/unit/test_nginx_security_config.py tests/unit/scripts/ops/test_init_project.py
 
       # A pull request from a fork gets a read-only token whatever this asks

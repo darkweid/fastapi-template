@@ -22,6 +22,9 @@ services:
       dockerfile: infra/postgres/Dockerfile
     image: template-postgres:18
     restart: always
+    # shm_size, the limits below, the app's WEB_CONCURRENCY, the redis limits and
+    # the sizing in postgresql.conf are the local default; a deploy replaces them
+    # with its resource profile (infra/resources/<profile>/compose.yml).
     shm_size: 256m
     # Loopback only: an operator reaches it through an SSH tunnel to 127.0.0.1 on
     # the host, the network never does (docs/readme/security.md). The host side is
@@ -59,8 +62,11 @@ services:
     # SIGTERM makes gunicorn stop accepting and finish the requests in flight
     # within --graceful-timeout; stop_grace_period must stay longer, or docker
     # kills the requests the deploy lets drain. --keep-alive stays longer than
-    # the upstream keepalive_timeout in infra/nginx/main.conf.
-    command: gunicorn -k uvicorn_worker.UvicornWorker -w 4 -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 --graceful-timeout 30 src.main.web:app
+    # the upstream keepalive_timeout in infra/nginx/main.conf. No -w: gunicorn
+    # takes its worker count from WEB_CONCURRENCY, which a resource profile sets.
+    command: gunicorn -k uvicorn_worker.UvicornWorker -b 0.0.0.0:${APP_BACKEND_PORT} --worker-connections 1000 --keep-alive 10 --graceful-timeout 30 src.main.web:app
+    environment:
+      WEB_CONCURRENCY: "4"
     restart: unless-stopped
     stop_grace_period: 35s
     healthcheck:
@@ -91,9 +97,11 @@ services:
     container_name: template-worker
     image: ${APP_IMAGE:-template-app-image:latest}
     env_file: ../.env
-    # --max-async-tasks 20 is mirrored by tasks_engine pool_size+max_overflow
-    # in src/core/database/engine.py - change both together.
-    command: taskiq worker taskiq_worker.app:broker --receiver taskiq_worker.receiver:IdempotencyReceiver --max-async-tasks 20
+    # --max-async-tasks 20 is per worker process and mirrored by tasks_engine
+    # pool_size+max_overflow in src/core/database/engine.py - change both
+    # together. --workers is taskiq's default, pinned because every process
+    # holds its own pools: a resource profile's max_connections counts them.
+    command: taskiq worker taskiq_worker.app:broker --workers 2 --receiver taskiq_worker.receiver:IdempotencyReceiver --max-async-tasks 20
     restart: unless-stopped
     stop_grace_period: 35s
     healthcheck:

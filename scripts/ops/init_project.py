@@ -263,6 +263,7 @@ INLINE_COMMENT = re.compile(r"\s#")
 TRUTHY_VALUES = {"1", "true", "t", "y", "yes", "on"}
 S3_KEY_PREFIX = "S3_"
 PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
+REQUIRED_IN_DEPLOY_KEYS = ("RESOURCE_PROFILE",)
 LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # nosec B104
 
 
@@ -299,6 +300,8 @@ def pending_before_deploy(env_text: str) -> tuple[str, ...]:
         dormant = key.startswith(S3_KEY_PREFIX) and key != "S3_ENABLED"
         if PLACEHOLDER_MARKER in value.lower() and not (dormant and not s3_enabled):
             pending.append(f"{key}: still a placeholder")
+        if key in REQUIRED_IN_DEPLOY_KEYS and not value.strip():
+            pending.append(f"{key}: empty, name the box's infra/resources profile")
         if key in PUBLIC_URL_KEYS and _points_at_localhost(value):
             pending.append(f"{key}: points at localhost, set the deployed frontend")
     return tuple(pending)

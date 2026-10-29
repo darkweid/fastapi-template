@@ -94,7 +94,8 @@ docker volume rm template-postgres-data template-redis-data template-nginx-upstr
 When it creates `.env`, the command lists the values the deploy gate
 (`scripts/ops/check_env.py`) would still refuse in it: the `-not-real`
 placeholders it cannot generate (`EMAIL_PASSWORD`, `SENTRY_DSN`, the `S3_*` keys once
-`S3_ENABLED` is on) and a `PUBLIC_BASE_URL` pointing at localhost. A `.env` that
+`S3_ENABLED` is on), a `PUBLIC_BASE_URL` pointing at localhost and an empty
+`RESOURCE_PROFILE`. A `.env` that
 already existed is left alone and not listed; the command prints the
 `PROJECT_NAME` and `TRUST_PROXY_HOSTS` lines it needs instead. Then it lists
 what is left by hand:
@@ -387,7 +388,11 @@ short:
    ports bypass ufw - and prints a deploy key.
 5. Add the deploy key to the repository (read-only), run
    `make server-provision ENV=production` to clone, put `.env` in place as the
-   README shows, and copy the printed CD values into the environment.
+   README shows, and copy the printed CD values into the environment. Set
+   `RESOURCE_PROFILE` in that `.env` to the profile sized for the box
+   (`infra/resources/`: `stage`, `production`, or one added for its size, see
+   [infra.md](infra.md) → *Resource profiles*). A server deployed before
+   profiles existed needs the key in its `.env` before that change is merged.
 6. Copy the certificate and key into `/srv/<app_name>/infra/nginx/certs/` on the
    server (git-ignored, so the clone has none), owned by `deploy`. Without them
    Nginx cannot start and the first deploy fails at the last step.
@@ -416,6 +421,7 @@ hardening in [security.md](security.md).
 [ ] PROJECT_NAME, VERSION, README badges, LICENSE
 [ ] venv + make req-sync-dev + pre-commit install
 [ ] .env created and every -not-real placeholder it listed replaced
+[ ] RESOURCE_PROFILE set in each server's .env (a profile in infra/resources/)
 [ ] Four signing secrets: 32+ chars, all four different
 [ ] PUBLIC_BASE_URL, CORS_ALLOWED_ORIGINS, SMTP, cookie settings
 [ ] make run-dev && make migrate && make create-admin

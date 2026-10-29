@@ -8,6 +8,7 @@ from scripts.ops.check_env import (
     PLACEHOLDER_MARKER,
     SECRET_KEY_PATTERN,
     collect_problems,
+    main,
     parse_env,
 )
 
@@ -22,6 +23,7 @@ EXAMPLE = {
     "JWT_USER_SECRET_KEY": "example-jwt-user-secret-key-not-real",
     "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
     "EMAIL_USER": "user@example.com",
+    "RESOURCE_PROFILE": "",
 }
 
 
@@ -35,6 +37,7 @@ def _deployable_env() -> dict[str, str]:
         "JWT_USER_SECRET_KEY": "a-real-jwt-user-signing-secret-key",
         "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
         "EMAIL_USER": "user@example.com",
+        "RESOURCE_PROFILE": "production",
     }
 
 
@@ -169,6 +172,18 @@ def test_public_base_url_on_a_real_host_is_allowed() -> None:
     assert collect_problems(EXAMPLE, actual) == []
 
 
+@pytest.mark.parametrize("value", ["", "  "])
+def test_an_empty_resource_profile_is_reported(value: str) -> None:
+    """The example leaves it blank for a local stack; a box left that way would
+    be refused by deploy.sh after the gate had passed it."""
+    actual = _deployable_env()
+    actual["RESOURCE_PROFILE"] = value
+
+    assert collect_problems(EXAMPLE, actual) == [
+        "RESOURCE_PROFILE is empty: a deploy needs it set"
+    ]
+
+
 def test_shipped_env_example_is_rejected_as_a_deploy_config() -> None:
     """
     The example is a working local config, never a deployable one. Copying it
@@ -194,6 +209,7 @@ def test_shipped_env_example_is_rejected_as_a_deploy_config() -> None:
         "JWT_USER_RESET_PASSWORD_SECRET_KEY",
         "SENTRY_DSN",
         "PUBLIC_BASE_URL",
+        "RESOURCE_PROFILE",
     } <= flagged
     assert "S3_ACCESS_KEY_ID" not in flagged
     assert "S3_SECRET_ACCESS_KEY" not in flagged
@@ -337,3 +353,48 @@ def test_debug_enabled_behind_an_inline_comment_is_reported(tmp_path: Path) -> N
     problems = collect_problems({"DEBUG": "false"}, parse_env(env_file))
 
     assert problems == ["DEBUG=true is not allowed outside local development"]
+
+
+def test_get_prints_a_value_the_way_compose_reads_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """deploy.sh and the Makefile pick the resource profile with this; a quote
+    or a comment left on the value would name a profile that does not exist."""
+    (tmp_path / ".env").write_text('DEBUG=false\nRESOURCE_PROFILE="stage"  # 4 CPU\n')
+    monkeypatch.chdir(tmp_path)
+
+    main(["--get", "RESOURCE_PROFILE"])
+
+    assert capsys.readouterr().out == "stage\n"
+
+
+def test_get_prints_an_empty_line_for_an_absent_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".env").write_text("DEBUG=false\n")
+    monkeypatch.chdir(tmp_path)
+
+    main(["--get", "RESOURCE_PROFILE"])
+
+    assert capsys.readouterr().out == "\n"
+
+
+def test_get_fails_without_an_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Makefile hides this error and reads no profile, which is what the dev
+    stack without a .env needs; deploy.sh stops at the gate before it."""
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as raised:
+        main(["--get", "RESOURCE_PROFILE"])
+
+    assert raised.value.code == 1
+
+
+@pytest.mark.parametrize("argv", [["--get"], ["--get", "A", "B"], ["--set", "A"]])
+def test_an_unknown_invocation_is_a_usage_error(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(argv)
+
+    assert raised.value.code == 2

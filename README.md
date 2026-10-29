@@ -230,6 +230,19 @@ never writes `.env` and leaves the checkout where CD put it. Providers that hand
 over a root password, a non-root user or a non-standard SSH port are covered in
 [infra/ansible/README.md](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md).
 
+Set `RESOURCE_PROFILE` in that `.env` to the profile sized for the box:
+`infra/resources/stage` (4 CPU / 8 GB) or `infra/resources/production`
+(8 CPU / 16 GB), or a new directory for another size. A profile is a compose
+overlay with the container limits, the gunicorn worker count and Redis
+`maxmemory`, plus the PostgreSQL sizing the postgres image is built with; the
+deploy refuses to run without one, the `make` compose targets pick it up from
+`.env`, and a plain `docker compose up` on the box has to pass the overlay
+itself (`docs/readme/infra.md`, *Resource profiles*). The deploy gate
+(`scripts/ops/check_env.py`) requires every key of `.env.example`, so a key
+added there - `RESOURCE_PROFILE` included, on a box deployed before profiles
+existed - is written into every deployed server's `.env` before the change
+that adds it is merged, or the next deploy refuses to start.
+
 On Kubernetes or a PaaS the platform owns the machine: delete `infra/ansible`
 ([what else to remove](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md#not-on-a-vps)).
 

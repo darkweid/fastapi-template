@@ -1,14 +1,20 @@
+import os
 from pathlib import Path
 import re
 import shlex
+import shutil
+import subprocess
+import sys
 from typing import Any
 
+import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SCRIPT = PROJECT_ROOT / "infra/deploy/deploy.sh"
 NGINX_DIR = PROJECT_ROOT / "infra/nginx"
 ROLL_WORKERS = '"${COMPOSE[@]}" up -d --no-deps --wait worker scheduler'
+NGINX_TEST = '"${COMPOSE[@]}" run --rm --no-deps nginx nginx -t'
 
 
 def _script() -> str:
@@ -76,7 +82,7 @@ def test_the_nginx_test_goes_through_the_service_entrypoint() -> None:
     nginx -t fails on the missing file instead of testing the config."""
     script = _script()
 
-    assert '"${COMPOSE[@]}" run --rm --no-deps nginx nginx -t' in script
+    assert NGINX_TEST in script
     assert "--entrypoint" not in script
 
 
@@ -285,3 +291,134 @@ def test_postgres_reads_the_shipped_config_at_every_start() -> None:
     assert "docker-entrypoint-initdb.d" not in dockerfile
     assert not [volume for volume in volumes if "postgresql.conf" in volume]
     assert '"${COMPOSE[@]}" build --pull postgres' in _script()
+
+
+def _profile_loading() -> str:
+    """The part of deploy.sh that reads RESOURCE_PROFILE, runnable on its own."""
+    script = _script()
+    compose = script[script.index("COMPOSE=(") :]
+    compose = compose[: compose.index("\n\n")]
+    start = script.index("python3 scripts/ops/check_env.py\n") + len(
+        "python3 scripts/ops/check_env.py\n"
+    )
+    loading = script[start : script.index("# The nginx configuration this checkout")]
+    return (
+        f"set -euo pipefail\n{compose}\n{loading}\n" 'printf "%s\\n" "${COMPOSE[@]}"\n'
+    )
+
+
+def _write_profile(
+    root: Path, name: str, sizing: str = "max_connections = 100\n"
+) -> None:
+    (root / "infra/resources" / name / "postgres").mkdir(parents=True)
+    (root / "infra/resources" / name / "compose.yml").write_text("services: {}\n")
+    (root / "infra/resources" / name / "postgres/sizing.conf").write_text(sizing)
+
+
+def _load_profile(root: Path, env_line: str) -> subprocess.CompletedProcess[str]:
+    (root / ".env").write_text(f"DEBUG=false\n{env_line}\n")
+    # deploy.sh calls the script by its path in the checkout.
+    (root / "scripts/ops").mkdir(parents=True, exist_ok=True)
+    shutil.copy(PROJECT_ROOT / "scripts/ops/check_env.py", root / "scripts/ops")
+    return subprocess.run(  # noqa: S603 # nosec B603
+        ["bash", "-c", _profile_loading()],  # noqa: S607
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            # check_env.py runs on the interpreter running this suite.
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}",
+            "PYTHONPATH": str(PROJECT_ROOT),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("env_line", "refusal"),
+    [
+        ("RESOURCE_PROFILE=", "is not a profile name"),
+        ("RESOURCE_PROFILE= # set me", "is not a profile name"),
+        ("RESOURCE_PROFILE=../stage", "is not a profile name"),
+        ("RESOURCE_PROFILE=Stage", "is not a profile name"),
+        (
+            "RESOURCE_PROFILE=missing",
+            "infra/resources/missing/compose.yml does not exist",
+        ),
+        ("RESOURCE_PROFILE=partial", "partial/postgres/sizing.conf does not exist"),
+    ],
+)
+def test_a_deploy_refuses_a_profile_that_sizes_nothing(
+    tmp_path: Path, env_line: str, refusal: str
+) -> None:
+    """Without a profile the box would run with the local default sizing, and a
+    path in the name would load an overlay from anywhere on the box."""
+    (tmp_path / "infra/resources/partial").mkdir(parents=True)
+    (tmp_path / "infra/resources/partial/compose.yml").write_text("services: {}\n")
+
+    result = _load_profile(tmp_path, env_line)
+
+    assert result.returncode == 1
+    assert refusal in result.stdout
+
+
+@pytest.mark.parametrize(
+    "env_line", ["RESOURCE_PROFILE=stage", 'RESOURCE_PROFILE="stage"  # 4 CPU / 8 GB']
+)
+def test_a_deploy_loads_the_overlay_its_profile_names(
+    tmp_path: Path, env_line: str
+) -> None:
+    _write_profile(tmp_path, "stage")
+
+    result = _load_profile(tmp_path, env_line)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    # The status line first.
+    assert result.stdout.splitlines()[1:] == [
+        "docker",
+        "compose",
+        "--env-file",
+        ".env",
+        "-f",
+        "infra/docker-compose.yml",
+        "-f",
+        "infra/resources/stage/compose.yml",
+    ]
+
+
+def test_the_profile_is_read_after_the_gate_refused_an_empty_one() -> None:
+    """The name is read the way compose reads .env, by the gate's own parser,
+    and only once the gate has refused an empty value with its own message."""
+    script = _script()
+
+    assert script.index("python3 scripts/ops/check_env.py\n") < script.index(
+        '"$(python3 scripts/ops/check_env.py --get RESOURCE_PROFILE)"'
+    )
+    assert "python3 -c" not in script
+
+
+def test_every_compose_call_sees_the_profile_overlay() -> None:
+    """A call made before the overlay is appended would create containers with
+    the local default sizing."""
+    script = _script()
+    appended = script.index('COMPOSE+=(-f "${RESOURCE_PROFILE_DIR}/compose.yml")')
+
+    assert appended < script.index(NGINX_TEST)
+    assert appended < script.index('RUNNING_APP="$(serving_app_ids)"')
+    top_level_calls = [
+        match.start() for match in re.finditer(r'^"\$\{COMPOSE\[@\]\}"', script, re.M)
+    ]
+    assert top_level_calls
+    assert appended < min(top_level_calls)
+
+
+def test_the_app_takes_its_worker_count_from_the_environment() -> None:
+    """A -w on the command line wins over WEB_CONCURRENCY, so a profile could
+    never size the app."""
+    argv = shlex.split(_compose_service("app")["command"])
+
+    assert "-w" not in argv
+    assert "--workers" not in argv
+    assert not [arg for arg in argv if arg.startswith("--workers=")]
+    assert _compose_service("app")["environment"]["WEB_CONCURRENCY"].isdigit()
