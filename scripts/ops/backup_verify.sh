@@ -76,7 +76,8 @@ cleanup() {
 }
 trap cleanup EXIT
 # A signal becomes an exit, so the EXIT trap removes what was created.
-trap 'exit 143' INT TERM
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 docker volume create "$VOLUME" >/dev/null
 # A fresh volume belongs to root; the restore runs as postgres.

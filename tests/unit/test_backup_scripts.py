@@ -360,6 +360,21 @@ def test_a_restore_reports_success_only_after_recovery_ends() -> None:
     assert up < waits < following
 
 
+def test_a_restart_loop_tells_the_operator_how_to_stop_it() -> None:
+    """Under `restart: always` a failed recovery keeps restarting after the script
+    exits, so the message has to say how to stop it and what to try next."""
+    script = (PROJECT_ROOT / "scripts/ops/backup_restore_wait.sh").read_text()
+    assert "docker compose stop postgres" in script
+    assert "with an earlier target" in script
+
+
+def test_a_cancelled_drill_exits_with_the_signal_convention() -> None:
+    """Ctrl-C reads as 130 and SIGTERM as 143 to whatever ran the drill."""
+    script = (PROJECT_ROOT / "scripts/ops/backup_verify.sh").read_text()
+    assert "trap 'exit 130' INT" in script
+    assert "trap 'exit 143' TERM" in script
+
+
 def test_a_refused_restore_builds_nothing() -> None:
     result = subprocess.run(
         ["make", "-n", "backup-restore"],
