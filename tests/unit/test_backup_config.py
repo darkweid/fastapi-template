@@ -69,5 +69,7 @@ def test_the_image_installs_certificates_and_verifies_supercronic() -> None:
     assert re.search(
         r"install -y --no-install-recommends[^\n]*ca-certificates", dockerfile
     )
-    assert "pgbackrest" in dockerfile
+    assert re.search(
+        r"install -y --no-install-recommends[^\n]*\bpgbackrest\b", dockerfile
+    )
     assert "sha1sum -c" in dockerfile
