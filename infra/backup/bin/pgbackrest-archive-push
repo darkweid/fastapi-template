@@ -10,7 +10,8 @@ case "$enabled" in
 esac
 
 # Until deploy.sh creates the stanza, archiving fails, and the image's init
-# server cannot stop on a fresh volume. WAL from before the stanza has no backup to replay onto.
+# server cannot stop on a fresh volume. WAL from before the stanza has no
+# backup to replay onto.
 [ -f "${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}/stanza-ready" ] || exit 0
 
 exec pgbackrest --stanza=main archive-push "$1"

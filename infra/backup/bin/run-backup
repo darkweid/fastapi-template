@@ -4,7 +4,7 @@ set -euo pipefail
 
 STATE_DIR="${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}"
 
-ping() {
+heartbeat() {
     [ -n "${BACKUP_HEARTBEAT_URL:-}" ] || return 0
     curl -fsS -m 10 --retry 3 -o /dev/null "${BACKUP_HEARTBEAT_URL}$1" || true
 }
@@ -17,11 +17,12 @@ case "${1:-}" in
         ;;
 esac
 
-ping /start
+mkdir -p "$STATE_DIR"
+heartbeat /start
 if pgbackrest --stanza=main --type="$1" backup; then
     rm -f "$STATE_DIR/gap-open"
-    ping ""
+    heartbeat ""
 else
-    ping /fail
+    heartbeat /fail
     exit 1
 fi

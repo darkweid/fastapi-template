@@ -47,9 +47,12 @@ class Sandbox:
         self.state.mkdir(parents=True, exist_ok=True)
         (self.state / "stanza-ready").touch()
 
-    def set_dropped_count(self, count: int) -> None:
+    def set_dropped_count(self, count: int, inode: int | None = None) -> None:
+        """Stores the count against the current log's inode unless one is given."""
         self.state.mkdir(parents=True, exist_ok=True)
-        (self.state / "dropped-count").write_text(str(count))
+        if inode is None:
+            inode = (self.logs / "main-archive-push-async.log").stat().st_ino
+        (self.state / "dropped-count").write_text(f"{inode} {count}\n")
 
     def write_drops(self, count: int) -> None:
         lines = [
@@ -77,7 +80,7 @@ class Sandbox:
         return [line.split()[-1] for line in _lines(self.curl_log)]
 
     def stored_count(self) -> int:
-        return int((self.state / "dropped-count").read_text())
+        return int((self.state / "dropped-count").read_text().split()[1])
 
     def gap_open(self) -> bool:
         return (self.state / "gap-open").exists()
@@ -208,6 +211,28 @@ def test_a_truncated_log_resets_the_count(sandbox: Sandbox) -> None:
     sandbox.write_drops(2)
     assert sandbox.run("check-archive").returncode == 0
     assert "--stanza=main --type=diff backup" in sandbox.pgbackrest_calls()
+
+
+@pytest.mark.parametrize("content", ["", "garbage", "12 x", "5"])
+def test_an_unreadable_count_does_not_blind_the_check(
+    sandbox: Sandbox, content: str
+) -> None:
+    """A state file emptied by a full disk or a crash must not hide later drops."""
+    sandbox.write_drops(2)
+    sandbox.state.mkdir()
+    (sandbox.state / "dropped-count").write_text(content)
+    assert sandbox.run("check-archive").returncode == 0
+    assert "--stanza=main --type=diff backup" in sandbox.pgbackrest_calls()
+    assert sandbox.stored_count() == 2
+
+
+def test_a_rotated_log_counts_its_drops_as_new(sandbox: Sandbox) -> None:
+    """A fresh log with fewer drops than the old count must not hide them."""
+    sandbox.write_drops(1)
+    sandbox.set_dropped_count(5, inode=1)
+    assert sandbox.run("check-archive").returncode == 0
+    assert "--stanza=main --type=diff backup" in sandbox.pgbackrest_calls()
+    assert sandbox.stored_count() == 1
 
 
 def test_an_open_gap_keeps_the_heartbeat_red(sandbox: Sandbox) -> None:
