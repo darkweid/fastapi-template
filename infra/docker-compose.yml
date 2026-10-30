@@ -43,8 +43,20 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/18/main
+      # Read by pgbackrest-archive-push, which postgresql.conf's archive_command
+      # runs; with backups off it returns success without contacting anything.
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-false}
+      PGBACKREST_ARCHIVE_PUSH_QUEUE_MAX: ${BACKUP_ARCHIVE_QUEUE_MAX:-4GiB}
+      # POSTGRES_USER set means the image creates no `postgres` role.
+      PGBACKREST_PG1_USER: ${POSTGRES_USER}
+    # Repository keys live here and only here (and in the backup sidecar), never
+    # in the app's .env. Absent while backups are off.
+    env_file:
+      - path: ../.env.backup
+        required: false
     volumes:
       - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
     networks:
       - app-network
     deploy:
@@ -52,6 +64,38 @@ services:
         limits:
           cpus: '1'
           memory: 1G
+
+  # Scheduled pgBackRest backups and archive checks. It runs the postgres image
+  # beside the server, on the same data volume and unix socket, because
+  # pgBackRest backs up from the data directory. No healthcheck: supercronic has
+  # none, the heartbeat URLs in .env.backup are the health signal. Started with
+  # COMPOSE_PROFILES=backup.
+  backup:
+    container_name: template-backup
+    image: template-postgres:18
+    profiles: [backup]
+    user: postgres
+    command: ["supercronic", "/etc/pgbackrest/crontab"]
+    restart: unless-stopped
+    env_file:
+      - path: ../.env.backup
+        required: false
+    environment:
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-false}
+      PGBACKREST_PG1_USER: ${POSTGRES_USER}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
 
   # No container_name and no published port: infra/deploy/deploy.sh rolls the
   # app by starting a second container of this service beside the serving one
@@ -235,6 +279,9 @@ volumes:
     name: template-postgres-data
   redis-data:
     name: template-redis-data
+  # The unix socket pgBackRest in the backup sidecar connects through.
+  postgres-socket:
+    name: template-postgres-socket
   nginx-upstream:
     name: template-nginx-upstream
 

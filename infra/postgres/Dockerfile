@@ -55,5 +55,8 @@ RUN --mount=type=bind,source=infra/${RESOURCE_PROFILE:+resources/$RESOURCE_PROFI
 COPY --chmod=0644 infra/backup/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
 COPY --chmod=0755 infra/backup/bin/ /usr/local/bin/
 COPY --chmod=0644 infra/backup/crontab /etc/pgbackrest/crontab
+# COPY --chmod applies 0644 to the directory it creates too, which nobody but
+# root could then enter.
+RUN chmod 0755 /etc/pgbackrest
 
 CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]

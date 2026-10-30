@@ -71,7 +71,7 @@ def test_redis_gets_its_own_password_and_no_other_secret() -> None:
 RESOURCES_DIR = PROJECT_ROOT / "infra/resources"
 POSTGRES_CONF = PROJECT_ROOT / "infra/postgres/postgresql.conf"
 PROFILE_CONF_DIR = "/etc/postgresql/conf.d"
-SIZED_SERVICES = {"postgres", "app", "worker", "scheduler", "nginx", "redis"}
+SIZED_SERVICES = {"postgres", "app", "worker", "scheduler", "nginx", "redis", "backup"}
 
 
 def _profiles() -> list[Path]:
@@ -207,3 +207,81 @@ def test_postgres_reads_the_profile_last() -> None:
     assert directives[-1] == f"include_dir '{PROFILE_CONF_DIR}'"
     # The server refuses to start on an include_dir that does not exist.
     assert f"mkdir -p {PROFILE_CONF_DIR}" in dockerfile
+
+
+BACKUP_ENV_FILE = "../.env.backup"
+
+
+def _env_file_paths(service: dict[str, Any]) -> list[str]:
+    entries = service.get("env_file", [])
+    if isinstance(entries, str):
+        entries = [entries]
+    return [entry if isinstance(entry, str) else entry["path"] for entry in entries]
+
+
+def test_only_postgres_and_backup_load_the_backup_env() -> None:
+    """The repository keys and the cipher passphrase must not reach the app,
+    worker or scheduler, which run user-facing code."""
+    loaders = {
+        name
+        for name, service in _compose()["services"].items()
+        if BACKUP_ENV_FILE in _env_file_paths(service)
+    }
+
+    assert loaders == {"postgres", "backup"}
+
+
+def test_the_backup_env_is_optional() -> None:
+    """A box with backups off has no .env.backup; a required file would stop
+    compose from starting the stack at all."""
+    for name in ("postgres", "backup"):
+        entries = _compose()["services"][name]["env_file"]
+        entry = next(e for e in entries if e["path"] == BACKUP_ENV_FILE)
+
+        assert entry["required"] is False, name
+
+
+def test_the_backup_sidecar_runs_only_in_its_profile() -> None:
+    """Without the profile a plain `up` would start a container that cannot
+    reach a repository."""
+    assert _compose()["services"]["backup"]["profiles"] == ["backup"]
+
+
+def test_the_sidecar_sees_the_same_data_and_socket_as_postgres() -> None:
+    """pgBackRest reads the data directory and talks to the server over the
+    unix socket, so both volumes are shared."""
+    services = _compose()["services"]
+    shared = {
+        "postgres-data:/var/lib/postgresql",
+        "postgres-socket:/var/run/postgresql",
+    }
+
+    assert shared <= set(services["postgres"]["volumes"])
+    assert set(services["backup"]["volumes"]) == shared
+    assert services["backup"]["user"] == "postgres"
+    assert (
+        services["backup"]["depends_on"]["postgres"]["condition"] == "service_healthy"
+    )
+
+
+def test_the_sidecar_runs_the_postgres_image() -> None:
+    """The backup tool must match the server's version and extensions, so the
+    sidecar is the same image and never builds its own."""
+    services = _compose()["services"]
+
+    assert services["backup"]["image"] == services["postgres"]["image"]
+    assert "build" not in services["backup"]
+
+
+def test_pgbackrest_logs_in_as_the_database_owner() -> None:
+    """With POSTGRES_USER set the image creates no `postgres` role, so
+    pgBackRest's default login would be refused."""
+    for name in ("postgres", "backup"):
+        environment = _compose()["services"][name]["environment"]
+
+        assert environment["PGBACKREST_PG1_USER"] == "${POSTGRES_USER}", name
+
+
+def test_the_sidecar_has_no_healthcheck() -> None:
+    """supercronic exposes none; the heartbeats are the health signal."""
+    assert "healthcheck" not in _compose()["services"]["backup"]
