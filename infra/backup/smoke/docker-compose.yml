@@ -1,0 +1,85 @@
+# End-to-end check of the backup chain against a local S3 (scripts/ops/backup_smoke.sh,
+# `make test-backup`): stanza, a full backup from a sidecar-shaped container,
+# archived WAL, verification restores to the latest point and to a point in time,
+# and a live restore onto a fresh volume.
+#
+# A file of its own rather than an overlay on infra/docker-compose.yml: that one
+# names its containers and pins a subnet, which would collide with a stack
+# running on the same daemon. Nothing here claims a global name; the script
+# passes a project name of its own (`-p backup-smoke-<suffix>`) and every run
+# gets its own default network and volumes.
+#
+# MinIO no longer publishes community images; this is the pgsty rebuild of the
+# upstream server and client, pinned by digest. pgBackRest's S3 driver speaks
+# only TLS, so the server runs on a self-signed certificate the script generates.
+services:
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
+    command: ["server", "/data", "--address", ":9000", "--certs-dir", "/certs"]
+    environment:
+      MINIO_ROOT_USER: ${SMOKE_S3_KEY}
+      MINIO_ROOT_PASSWORD: ${SMOKE_S3_KEY_SECRET}
+    volumes:
+      - ${SMOKE_CERTS_DIR}:/certs:ro
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "https://127.0.0.1:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mc:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
+    profiles: [tools]
+    environment:
+      MC_HOST_smoke: https://${SMOKE_S3_KEY}:${SMOKE_S3_KEY_SECRET}@minio:9000
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  postgres:
+    build:
+      context: ../../..
+      dockerfile: infra/postgres/Dockerfile
+    image: ${SMOKE_POSTGRES_IMAGE}
+    pull_policy: never
+    env_file: ${SMOKE_BACKUP_ENV_FILE}
+    environment:
+      POSTGRES_USER: smoke
+      POSTGRES_PASSWORD: smoke
+      POSTGRES_DB: smoke
+      PGDATA: /var/lib/postgresql/18/main
+      BACKUP_ENABLED: "true"
+      PGBACKREST_PG1_USER: smoke
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U smoke -d smoke"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # The deployed sidecar's shape (infra/docker-compose.yml, service backup): a
+  # second container on the server's data and socket volumes, so the scheduled
+  # backups' path is what the smoke backs up through.
+  backup:
+    image: ${SMOKE_POSTGRES_IMAGE}
+    pull_policy: never
+    profiles: [tools]
+    user: postgres
+    env_file: ${SMOKE_BACKUP_ENV_FILE}
+    environment:
+      BACKUP_ENABLED: "true"
+      PGBACKREST_PG1_USER: smoke
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
+
+volumes:
+  minio-data:
+  postgres-data:
+  postgres-socket:

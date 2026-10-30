@@ -7,9 +7,11 @@ import pytest
 from scripts.ops.check_env import (
     PLACEHOLDER_MARKER,
     SECRET_KEY_PATTERN,
+    collect_backup_problems,
     collect_problems,
     main,
     parse_env,
+    parse_raw_env,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -215,12 +217,13 @@ def test_shipped_env_example_is_rejected_as_a_deploy_config() -> None:
     assert "S3_SECRET_ACCESS_KEY" not in flagged
 
 
-def test_every_secret_in_the_example_carries_the_placeholder_marker() -> None:
+@pytest.mark.parametrize("name", [".env.example", ".env.backup.example"])
+def test_every_secret_in_the_example_carries_the_placeholder_marker(name: str) -> None:
     """
     Equality with .env.example is not enough on its own: editing the example is
     the first thing a fork does, and that would silently disable the check.
     """
-    example = parse_env(REPO_ROOT / ".env.example")
+    example = parse_env(REPO_ROOT / name)
 
     unmarked = [
         key
@@ -392,9 +395,434 @@ def test_get_fails_without_an_env_file(
     assert raised.value.code == 1
 
 
-@pytest.mark.parametrize("argv", [["--get"], ["--get", "A", "B"], ["--set", "A"]])
+@pytest.mark.parametrize(
+    "argv", [["--get"], ["--get", "A", "B"], ["--set", "A"], ["--enabled"]]
+)
 def test_an_unknown_invocation_is_a_usage_error(argv: list[str]) -> None:
     with pytest.raises(SystemExit) as raised:
         main(argv)
 
     assert raised.value.code == 2
+
+
+BACKUP_EXAMPLE = {
+    "PGBACKREST_REPO1_S3_BUCKET": "",
+    "PGBACKREST_REPO1_S3_ENDPOINT": "",
+    "PGBACKREST_REPO1_S3_REGION": "",
+    "PGBACKREST_REPO1_S3_KEY": "backup-s3-key-not-real",
+    "PGBACKREST_REPO1_S3_KEY_SECRET": "backup-s3-secret-not-real",
+    "PGBACKREST_REPO1_CIPHER_PASS": "backup-cipher-pass-not-real",
+    "BACKUP_HEARTBEAT_URL": "",
+    "BACKUP_ARCHIVE_HEARTBEAT_URL": "",
+}
+
+
+def _deployable_backup_env() -> dict[str, str]:
+    return {
+        "PGBACKREST_REPO1_S3_BUCKET": "app-backups",
+        "PGBACKREST_REPO1_S3_ENDPOINT": "nbg1.your-objectstorage.com",
+        "PGBACKREST_REPO1_S3_REGION": "nbg1",
+        "PGBACKREST_REPO1_S3_KEY": "backup-access-key-id",
+        "PGBACKREST_REPO1_S3_KEY_SECRET": "a-real-looking-backup-secret-value",
+        "PGBACKREST_REPO1_CIPHER_PASS": "0123456789abcdef" * 4,
+        "BACKUP_HEARTBEAT_URL": "https://ping.example/backup",
+        "BACKUP_ARCHIVE_HEARTBEAT_URL": "https://ping.example/archive",
+    }
+
+
+def _write_deploy_box(
+    root: Path, *, backup_enabled: str, backup_env: dict[str, str] | None
+) -> None:
+    """A checkout as deploy.sh sees it: both examples, .env, and .env.backup
+    unless `backup_env` is None."""
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": backup_enabled,
+        "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB",
+    }
+    (root / ".env.example").write_text(_dotenv(example))
+    (root / ".env").write_text(_dotenv(actual))
+    (root / ".env.backup.example").write_text(_dotenv(BACKUP_EXAMPLE))
+    if backup_env is not None:
+        (root / ".env.backup").write_text(_dotenv(backup_env))
+
+
+def _dotenv(entries: dict[str, str]) -> str:
+    return "".join(f"{key}={value}\n" for key, value in entries.items())
+
+
+def _gate_output(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> tuple[int | str | None, str]:
+    monkeypatch.chdir(root)
+    try:
+        main([])
+    except SystemExit as raised:
+        return raised.code, capsys.readouterr().out
+    return 0, capsys.readouterr().out
+
+
+def test_backup_off_ignores_a_missing_backup_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every box without continuous backup has no .env.backup at all."""
+    _write_deploy_box(tmp_path, backup_enabled="false", backup_env=None)
+
+    code, _ = _gate_output(tmp_path, monkeypatch, capsys)
+
+    assert code == 0
+
+
+def test_backup_on_requires_the_backup_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """compose loads .env.backup with required: false, so without the gate a
+    box would start archiving with no bucket and no credentials."""
+    _write_deploy_box(tmp_path, backup_enabled="true", backup_env=None)
+
+    code, output = _gate_output(tmp_path, monkeypatch, capsys)
+
+    assert code == 1
+    assert output.startswith(".env.backup:")
+
+
+def test_backup_on_with_a_filled_backup_file_passes_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_deploy_box(
+        tmp_path, backup_enabled="yes", backup_env=_deployable_backup_env()
+    )
+
+    code, _ = _gate_output(tmp_path, monkeypatch, capsys)
+
+    assert code == 0
+
+
+def test_backup_on_reads_the_backup_file_as_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """parse_env would strip these quotes, while `docker run --env-file` keeps
+    them in the bucket name."""
+    backup_env = {**_deployable_backup_env(), "PGBACKREST_REPO1_S3_BUCKET": '"bucket"'}
+    _write_deploy_box(tmp_path, backup_enabled="true", backup_env=backup_env)
+
+    code, output = _gate_output(tmp_path, monkeypatch, capsys)
+
+    assert code == 1
+    assert "PGBACKREST_REPO1_S3_BUCKET contains a quote" in output
+
+
+def test_deployable_backup_env_has_no_problems() -> None:
+    assert collect_backup_problems(BACKUP_EXAMPLE, _deployable_backup_env()) == []
+
+
+def test_missing_backup_keys_are_reported() -> None:
+    actual = _deployable_backup_env()
+    del actual["PGBACKREST_REPO1_S3_KEY"]
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == [
+        ".env.backup: missing keys: PGBACKREST_REPO1_S3_KEY"
+    ]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PGBACKREST_REPO1_S3_KEY",
+        "PGBACKREST_REPO1_S3_KEY_SECRET",
+        "PGBACKREST_REPO1_CIPHER_PASS",
+    ],
+)
+def test_backup_on_refuses_placeholder_backup_secrets(key: str) -> None:
+    shipped = parse_raw_env(REPO_ROOT / ".env.backup.example")
+    actual = {**_deployable_backup_env(), key: shipped[key]}
+
+    assert collect_backup_problems(shipped, actual) == [
+        f".env.backup: {key} still holds the placeholder value from "
+        ".env.backup.example"
+    ]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PGBACKREST_REPO1_S3_KEY",
+        "PGBACKREST_REPO1_S3_KEY_SECRET",
+        "PGBACKREST_REPO1_CIPHER_PASS",
+    ],
+)
+def test_a_backup_secret_equal_to_an_edited_example_is_refused(key: str) -> None:
+    """A fork that drops the marker from its example must not turn the copied
+    value into an accepted credential."""
+    secret = _deployable_backup_env()[key]
+    example = {**BACKUP_EXAMPLE, key: secret}
+
+    assert collect_backup_problems(example, _deployable_backup_env()) == [
+        f".env.backup: {key} still holds the placeholder value from "
+        ".env.backup.example"
+    ]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PGBACKREST_REPO1_S3_BUCKET",
+        "PGBACKREST_REPO1_S3_ENDPOINT",
+        "PGBACKREST_REPO1_S3_REGION",
+    ],
+)
+def test_backup_on_requires_bucket_endpoint_and_region(key: str) -> None:
+    actual = {**_deployable_backup_env(), key: ""}
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == [
+        f".env.backup: {key} is empty"
+    ]
+
+
+@pytest.mark.parametrize("value", ["", "  "])
+def test_backup_on_requires_a_queue_limit(value: str) -> None:
+    """An empty value reaches pgBackRest as no queue limit, and an unreachable
+    bucket then fills the disk with WAL until PostgreSQL stops."""
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "true",
+        "BACKUP_ARCHIVE_QUEUE_MAX": value,
+    }
+
+    assert collect_problems(example, actual) == [
+        "BACKUP_ARCHIVE_QUEUE_MAX is empty: BACKUP_ENABLED=true needs it set"
+    ]
+
+
+# Spellings pgBackRest 2.60 accepted when parsing archive-push-queue-max inside
+# the postgres image: units are binary whatever the spelling, case is ignored.
+@pytest.mark.parametrize(
+    "value",
+    [
+        "4GiB",
+        "16GB",
+        "16gb",
+        "16G",
+        "1024MiB",
+        "1024mb",
+        "16384M",
+        "1TiB",
+        "4PiB",
+        "17179869184",
+        "16777216",
+        "16MiB",
+    ],
+)
+def test_backup_on_accepts_a_queue_limit_pgbackrest_parses(value: str) -> None:
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "true",
+        "BACKUP_ARCHIVE_QUEUE_MAX": value,
+    }
+
+    assert collect_problems(example, actual) == []
+
+
+# Refused by pgBackRest 2.60 at option parsing ("16 GiB", "16G1B", "16Gi", "16.5GB",
+# "-1GB", "1EB", "5PB"), or accepted by it but dropping every WAL segment
+# ("0", "16B", "1KB": a queue smaller than one 16 MiB segment).
+@pytest.mark.parametrize(
+    "value",
+    [
+        "16 GiB",
+        "16G1B",
+        "16Gi",
+        "16mi",
+        "16.5GB",
+        "-1GB",
+        "+16GB",
+        "1EB",
+        "GB",
+        "16iB",
+        "0x10",
+        "5PB",
+        "4097TB",
+        "0",
+        "16B",
+        "1KB",
+        "16777215",
+    ],
+)
+def test_backup_on_refuses_a_queue_limit_that_protects_nothing(value: str) -> None:
+    """pgBackRest fails a malformed limit at option parsing, before the async
+    process starts, so nothing bounds the queue and pg_wal fills the disk."""
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "true",
+        "BACKUP_ARCHIVE_QUEUE_MAX": value,
+    }
+
+    assert collect_problems(example, actual) == [
+        f"BACKUP_ARCHIVE_QUEUE_MAX={value} is not a size pgBackRest accepts: "
+        "a whole number with an optional unit (MiB, GiB, TiB; MB, GB, TB read the "
+        "same), between 16MiB (one WAL segment) and 4PiB"
+    ]
+
+
+def test_backup_off_ignores_a_malformed_queue_limit() -> None:
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "false",
+        "BACKUP_ARCHIVE_QUEUE_MAX": "16 GiB",
+    }
+
+    assert collect_problems(example, actual) == []
+
+
+def test_backup_off_allows_an_empty_queue_limit() -> None:
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "false",
+        "BACKUP_ARCHIVE_QUEUE_MAX": "",
+    }
+
+    assert collect_problems(example, actual) == []
+
+
+def test_backup_on_accepts_empty_heartbeat_urls() -> None:
+    actual = {
+        **_deployable_backup_env(),
+        "BACKUP_HEARTBEAT_URL": "",
+        "BACKUP_ARCHIVE_HEARTBEAT_URL": "",
+    }
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == []
+
+
+def test_backup_secrets_never_appear_in_the_shared_example() -> None:
+    """.env reaches the app, worker and scheduler; a pgBackRest credential
+    there is one the application could leak."""
+    example = parse_env(REPO_ROOT / ".env.example")
+
+    assert [key for key in example if key.startswith("PGBACKREST_")] == []
+
+
+@pytest.mark.parametrize(
+    ("value", "problem"),
+    [
+        ("", "BACKUP_ENABLED is empty: set true or false"),
+        ("maybe", "BACKUP_ENABLED=maybe is not a boolean"),
+    ],
+)
+def test_backup_enabled_must_be_a_boolean(value: str, problem: str) -> None:
+    """archive-push and deploy.sh each read the flag on their own; a value that
+    is neither true nor false would leave them to disagree."""
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": value,
+        "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB",
+    }
+
+    assert collect_problems(example, actual) == [problem]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param('"app-backups"', id="double-quote"),
+        pytest.param("'app-backups'", id="single-quote"),
+        pytest.param("app$backups", id="dollar"),
+        pytest.param("app-backups # main", id="hash"),
+    ],
+)
+def test_backup_values_refuse_quotes_dollars_and_hashes(value: str) -> None:
+    actual = {**_deployable_backup_env(), "PGBACKREST_REPO1_S3_BUCKET": value}
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == [
+        '.env.backup: PGBACKREST_REPO1_S3_BUCKET contains a quote, "$" or "#", '
+        "which compose and docker read differently"
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("0123456789abcdef" * 2 + "0", id="hex-33"),
+        pytest.param("A" * 32, id="letters-32"),
+    ],
+)
+def test_the_cipher_pass_accepts_long_alphanumeric_values(value: str) -> None:
+    actual = {**_deployable_backup_env(), "PGBACKREST_REPO1_CIPHER_PASS": value}
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("a" * 31, id="short"),
+        pytest.param("0123456789abcdef0123456789abcde-", id="punctuation"),
+        pytest.param("correct horse battery staple again", id="spaces"),
+    ],
+)
+def test_the_cipher_pass_is_long_and_alphanumeric(value: str) -> None:
+    actual = {**_deployable_backup_env(), "PGBACKREST_REPO1_CIPHER_PASS": value}
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == [
+        ".env.backup: PGBACKREST_REPO1_CIPHER_PASS must be at least 32 letters and "
+        "digits (openssl rand -hex 32)"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "printed"),
+    [("yes", "true\n"), ("off", "false\n"), ("TRUE", "true\n")],
+)
+def test_enabled_flag_prints_the_parsed_boolean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    value: str,
+    printed: str,
+) -> None:
+    (tmp_path / ".env").write_text(f"BACKUP_ENABLED={value}\n")
+    monkeypatch.chdir(tmp_path)
+
+    main(["--enabled", "BACKUP_ENABLED"])
+
+    assert capsys.readouterr().out == printed
+
+
+@pytest.mark.parametrize("content", ["BACKUP_ENABLED=maybe\n", "DEBUG=false\n"])
+def test_enabled_flag_fails_on_a_value_that_is_not_a_boolean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    """deploy.sh would otherwise read an unparsed value as "off" and skip the
+    backup steps on a box that asked for them."""
+    (tmp_path / ".env").write_text(content)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as raised:
+        main(["--enabled", "BACKUP_ENABLED"])
+
+    assert raised.value.code == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("https://nbg1.your-objectstorage.com", id="scheme"),
+        pytest.param("nbg1.your-objectstorage.com/app-backups", id="path"),
+    ],
+)
+def test_backup_endpoint_must_be_a_bare_host(value: str) -> None:
+    """A scheme or a path passes as a non-empty value and fails only at
+    stanza-create, after PostgreSQL restarted with archiving on."""
+    actual = {**_deployable_backup_env(), "PGBACKREST_REPO1_S3_ENDPOINT": value}
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == [
+        ".env.backup: PGBACKREST_REPO1_S3_ENDPOINT must be a host without scheme "
+        "or path (nbg1.your-objectstorage.com)"
+    ]

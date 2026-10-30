@@ -1,0 +1,20 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-noncurrent-backup-versions",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": ""
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 10
+      },
+      "Expiration": {
+        "ExpiredObjectDeleteMarker": true
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    }
+  ]
+}

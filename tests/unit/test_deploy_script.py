@@ -301,7 +301,7 @@ def _profile_loading() -> str:
     start = script.index("python3 scripts/ops/check_env.py\n") + len(
         "python3 scripts/ops/check_env.py\n"
     )
-    loading = script[start : script.index("# The nginx configuration this checkout")]
+    loading = script[start : script.index("# BACKUP_ENABLED switches")]
     return (
         f"set -euo pipefail\n{compose}\n{loading}\n" 'printf "%s\\n" "${COMPOSE[@]}"\n'
     )
@@ -422,3 +422,96 @@ def test_the_app_takes_its_worker_count_from_the_environment() -> None:
     assert "--workers" not in argv
     assert not [arg for arg in argv if arg.startswith("--workers=")]
     assert _compose_service("app")["environment"]["WEB_CONCURRENCY"].isdigit()
+
+
+BACKUP_STANZA_CREATE = "pgbackrest --stanza=main stanza-create"
+BACKUP_MARKER_TOUCH = "touch /var/lib/postgresql/pgbackrest/state/stanza-ready"
+BACKUP_CHECK = "pgbackrest --stanza=main check"
+BACKUP_SIDECAR_UP = '"${COMPOSE[@]}" up -d --no-deps backup'
+
+
+def test_backups_are_checked_after_postgres_starts_and_before_migrations() -> None:
+    script = _script()
+
+    assert (
+        script.index('"${COMPOSE[@]}" up -d --wait postgres redis')
+        < script.index(BACKUP_STANZA_CREATE)
+        < script.index(BACKUP_CHECK)
+        < script.index(BACKUP_SIDECAR_UP)
+        < script.index("alembic upgrade head")
+    )
+
+
+def test_the_backup_steps_are_bounded() -> None:
+    """The outer timeout kills only the compose CLI; pgBackRest keeps running in
+    the container unless the inner timeout bounds it too."""
+    lines = _script().splitlines()
+
+    for step in (BACKUP_STANZA_CREATE, BACKUP_CHECK):
+        (line,) = (line for line in lines if step in line and "exec" in line)
+        command = line.strip().replace("if ! ", "")
+        assert command.startswith("timeout 300 ")
+        assert "postgres postgres timeout 280 pgbackrest" in command
+
+
+def test_pgbackrest_runs_as_postgres() -> None:
+    lines = [
+        line
+        for line in _script().splitlines()
+        if "pgbackrest " in line and "exec" in line
+    ]
+
+    assert lines
+    assert all("exec -T -u postgres postgres" in line for line in lines)
+
+
+def test_a_disabled_box_removes_the_sidecar() -> None:
+    script = _script()
+    removal = '"${COMPOSE[@]}" --profile backup rm -sf backup'
+
+    assert (
+        script.index('if [ "$BACKUP_ENABLED" = "true" ]; then\n  # A stanza')
+        < script.index(BACKUP_SIDECAR_UP)
+        < script.index("\nelse\n  # Removes a sidecar")
+        < script.index(removal)
+        < script.index("alembic upgrade head")
+    )
+
+
+def test_backup_enabled_is_read_through_the_gate() -> None:
+    script = _script()
+    read = (
+        'BACKUP_ENABLED="$(python3 scripts/ops/check_env.py --enabled BACKUP_ENABLED)"'
+    )
+
+    assert script.index("python3 scripts/ops/check_env.py\n") < script.index(read)
+    assert (
+        script.index(read)
+        < script.index("COMPOSE+=(--profile backup)")
+        < script.index("run --rm --no-deps nginx")
+    )
+
+
+def test_the_archive_marker_is_written_between_stanza_create_and_check() -> None:
+    """The archive wrapper ships WAL only once the marker exists, and check
+    forces a WAL switch that needs it shipped."""
+    script = _script()
+
+    assert (
+        script.index(BACKUP_STANZA_CREATE)
+        < script.index(BACKUP_MARKER_TOUCH)
+        < script.index(BACKUP_CHECK)
+    )
+
+
+def test_the_pgbackrest_directories_exist_before_the_stanza_is_created() -> None:
+    """A data volume that predates the image never gets the log directory, and
+    pgBackRest then turns file logging off."""
+    script = _script()
+
+    assert (
+        script.index("exec -T -u postgres postgres mkdir -p")
+        < script.index("pgbackrest/log")
+        < script.index(BACKUP_STANZA_CREATE)
+    )
+    assert "pgbackrest/spool" in script and "pgbackrest/state" in script

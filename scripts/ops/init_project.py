@@ -49,7 +49,7 @@ NAME_PREFIX = "template-"
 # the template moved on without this script; renaming the rest would leave one
 # container, image or volume colliding with every other fork on the host.
 NAME_PREFIX_COUNTS = {
-    COMPOSE_FILE: 14,
+    COMPOSE_FILE: 17,
     "infra/docker-compose.override.yml": 4,
     "infra/docker-compose.test.yml": 3,
     "infra/deploy/deploy.sh": 1,

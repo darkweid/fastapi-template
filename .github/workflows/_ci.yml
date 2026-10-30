@@ -449,7 +449,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U test -d test_db"
+          --health-cmd "pg_isready -h 127.0.0.1 -U test -d test_db"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -513,6 +513,30 @@ jobs:
         run: |
           export PATH="$PWD/.venv/bin:$PATH"
           pytest tests/integration tests/contract -m integration -v
+
+  # Backs up to a local MinIO and restores from it (scripts/ops/backup_smoke.sh):
+  # the stanza, a full backup from a sidecar-shaped container, archived WAL,
+  # verification restores to the latest point and to a point in time, and a live
+  # restore onto a fresh volume, on the postgres image every box runs.
+  # No secret: the S3 server, its keys and its certificate exist only for the
+  # run. The suffix keeps the compose project and image tag apart from any
+  # other run on the same daemon; the script removes all of it on exit.
+  backup-smoke:
+    name: Backup smoke
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Back up and restore end to end
+        shell: bash
+        env:
+          BACKUP_SMOKE_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: make test-backup
 
   bandit:
     name: Bandit
@@ -618,7 +642,7 @@ jobs:
   # failure or cancellation and nothing is recorded either.
   record-pass:
     name: Record passing tree
-    needs: [changes, lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
+    needs: [changes, lint, migration-heads, unit-tests, integration-tests, backup-smoke, bandit, pip-audit, gitleaks]
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.changes.outputs.verified != 'true' && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -641,7 +665,7 @@ jobs:
   # human reaches for when they mean production.
   build-and-push:
     name: Build & push image
-    needs: [changes, lint, migration-heads, unit-tests, integration-tests, bandit, pip-audit, gitleaks]
+    needs: [changes, lint, migration-heads, unit-tests, integration-tests, backup-smoke, bandit, pip-audit, gitleaks]
     # Branch and event filtering happens in the caller; here the decision arrives
     # as a single input so stage and prod share one implementation.
     # Checks skipped by a gate count as passed; the explicit status test is what

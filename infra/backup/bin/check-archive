@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Hourly: verifies archiving works end to end and that no WAL segment was
+# dropped from the async queue. A drop leaves a hole in the WAL chain, which only
+# a new backup closes; the heartbeat stays red until one succeeds.
+set -euo pipefail
+
+STATE_DIR="${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}"
+LOG_DIR="${LOG_DIR:-/var/lib/postgresql/pgbackrest/log}"
+# Async mode writes drops to this file only; main-archive-push.log is never created.
+DROP_LOG="$LOG_DIR/main-archive-push-async.log"
+
+heartbeat() {
+    [ -n "${BACKUP_ARCHIVE_HEARTBEAT_URL:-}" ] || return 0
+    curl -fsS -m 10 --retry 3 -o /dev/null "${BACKUP_ARCHIVE_HEARTBEAT_URL}$1" || true
+}
+
+if ! pgbackrest --stanza=main check; then
+    heartbeat /fail
+    exit 1
+fi
+
+mkdir -p "$STATE_DIR"
+
+# State line: "<inode of the log> <drops counted so far>". A different inode (or a
+# log that appeared after being absent) is a fresh log, so every drop in it is new;
+# the same inode with fewer drops was truncated in place and only resets the count.
+seen_inode=0
+seen=0
+if [ -f "$STATE_DIR/dropped-count" ]; then
+    read -r seen_inode seen < "$STATE_DIR/dropped-count" || true
+fi
+inode=0
+dropped=0
+if [ -f "$DROP_LOG" ]; then
+    # shellcheck disable=SC2012 # fixed path; ls -i is the portable inode read
+    inode=$(ls -i "$DROP_LOG" | awk '{print $1}')
+    dropped=$(grep -c 'dropped WAL file' "$DROP_LOG" || true)
+fi
+for value in seen_inode seen inode dropped; do
+    case "${!value:-}" in
+        '' | *[!0-9]*) printf -v "$value" 0 ;;
+    esac
+done
+if [ "$inode" != "$seen_inode" ]; then
+    seen=0
+fi
+
+if [ "$dropped" -ne "$seen" ] || [ "$inode" != "$seen_inode" ]; then
+    printf '%s %s\n' "$inode" "$dropped" > "$STATE_DIR/dropped-count.tmp"
+    mv "$STATE_DIR/dropped-count.tmp" "$STATE_DIR/dropped-count"
+fi
+if [ "$dropped" -gt "$seen" ]; then
+    touch "$STATE_DIR/gap-open"
+fi
+# Retried every hour until a backup succeeds: the drop count stays the same
+# after a failed attempt, so only the marker brings the retry back.
+if [ -f "$STATE_DIR/gap-open" ]; then
+    heartbeat /fail
+    "$(dirname "$0")/run-backup" diff || true
+fi
+
+if [ -f "$STATE_DIR/gap-open" ]; then
+    heartbeat /fail
+    exit 1
+fi
+heartbeat ""

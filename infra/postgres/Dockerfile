@@ -3,6 +3,33 @@
 # version while every compose stack runs another.
 FROM postgres:18-bookworm
 
+# ca-certificates: the slim base image ships none, and every pgBackRest call to
+# the S3 endpoint fails with "unable to get local issuer certificate" without it.
+# pgbackrest stays unpinned (PGDG drops old builds from its pool); the version
+# check catches a major release that renames options, which pgBackRest refuses.
+# Both layers sit above the profile ARG and the config COPY so a sizing or
+# setting change does not repeat the download.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl pgbackrest \
+    && rm -rf /var/lib/apt/lists/* \
+    && pgbackrest version | grep -q '^pgBackRest 2\.'
+
+# Runs the backup schedule (infra/backup/crontab) in the sidecar container.
+# The binary is checked against the SHA1 the release publishes.
+ARG TARGETARCH
+ARG SUPERCRONIC_VERSION=v0.2.49
+ARG SUPERCRONIC_SHA1_AMD64=e63c11a9726b775a6a11801e81af4f3fb926aa68
+ARG SUPERCRONIC_SHA1_ARM64=0b6c5bb743e0b0dafed1132198c81807927ac413
+RUN case "$TARGETARCH" in \
+        amd64) sha1="$SUPERCRONIC_SHA1_AMD64" ;; \
+        arm64) sha1="$SUPERCRONIC_SHA1_ARM64" ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/local/bin/supercronic \
+        "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
+    && echo "${sha1}  /usr/local/bin/supercronic" | sha1sum -c - \
+    && chmod 0755 /usr/local/bin/supercronic
+
 # The server reads this file at every start (the CMD below), not only at initdb,
 # so a changed setting reaches an existing database with the next image build and
 # container recreation. Baked in rather than bind-mounted: a single-file bind mount
@@ -24,5 +51,12 @@ RUN --mount=type=bind,source=infra/${RESOURCE_PROFILE:+resources/$RESOURCE_PROFI
     && if [ -n "$RESOURCE_PROFILE" ]; then \
         install -m 0644 /tmp/profile/*.conf /etc/postgresql/conf.d/; \
     fi
+
+COPY --chmod=0644 infra/backup/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
+COPY --chmod=0755 infra/backup/bin/ /usr/local/bin/
+COPY --chmod=0644 infra/backup/crontab /etc/pgbackrest/crontab
+# COPY --chmod applies 0644 to the directory it creates too, which nobody but
+# root could then enter.
+RUN chmod 0755 /etc/pgbackrest
 
 CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]

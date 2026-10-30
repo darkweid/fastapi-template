@@ -201,6 +201,18 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 
 **Why it matters:** Hard deletes destroy forensic evidence. Soft delete preserves an audit trail for incident investigation while keeping deleted data invisible to normal application queries.
 
+## Backup Secrets
+
+`.env.backup`, `docs/readme/backups.md`
+
+- The bucket keys and the encryption passphrase live in `.env.backup`, which compose loads into the postgres and backup containers only. The app, worker and scheduler never receive them, and `check_env.py` refuses quotes, `$` and `#` in the file so every reader parses a value the same way.
+- Backups are encrypted (`aes-256-cbc`) before they leave the box. The passphrase is kept outside the server; without it the bucket is unreadable.
+- The bucket uses Object Lock in COMPLIANCE mode with a 9-day default retention. While a version is locked nobody can delete or overwrite it, the account owner included, and a leaked key can only add delete markers, which hide versions without removing them. Once a version's retention ends the key can delete that version for good. Nine days is longer than the weekly full-backup interval, so the newest full backup and everything after it stay locked until the next full exists; older backups inside the 14-day retention are not protected that way. Lifecycle removes noncurrent versions 10 days after they become noncurrent, which is the window for undoing delete markers (`docs/readme/backups.md`, *A stolen bucket key*). This lock, not the secrecy of the key, protects the newest history.
+- Residual risk: the app connects as `POSTGRES_USER`, a superuser, so an SQL injection could read the postgres process environment through `pg_read_file('/proc/self/environ')` and with it the bucket keys and the passphrase. The lock still protects the history, but the attacker could read every backup. Keep SQL injection out through the ORM-only rule above.
+- Key scope: a Hetzner S3 key reaches every bucket of its project. In a project that holds only the backup bucket the backup key is isolated; in a shared one (next to the media bucket) the other keys, the app's media key among them, can read the backups and add delete markers. The lock and the encryption hold either way, so a shared project is a valid choice, made by the box's owner.
+
+**Why it matters:** the backups are the last copy after an incident, which is when an attacker with write access to the bucket would delete them. The lock makes that impossible for a key, and keeping the keys out of the app containers limits who can read them.
+
 ## Docker Security
 
 `infra/docker/Dockerfile`

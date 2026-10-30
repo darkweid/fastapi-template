@@ -72,7 +72,7 @@ run-dev: ## Build and start the dev stack with autoreload
 
 .PHONY: down
 down: ## Stop and remove the containers
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) --profile backup down
 
 .PHONY: shell
 shell: ## Open a bash shell inside the app container
@@ -93,7 +93,7 @@ deploy-image: ## Deploy a registry image: make deploy-image APP_IMAGE=ghcr.io/ow
 
 .PHONY: clean
 clean: ## Remove the stack together with its volumes, local images and orphans
-	$(DOCKER_COMPOSE) down -v --rmi local --remove-orphans
+	$(DOCKER_COMPOSE) --profile backup down -v --rmi local --remove-orphans
 
 .PHONY: clean-resources
 clean-resources: ## Remove unused Docker resources, keeping build cache and reusable images
@@ -129,6 +129,74 @@ backup: ## Dump the database to backups/<UTC timestamp>.dump
 restore: ## Restore the database from f=<backups/file.dump>
 	@test -n "$(f)" || { echo "Usage: make restore f=backups/<file>.dump"; exit 1; }
 	$(DOCKER_COMPOSE_EXEC) -T postgres sh -c 'pg_restore --clean --if-exists -U $$POSTGRES_USER -d $$POSTGRES_DB' < $(f)
+
+.PHONY: backup-bucket
+backup-bucket: ## Apply object lock and lifecycle to the backup bucket: make backup-bucket BUCKET=... REGION=...
+	@test -n "$(BUCKET)" && test -n "$(REGION)" || { echo "Usage: make backup-bucket BUCKET=<bucket> REGION=<fsn1|nbg1|hel1>"; exit 1; }
+	scripts/ops/backup_bucket.sh apply $(BUCKET) $(REGION)
+
+# The backup targets start containers of their own: backup-info and backup-now
+# run the sidecar's service definition, backup-restore the postgres service
+# (`run --rm --no-deps` both), backup-verify a plain `docker run` on a throwaway
+# volume. So they work whether or not BACKUP_ENABLED started the sidecar, and
+# before the first deploy. Restore and verification: docs/readme/backups.md.
+#
+# The refusals are read while the Makefile is parsed, before any prerequisite
+# builds or any container stops; even `make -n` refuses.
+ifneq ($(filter backup-restore,$(MAKECMDGOALS)),)
+ifneq ($(CONFIRM),1)
+$(error backup-restore overwrites the live database; run again with CONFIRM=1)
+endif
+endif
+ifneq ($(filter backup-now,$(MAKECMDGOALS)),)
+ifeq ($(filter full diff,$(type)),)
+$(error Usage: make backup-now type=full|diff)
+endif
+endif
+
+# Every backup target runs the postgres image, which is built on the box and
+# never pulled (`pull_policy: never` on the sidecar). Built with the box's
+# resource profile, as deploy.sh builds it; a cache hit when it is current.
+.PHONY: backup-image
+backup-image: ## Build the postgres image the backup targets run, with this box's resource profile
+	$(DOCKER_COMPOSE) build postgres
+
+.PHONY: backup-info
+backup-info: backup-image ## List the backups and the WAL range in the pgBackRest repository
+	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps backup pgbackrest --stanza=main info
+
+# The heartbeat stays the scheduled jobs' signal: a manual run neither pings it
+# nor, when it fails, pages anyone.
+.PHONY: backup-now
+backup-now: backup-image ## Take a pgBackRest backup now, reported to no heartbeat: make backup-now type=full|diff
+	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps -e BACKUP_HEARTBEAT_URL= backup run-backup $(type)
+
+.PHONY: backup-verify
+backup-verify: backup-image ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"]
+	scripts/ops/backup_verify.sh $(if $(value target),--target $(call shell_quote,target))
+
+# Works on a fresh box before its first deploy. Without target it restores to
+# the end of the archived WAL. The pgBackRest directories come first, or a fresh
+# volume restores without a log file. The stanza-ready marker is written before the
+# server starts: a fresh volume has none, and without it the archive command
+# reports the new timeline's .history file archived without shipping it, so a
+# second loss would restore the old timeline and drop this box's writes. A
+# restore from the stanza is what proves this cluster owns it. `up --wait` alone
+# would return at the consistency point, before replay ends;
+# backup_restore_wait.sh waits for the server to leave recovery and fails if it
+# restarts on the way.
+.PHONY: backup-restore
+backup-restore: backup-image ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] CONFIRM=1
+	$(DOCKER_COMPOSE) --profile backup stop app worker scheduler backup postgres
+	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres mkdir -p /var/lib/postgresql/pgbackrest/log /var/lib/postgresql/pgbackrest/spool /var/lib/postgresql/pgbackrest/state
+	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres pgbackrest --stanza=main --delta $(if $(value target),--type=time --target=$(call shell_quote,target) --target-action=promote) restore
+	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
+	$(DOCKER_COMPOSE) up -d --no-deps postgres
+	scripts/ops/backup_restore_wait.sh $(DOCKER_COMPOSE)
+	@echo "PostgreSQL runs on the restored data; with BACKUP_ENABLED=true it archives the new timeline."
+	@echo "App, worker, scheduler and the backup sidecar stay stopped."
+	@echo "Next: check the data (make psql), deploy to start the rest of the stack,"
+	@echo "then take a full backup: make backup-now type=full"
 
 .PHONY: psql
 psql: ## Open psql inside the postgres container
@@ -180,6 +248,10 @@ test-integration: ## Run the integration suite against a throwaway PostgreSQL an
 	REDIS_PORT="$$REDIS_TEST_PORT" \
 	REDIS_TEST_INSTANCE="127.0.0.1:$$REDIS_TEST_PORT" \
 	pytest tests/integration tests/contract -m integration -v
+
+.PHONY: test-backup
+test-backup: ## Back up to a local MinIO and restore from it, end to end (needs Docker)
+	bash scripts/ops/backup_smoke.sh
 
 .PHONY: test-all
 test-all: test test-integration ## Run the unit suite and then the integration suite

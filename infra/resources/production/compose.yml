@@ -3,9 +3,9 @@
 # of infra/docker-compose.yml.
 #
 # Memory limits during a roll, two app containers: 5G postgres + 2 x 3G app +
-# 1.5G worker + 512M scheduler + 256M nginx + 1.5G redis = 14.75G, leaving
-# ~1.25G for the host. CPU limits are ceilings, not reservations, and may add up
-# past the box.
+# 1.5G worker + 512M scheduler + 256M nginx + 1.5G redis = 14.75G, plus 512M for
+# the backup sidecar (profile `backup`) = 15.25G, leaving ~0.75G for the host.
+# CPU limits are ceilings, not reservations, and may add up past the box.
 
 services:
   postgres:
@@ -63,3 +63,10 @@ services:
         limits:
           cpus: '1'
           memory: 1536M
+
+  backup:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M

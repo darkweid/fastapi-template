@@ -1,0 +1,4 @@
+# UTC. 22:00 is 03:00 in Asia/Tashkent.
+0 22 * * 0 run-backup full
+0 22 * * 1-6 run-backup diff
+17 * * * * check-archive

@@ -335,6 +335,7 @@ for `app.conf` once the certificate is in place.
 - `make server-bootstrap ENV=<env>`, `make server-provision ENV=<env>`, `make server-reboot ENV=<env>` — prepare a fresh server, converge it again, reboot it and wait for the stack (`infra/ansible/README.md`)
 - `make backup` — dump the database to `backups/<UTC timestamp>.dump`
 - `make restore f=backups/<file>.dump` — restore the database from a dump
+- `make backup-info` / `make backup-now type=full|diff` / `make backup-verify [target="..."]` / `make backup-restore [target="..."] CONFIRM=1` / `make backup-bucket BUCKET=... REGION=...` — pgBackRest backups with point-in-time recovery, off until `BACKUP_ENABLED=true` and `.env.backup` exist; `make test-backup` checks the chain against a local MinIO. Env: `BACKUP_ENABLED` and `BACKUP_ARCHIVE_QUEUE_MAX` in `.env`, the bucket keys and passphrase in `.env.backup` (`docs/readme/backups.md`)
 - `make psql` / `make redis-cli` — open an interactive shell inside the Postgres / Redis container
 - `make create-admin` — bootstrap the first admin account (env: `ADMIN_EMAIL`, `ADMIN_PASSWORD`) — see *Bootstrap the First Admin* below
 
@@ -402,6 +403,7 @@ ref selector still defaults to `main`, so a blank `image_tag` there deploys
 - Bootstrap a fork (rename, secrets, first deploy): [docs/readme/bootstrap.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/bootstrap.md)
 - Architecture & structure: [docs/readme/architecture.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/architecture.md)
 - Infrastructure & ops: [docs/readme/infra.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/infra.md)
+- PostgreSQL backups and point-in-time recovery: [docs/readme/backups.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/backups.md)
 - Provisioning a VPS: [infra/ansible/README.md](https://github.com/darkweid/fastapi-template/blob/main/infra/ansible/README.md)
 - Security mechanisms: [docs/readme/security.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/security.md)
 - Adding an auth realm: [docs/readme/auth-realms.md](https://github.com/darkweid/fastapi-template/blob/main/docs/readme/auth-realms.md)

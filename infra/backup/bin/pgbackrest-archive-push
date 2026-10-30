@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# PostgreSQL's archive_command. Ships a WAL segment only when backups are on and
+# the stanza exists.
+set -euo pipefail
+
+enabled=$(printf '%s' "${BACKUP_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+case "$enabled" in
+    1 | true | t | y | yes | on) ;;
+    *) exit 0 ;;
+esac
+
+# Until deploy.sh creates the stanza, archiving fails, and the image's init
+# server cannot stop on a fresh volume. WAL from before the stanza has no
+# backup to replay onto.
+[ -f "${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}/stanza-ready" ] || exit 0
+
+exec pgbackrest --stanza=main archive-push "$1"

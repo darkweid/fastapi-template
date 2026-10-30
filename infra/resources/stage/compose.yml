@@ -5,8 +5,9 @@
 # Memory limits during a roll, two app containers: 1G postgres + 2 x 2G app +
 # 1G worker + 512M scheduler + 256M nginx + 1G redis = 7.75G, leaving ~0.25G
 # for the host - tight, so an app at its limit during a roll can push the box
-# into swap. CPU limits are ceilings, not reservations, and may add up past the
-# box.
+# into swap. The backup sidecar (profile `backup`) starts only with backups on,
+# which stage leaves off; turned on, its 256M comes out of that margin. CPU
+# limits are ceilings, not reservations, and may add up past the box.
 
 services:
   postgres:
@@ -64,3 +65,10 @@ services:
         limits:
           cpus: '1'
           memory: 1G
+
+  backup:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
