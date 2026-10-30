@@ -22,6 +22,10 @@ usage() {
 command="$1"
 bucket="$2"
 region="$3"
+case "$region" in
+    fsn1 | nbg1 | hel1) ;;
+    *) usage ;;
+esac
 : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID must be set}"
 : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY must be set}"
 
@@ -45,9 +49,16 @@ case "$command" in
         echo "Applied object lock and lifecycle to $bucket"
         ;;
     show)
+        echo "versioning:"
         aws get-bucket-versioning --bucket "$bucket"
+        echo "object lock:"
         aws get-object-lock-configuration --bucket "$bucket"
-        aws get-bucket-lifecycle-configuration --bucket "$bucket"
+        echo "lifecycle:"
+        # aws-cli crashes on Hetzner's answer for a bucket that has no lifecycle yet.
+        if ! aws get-bucket-lifecycle-configuration --bucket "$bucket"; then
+            echo "lifecycle: none or unreadable (a bucket without lifecycle fails this way; run apply)" >&2
+            exit 1
+        fi
         ;;
     *)
         usage

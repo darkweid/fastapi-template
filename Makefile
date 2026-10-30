@@ -132,7 +132,7 @@ restore: ## Restore the database from f=<backups/file.dump>
 
 .PHONY: backup-bucket
 backup-bucket: ## Apply object lock and lifecycle to the backup bucket: make backup-bucket BUCKET=... REGION=...
-	@test -n "$(BUCKET)" -a -n "$(REGION)" || { echo "Usage: make backup-bucket BUCKET=<bucket> REGION=<fsn1|nbg1|hel1>"; exit 1; }
+	@test -n "$(BUCKET)" && test -n "$(REGION)" || { echo "Usage: make backup-bucket BUCKET=<bucket> REGION=<fsn1|nbg1|hel1>"; exit 1; }
 	scripts/ops/backup_bucket.sh apply $(BUCKET) $(REGION)
 
 .PHONY: psql
