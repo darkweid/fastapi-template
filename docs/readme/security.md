@@ -201,6 +201,17 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 
 **Why it matters:** Hard deletes destroy forensic evidence. Soft delete preserves an audit trail for incident investigation while keeping deleted data invisible to normal application queries.
 
+## Backup Secrets
+
+`.env.backup`, `docs/readme/backups.md`
+
+- The bucket keys and the encryption passphrase live in `.env.backup`, which compose loads into the postgres and backup containers only. The app, worker and scheduler never receive them, and `check_env.py` refuses quotes, `$` and `#` in the file so every reader parses a value the same way.
+- Backups are encrypted (`aes-256-cbc`) before they leave the box. The passphrase is kept outside the server; without it the bucket is unreadable.
+- The bucket uses Object Lock in COMPLIANCE mode with a 7-day default retention. A leaked key can add delete markers and nothing else: the previous versions cannot be deleted or overwritten before the lock ends, and lifecycle removes noncurrent versions after 8 days. This lock, not the secrecy of the key, protects the history.
+- Residual risk: the app connects as `POSTGRES_USER`, a superuser, so an SQL injection could read the postgres process environment through `pg_read_file('/proc/self/environ')` and with it the bucket keys and the passphrase. The lock still protects the history, but the attacker could read every backup. Keep the access key scoped to a Hetzner project that holds only the backup bucket (S3 credentials reach all buckets of a project), and keep SQL injection out through the ORM-only rule above.
+
+**Why it matters:** the backups are the last copy after an incident, which is when an attacker with write access to the bucket would delete them. The lock makes that impossible for a key, and keeping the keys out of the app containers limits who can read them.
+
 ## Docker Security
 
 `infra/docker/Dockerfile`
