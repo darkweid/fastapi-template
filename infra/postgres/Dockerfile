@@ -25,4 +25,28 @@ RUN --mount=type=bind,source=infra/${RESOURCE_PROFILE:+resources/$RESOURCE_PROFI
         install -m 0644 /tmp/profile/*.conf /etc/postgresql/conf.d/; \
     fi
 
+# ca-certificates: the slim base image ships none, and every pgBackRest call to
+# the S3 endpoint fails with "unable to get local issuer certificate" without it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl pgbackrest \
+    && rm -rf /var/lib/apt/lists/*
+
+# Runs the backup schedule (infra/backup/crontab) in the sidecar container.
+# The binary is checked against the SHA1 the release publishes.
+ARG TARGETARCH
+ARG SUPERCRONIC_VERSION=v0.2.49
+ARG SUPERCRONIC_SHA1_AMD64=e63c11a9726b775a6a11801e81af4f3fb926aa68
+ARG SUPERCRONIC_SHA1_ARM64=0b6c5bb743e0b0dafed1132198c81807927ac413
+RUN case "$TARGETARCH" in \
+        amd64) sha1="$SUPERCRONIC_SHA1_AMD64" ;; \
+        arm64) sha1="$SUPERCRONIC_SHA1_ARM64" ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/local/bin/supercronic \
+        "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
+    && echo "${sha1}  /usr/local/bin/supercronic" | sha1sum -c - \
+    && chmod 0755 /usr/local/bin/supercronic
+
+COPY --chmod=0644 infra/backup/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
+
 CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
