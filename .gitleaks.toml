@@ -8,4 +8,5 @@ paths = [
   '''^\.env\.test$''',
   '''^tests/unit/src/user/auth/test_token_helpers_security\.py$''',
   '''^tests/unit/src/user/auth/test_refresh_rotation\.py$''',
+  '''^tests/unit/scripts/ops/test_check_env\.py$''',
 ]
