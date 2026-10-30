@@ -130,6 +130,11 @@ restore: ## Restore the database from f=<backups/file.dump>
 	@test -n "$(f)" || { echo "Usage: make restore f=backups/<file>.dump"; exit 1; }
 	$(DOCKER_COMPOSE_EXEC) -T postgres sh -c 'pg_restore --clean --if-exists -U $$POSTGRES_USER -d $$POSTGRES_DB' < $(f)
 
+.PHONY: backup-bucket
+backup-bucket: ## Apply object lock and lifecycle to the backup bucket: make backup-bucket BUCKET=... REGION=...
+	@test -n "$(BUCKET)" -a -n "$(REGION)" || { echo "Usage: make backup-bucket BUCKET=<bucket> REGION=<fsn1|nbg1|hel1>"; exit 1; }
+	scripts/ops/backup_bucket.sh apply $(BUCKET) $(REGION)
+
 .PHONY: psql
 psql: ## Open psql inside the postgres container
 	$(DOCKER_COMPOSE_EXEC) postgres sh -c 'psql -U $$POSTGRES_USER $$POSTGRES_DB'
