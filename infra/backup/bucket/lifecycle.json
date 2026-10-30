@@ -7,7 +7,7 @@
         "Prefix": ""
       },
       "NoncurrentVersionExpiration": {
-        "NoncurrentDays": 8
+        "NoncurrentDays": 10
       },
       "Expiration": {
         "ExpiredObjectDeleteMarker": true

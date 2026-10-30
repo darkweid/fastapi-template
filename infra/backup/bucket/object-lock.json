@@ -3,7 +3,7 @@
   "Rule": {
     "DefaultRetention": {
       "Mode": "COMPLIANCE",
-      "Days": 7
+      "Days": 9
     }
   }
 }

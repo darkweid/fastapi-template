@@ -1,4 +1,5 @@
 import configparser
+import json
 from pathlib import Path
 import re
 
@@ -73,3 +74,25 @@ def test_the_image_installs_certificates_and_verifies_supercronic() -> None:
         r"install -y --no-install-recommends[^\n]*\bpgbackrest\b", dockerfile
     )
     assert "sha1sum -c" in dockerfile
+
+
+BUCKET_DIR = PROJECT_ROOT / "infra/backup/bucket"
+FULL_BACKUP_INTERVAL_DAYS = 7
+
+
+def test_the_lock_outlasts_the_weekly_full_and_lifecycle_outlasts_the_lock() -> None:
+    """With a lock no longer than the full-backup interval, a stolen key could
+    delete the previous full the moment its lock ends, before the next full exists.
+    Noncurrent versions must outlive the lock, or lifecycle removes a hidden
+    version while it is still the only copy."""
+    lock = json.loads((BUCKET_DIR / "object-lock.json").read_text(encoding="utf-8"))
+    lifecycle = json.loads((BUCKET_DIR / "lifecycle.json").read_text(encoding="utf-8"))
+    retention = lock["Rule"]["DefaultRetention"]
+    noncurrent_days = lifecycle["Rules"][0]["NoncurrentVersionExpiration"][
+        "NoncurrentDays"
+    ]
+    assert retention["Mode"] == "COMPLIANCE"
+    assert retention["Days"] == 9
+    assert noncurrent_days == 10
+    assert retention["Days"] > FULL_BACKUP_INTERVAL_DAYS
+    assert noncurrent_days > retention["Days"]
