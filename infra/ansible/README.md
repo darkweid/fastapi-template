@@ -95,7 +95,10 @@ Then:
    and on the server
    `sudo install -o deploy -g deploy -m 0600 .env /srv/<app_name>/.env && rm .env`.
    Its `RESOURCE_PROFILE` names the `infra/resources/` profile sized for this
-   server; the deploy refuses an empty one.
+   server; the deploy refuses an empty one. With `BACKUP_ENABLED=true` put
+   `.env.backup` beside it the same way:
+   `sudo install -o deploy -g deploy -m 0600 .env.backup /srv/<app_name>/.env.backup && rm .env.backup`
+   (`docs/readme/backups.md`).
 2. Copy the values the summary printed into the GitHub environment: `SSH_USER`,
    `SERVER_IP`, `SSH_KNOWN_HOSTS` as secrets, `SSH_PORT` and `APP_DIR` as
    variables. `SSH_KNOWN_HOSTS` comes from the server over the connection you already
