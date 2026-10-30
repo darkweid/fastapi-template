@@ -67,6 +67,7 @@ BACKUP_FILE_REQUIRED_KEYS = (
 # "$" interpolation and "#" comments, so a value carrying one of them would
 # reach pgBackRest differently depending on who started it.
 BACKUP_FORBIDDEN_CHARACTERS = "\"'$#"
+BACKUP_ENDPOINT_KEY = "PGBACKREST_REPO1_S3_ENDPOINT"
 BACKUP_CIPHER_PASS_KEY = "PGBACKREST_REPO1_CIPHER_PASS"  # nosec B105
 # The runbook generates it with `openssl rand -hex 32`; a short or hand-typed
 # passphrase is what encrypts every backup in the bucket.
@@ -175,6 +176,13 @@ def collect_backup_problems(
                 f"{BACKUP_ENV_FILE}: {key} still holds the placeholder value "
                 f"from {BACKUP_ENV_EXAMPLE_FILE}"
             )
+        elif key == BACKUP_ENDPOINT_KEY and "/" in value:
+            # pgBackRest takes a bare host; a scheme or a path fails only at
+            # stanza-create, after PostgreSQL already archives into the spool.
+            problems.append(
+                f"{BACKUP_ENV_FILE}: {key} must be a host without scheme or path "
+                "(nbg1.your-objectstorage.com)"
+            )
         elif key == BACKUP_CIPHER_PASS_KEY and not BACKUP_CIPHER_PASS_PATTERN.match(
             value
         ):
@@ -218,7 +226,9 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
         if key in REQUIRED_IN_DEPLOY_KEYS and not value.strip():
             problems.append(f"{key} is empty: a deploy needs it set")
 
-        if key == BACKUP_FLAG_KEY and as_bool(value) is None:
+        if key == BACKUP_FLAG_KEY and not value.strip():
+            problems.append(f"{key} is empty: set true or false")
+        elif key == BACKUP_FLAG_KEY and as_bool(value) is None:
             problems.append(f"{key}={value} is not a boolean")
 
         if key == BACKUP_QUEUE_MAX_KEY and backup_enabled and not value.strip():

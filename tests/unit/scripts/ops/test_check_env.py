@@ -625,8 +625,14 @@ def test_backup_secrets_never_appear_in_the_shared_example() -> None:
     assert [key for key in example if key.startswith("PGBACKREST_")] == []
 
 
-@pytest.mark.parametrize("value", ["", "maybe"])
-def test_backup_enabled_must_be_a_boolean(value: str) -> None:
+@pytest.mark.parametrize(
+    ("value", "problem"),
+    [
+        ("", "BACKUP_ENABLED is empty: set true or false"),
+        ("maybe", "BACKUP_ENABLED=maybe is not a boolean"),
+    ],
+)
+def test_backup_enabled_must_be_a_boolean(value: str, problem: str) -> None:
     """archive-push and deploy.sh each read the flag on their own; a value that
     is neither true nor false would leave them to disagree."""
     example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
@@ -636,9 +642,7 @@ def test_backup_enabled_must_be_a_boolean(value: str) -> None:
         "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB",
     }
 
-    assert collect_problems(example, actual) == [
-        f"BACKUP_ENABLED={value} is not a boolean"
-    ]
+    assert collect_problems(example, actual) == [problem]
 
 
 @pytest.mark.parametrize(
@@ -721,3 +725,21 @@ def test_enabled_flag_fails_on_a_value_that_is_not_a_boolean(
         main(["--enabled", "BACKUP_ENABLED"])
 
     assert raised.value.code == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("https://nbg1.your-objectstorage.com", id="scheme"),
+        pytest.param("nbg1.your-objectstorage.com/app-backups", id="path"),
+    ],
+)
+def test_backup_endpoint_must_be_a_bare_host(value: str) -> None:
+    """A scheme or a path passes as a non-empty value and fails only at
+    stanza-create, after PostgreSQL restarted with archiving on."""
+    actual = {**_deployable_backup_env(), "PGBACKREST_REPO1_S3_ENDPOINT": value}
+
+    assert collect_backup_problems(BACKUP_EXAMPLE, actual) == [
+        ".env.backup: PGBACKREST_REPO1_S3_ENDPOINT must be a host without scheme "
+        "or path (nbg1.your-objectstorage.com)"
+    ]
