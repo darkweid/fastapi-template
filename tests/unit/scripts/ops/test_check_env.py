@@ -422,7 +422,7 @@ def _deployable_backup_env() -> dict[str, str]:
         "PGBACKREST_REPO1_S3_BUCKET": "app-backups",
         "PGBACKREST_REPO1_S3_ENDPOINT": "nbg1.your-objectstorage.com",
         "PGBACKREST_REPO1_S3_REGION": "nbg1",
-        "PGBACKREST_REPO1_S3_KEY": "AKIAEXAMPLEBACKUPKEY",
+        "PGBACKREST_REPO1_S3_KEY": "backup-access-key-id",
         "PGBACKREST_REPO1_S3_KEY_SECRET": "a-real-looking-backup-secret-value",
         "PGBACKREST_REPO1_CIPHER_PASS": "0123456789abcdef" * 4,
         "BACKUP_HEARTBEAT_URL": "https://ping.example/backup",

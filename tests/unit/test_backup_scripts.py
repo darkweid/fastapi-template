@@ -468,7 +468,7 @@ def test_every_backup_target_builds_the_image_first(goal: str) -> None:
     """The sidecar never pulls (`pull_policy: never`), so on a fresh box the image
     exists only once something builds it."""
     result = subprocess.run(
-        ["make", "-n", *goal.split()],
+        ["make", "--no-print-directory", "-n", *goal.split()],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
