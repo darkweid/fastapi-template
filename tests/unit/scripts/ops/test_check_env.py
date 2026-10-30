@@ -596,6 +596,87 @@ def test_backup_on_requires_a_queue_limit(value: str) -> None:
     ]
 
 
+# Spellings pgBackRest 2.60 accepted when parsing archive-push-queue-max inside
+# the postgres image: units are binary whatever the spelling, case is ignored.
+@pytest.mark.parametrize(
+    "value",
+    [
+        "4GiB",
+        "16GB",
+        "16gb",
+        "16G",
+        "1024MiB",
+        "1024mb",
+        "16384M",
+        "1TiB",
+        "4PiB",
+        "17179869184",
+        "16777216",
+        "16MiB",
+    ],
+)
+def test_backup_on_accepts_a_queue_limit_pgbackrest_parses(value: str) -> None:
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "true",
+        "BACKUP_ARCHIVE_QUEUE_MAX": value,
+    }
+
+    assert collect_problems(example, actual) == []
+
+
+# Refused by pgBackRest 2.60 at option parsing ("16 GiB", "16G1B", "16.5GB",
+# "-1GB", "1EB", "5PB"), or accepted by it but dropping every WAL segment
+# ("0", "16B", "1KB": a queue smaller than one 16 MiB segment).
+@pytest.mark.parametrize(
+    "value",
+    [
+        "16 GiB",
+        "16G1B",
+        "16.5GB",
+        "-1GB",
+        "+16GB",
+        "1EB",
+        "GB",
+        "16iB",
+        "0x10",
+        "5PB",
+        "4097TB",
+        "0",
+        "16B",
+        "1KB",
+        "16777215",
+    ],
+)
+def test_backup_on_refuses_a_queue_limit_that_protects_nothing(value: str) -> None:
+    """pgBackRest fails a malformed limit at option parsing, before the async
+    process starts, so nothing bounds the queue and pg_wal fills the disk."""
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "true",
+        "BACKUP_ARCHIVE_QUEUE_MAX": value,
+    }
+
+    assert collect_problems(example, actual) == [
+        f"BACKUP_ARCHIVE_QUEUE_MAX={value} is not a size pgBackRest accepts: "
+        "a whole number with an optional unit (MiB, GiB, TiB; MB, GB, TB read the "
+        "same), between 16MiB (one WAL segment) and 4PiB"
+    ]
+
+
+def test_backup_off_ignores_a_malformed_queue_limit() -> None:
+    example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
+    actual = {
+        **_deployable_env(),
+        "BACKUP_ENABLED": "false",
+        "BACKUP_ARCHIVE_QUEUE_MAX": "16 GiB",
+    }
+
+    assert collect_problems(example, actual) == []
+
+
 def test_backup_off_allows_an_empty_queue_limit() -> None:
     example = {**EXAMPLE, "BACKUP_ENABLED": "false", "BACKUP_ARCHIVE_QUEUE_MAX": "4GiB"}
     actual = {

@@ -55,6 +55,14 @@ BACKUP_ENV_EXAMPLE_FILE = Path(".env.backup.example")
 BACKUP_FLAG_KEY = "BACKUP_ENABLED"
 # Stays in .env: compose hands it to pgBackRest as archive-push-queue-max.
 BACKUP_QUEUE_MAX_KEY = "BACKUP_ARCHIVE_QUEUE_MAX"
+# The subset of pgBackRest 2.60's size syntax a person writes: digits, then an
+# optional unit, case ignored, every unit binary (KB is KiB). pgBackRest refuses
+# anything else at option parsing, so archive-push fails before its async process
+# starts and nothing bounds the queue.
+BACKUP_QUEUE_MAX_PATTERN = re.compile(r"^([0-9]+)(?:([kmgtp])i?b?|b)?$", re.IGNORECASE)
+BACKUP_QUEUE_MAX_UNITS = {"k": 1, "m": 2, "g": 3, "t": 4, "p": 5}
+# Below one WAL segment every segment is dropped; above 4PiB pgBackRest refuses.
+BACKUP_QUEUE_MAX_RANGE = (16 * 1024**2, 4 * 1024**5)
 BACKUP_FILE_REQUIRED_KEYS = (
     "PGBACKREST_REPO1_S3_BUCKET",
     "PGBACKREST_REPO1_S3_ENDPOINT",
@@ -126,6 +134,17 @@ def points_at_localhost(value: str) -> bool:
         return False
     hostname = hostname.lower()
     return hostname in LOCAL_HOSTNAMES or hostname.startswith("127.")
+
+
+def parse_queue_max(value: str) -> int | None:
+    """Bytes in a pgBackRest size, or None when check_env does not accept it."""
+    match = BACKUP_QUEUE_MAX_PATTERN.match(value)
+    if match is None:
+        return None
+    number, unit = match.groups()
+    size = int(number) * 1024 ** BACKUP_QUEUE_MAX_UNITS.get((unit or "").lower(), 0)
+    low, high = BACKUP_QUEUE_MAX_RANGE
+    return size if low <= size <= high else None
 
 
 def is_dormant_s3_key(key: str, s3_enabled: bool) -> bool:
@@ -233,6 +252,16 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
 
         if key == BACKUP_QUEUE_MAX_KEY and backup_enabled and not value.strip():
             problems.append(f"{key} is empty: {BACKUP_FLAG_KEY}=true needs it set")
+        elif (
+            key == BACKUP_QUEUE_MAX_KEY
+            and backup_enabled
+            and (parse_queue_max(value) is None)
+        ):
+            problems.append(
+                f"{key}={value} is not a size pgBackRest accepts: a whole number "
+                "with an optional unit (MiB, GiB, TiB; MB, GB, TB read the same), "
+                "between 16MiB (one WAL segment) and 4PiB"
+            )
 
         if key in PUBLIC_URL_KEYS and points_at_localhost(value):
             problems.append(
