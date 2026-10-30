@@ -138,32 +138,52 @@ backup-bucket: ## Apply object lock and lifecycle to the backup bucket: make bac
 # The backup targets run the sidecar's service definition (`run --rm --no-deps`),
 # so they work whether or not BACKUP_ENABLED started the sidecar, and before the
 # first deploy. Restore and verification: docs/readme/backups.md.
+#
+# The refusals are read while the Makefile is parsed, before any prerequisite
+# builds or any container stops; even `make -n` refuses.
+ifneq ($(filter backup-restore,$(MAKECMDGOALS)),)
+ifneq ($(CONFIRM),1)
+$(error backup-restore overwrites the live database; run again with CONFIRM=1)
+endif
+endif
+ifneq ($(filter backup-now,$(MAKECMDGOALS)),)
+ifeq ($(filter full diff,$(type)),)
+$(error Usage: make backup-now type=full|diff)
+endif
+endif
+
+# Every backup target runs the postgres image, which is built on the box and
+# never pulled (`pull_policy: never` on the sidecar). Built with the box's
+# resource profile, as deploy.sh builds it; a cache hit when it is current.
+.PHONY: backup-image
+backup-image: ## Build the postgres image the backup targets run, with this box's resource profile
+	$(DOCKER_COMPOSE) build postgres
+
 .PHONY: backup-info
-backup-info: ## List the backups and the WAL range in the pgBackRest repository
+backup-info: backup-image ## List the backups and the WAL range in the pgBackRest repository
 	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps backup pgbackrest --stanza=main info
 
+# The heartbeat stays the scheduled jobs' signal: a manual run neither pings it
+# nor, when it fails, pages anyone.
 .PHONY: backup-now
-backup-now: ## Take a pgBackRest backup now: make backup-now type=full|diff
-	$(if $(filter full diff,$(type)),,$(error Usage: make backup-now type=full|diff))
-	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps backup run-backup $(type)
+backup-now: backup-image ## Take a pgBackRest backup now, reported to no heartbeat: make backup-now type=full|diff
+	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps -e BACKUP_HEARTBEAT_URL= backup run-backup $(type)
 
 .PHONY: backup-verify
-backup-verify: ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"]
-	$(DOCKER_COMPOSE) build postgres
+backup-verify: backup-image ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"]
 	scripts/ops/backup_verify.sh $(if $(value target),--target $(call shell_quote,target))
 
-# Expanded before anything runs, so even `make -n` refuses without CONFIRM=1.
-# The image is built first with the box's resource profile, so this works on a
-# fresh box before its first deploy. Without target it restores to the end of
-# the archived WAL.
+# Works on a fresh box before its first deploy. Without target it restores to
+# the end of the archived WAL. `up --wait` alone would return at the
+# consistency point, before replay ends; backup_restore_wait.sh waits for the
+# server to leave recovery and fails if it restarts on the way.
 .PHONY: backup-restore
-backup-restore: ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] CONFIRM=1
-	$(if $(filter 1,$(CONFIRM)),,$(error This overwrites the live database; run again with CONFIRM=1))
-	$(DOCKER_COMPOSE) build postgres
+backup-restore: backup-image ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] CONFIRM=1
 	$(DOCKER_COMPOSE) --profile backup stop app worker scheduler backup postgres
 	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres pgbackrest --stanza=main --delta $(if $(value target),--type=time --target=$(call shell_quote,target) --target-action=promote) restore
-	$(DOCKER_COMPOSE) up -d --no-deps --wait postgres
-	@echo "PostgreSQL is up on the restored data; app, worker, scheduler and the backup sidecar stay stopped."
+	$(DOCKER_COMPOSE) up -d --no-deps postgres
+	scripts/ops/backup_restore_wait.sh $(DOCKER_COMPOSE)
+	@echo "PostgreSQL runs on the restored data; app, worker, scheduler and the backup sidecar stay stopped."
 	@echo "Next: check the data (make psql), deploy to start the rest of the stack,"
 	@echo "then take a full backup: make backup-now type=full"
 

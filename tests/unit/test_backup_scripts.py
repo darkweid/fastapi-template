@@ -331,12 +331,85 @@ def test_a_confirmed_restore_stops_the_writers_before_restoring() -> None:
     )
     lines = result.stdout.splitlines()
     stop = next(i for i, line in enumerate(lines) if " stop " in line)
-    restore = next(i for i, line in enumerate(lines) if " restore" in line)
+    restore = next(i for i, line in enumerate(lines) if line.endswith(" restore"))
     assert stop < restore
     for service in ("app", "worker", "scheduler", "backup", "postgres"):
         assert service in lines[stop].split()
+    words = lines[restore].split()
+    assert words[words.index("-u") + 1] == "postgres"
+    assert "--delta" in words
     assert "--target='2026-10-30 14:03:00+00'" in lines[restore]
     assert "--target-action=promote" in lines[restore]
+
+
+def test_a_restore_reports_success_only_after_recovery_ends() -> None:
+    """`up --wait` returns at the consistency point, while WAL is still replaying,
+    and a target past the archived WAL leaves a server restarting in a loop."""
+    result = subprocess.run(
+        ["make", "-n", "backup-restore", "CONFIRM=1"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    up = next(i for i, line in enumerate(lines) if " up " in line)
+    waits = next(i for i, line in enumerate(lines) if "backup_restore_wait.sh" in line)
+    following = next(i for i, line in enumerate(lines) if "Next:" in line)
+    assert "--wait" not in lines[up]
+    assert up < waits < following
+
+
+def test_a_refused_restore_builds_nothing() -> None:
+    result = subprocess.run(
+        ["make", "-n", "backup-restore"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "build" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "backup-info",
+        "backup-now type=full",
+        "backup-verify",
+        "backup-restore CONFIRM=1",
+    ],
+)
+def test_every_backup_target_builds_the_image_first(goal: str) -> None:
+    """The sidecar never pulls (`pull_policy: never`), so on a fresh box the image
+    exists only once something builds it."""
+    result = subprocess.run(
+        ["make", "-n", *goal.split()],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines()[0].endswith(" build postgres")
+
+
+def test_a_manual_backup_pings_no_heartbeat() -> None:
+    """A manual run that fails must not page as if the schedule had failed."""
+    result = subprocess.run(
+        ["make", "-n", "backup-now", "type=diff"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "-e BACKUP_HEARTBEAT_URL= " in result.stdout
+
+
+def test_the_drill_container_is_capped() -> None:
+    outer = VERIFY_SCRIPTS[0].read_text()
+    assert '--memory "${VERIFY_MEMORY:-1g}"' in outer
+    assert '--cpus "${VERIFY_CPUS:-1}"' in outer
 
 
 def test_the_smoke_images_are_pinned() -> None:

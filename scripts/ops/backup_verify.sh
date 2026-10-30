@@ -17,6 +17,8 @@
 #   BACKUP_ENV_FILE  .env.backup
 #   POSTGRES_USER, POSTGRES_DB   from .env
 #   VERIFY_NETWORK   a docker network to attach to (the default bridge if empty)
+#   VERIFY_MEMORY, VERIFY_CPUS   the drill container's limits (1g, 1), so it
+#                    cannot starve the live server on the same box
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -64,9 +66,13 @@ RUN_ID="backup-verify-$(date -u +%Y%m%d%H%M%S)-$$"
 VOLUME="$RUN_ID"
 CONTAINER="$RUN_ID"
 
+LOGS_PID=""
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
+  if [ -n "$LOGS_PID" ]; then
+    kill "$LOGS_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 # A signal becomes an exit, so the EXIT trap removes what was created.
@@ -76,8 +82,14 @@ docker volume create "$VOLUME" >/dev/null
 # A fresh volume belongs to root; the restore runs as postgres.
 docker run --rm -u root -v "$VOLUME:/restore" --entrypoint chown "$POSTGRES_IMAGE" postgres:postgres /restore
 
-docker run --rm --name "$CONTAINER" \
+# Detached, with the script waiting through the `wait` builtin: a signal
+# interrupts that at once and the EXIT trap removes the container. Attached,
+# `docker run` would forward Ctrl-C to bash running as PID 1, which ignores it,
+# and the trap would wait out the whole recovery.
+docker run -d --name "$CONTAINER" \
   -u postgres \
+  --memory "${VERIFY_MEMORY:-1g}" \
+  --cpus "${VERIFY_CPUS:-1}" \
   --shm-size 256m \
   ${VERIFY_NETWORK:+--network "$VERIFY_NETWORK"} \
   --env-file "$BACKUP_ENV_FILE" \
@@ -91,4 +103,16 @@ docker run --rm --name "$CONTAINER" \
   -e RECOVERY_TIMEOUT="$RECOVERY_TIMEOUT" \
   -v "$VOLUME:/restore" \
   --entrypoint bash \
-  "$POSTGRES_IMAGE" -c "$(cat scripts/ops/backup_verify_in_container.sh)"
+  "$POSTGRES_IMAGE" -c "$(cat scripts/ops/backup_verify_in_container.sh)" >/dev/null
+
+docker logs -f "$CONTAINER" &
+LOGS_PID=$!
+STATUS_FILE="$(mktemp)"
+docker wait "$CONTAINER" > "$STATUS_FILE" &
+wait $!
+status="$(cat "$STATUS_FILE")"
+rm -f "$STATUS_FILE"
+# The log stream ends with the container; let it flush before reporting.
+wait "$LOGS_PID" || true
+LOGS_PID=""
+[ "${status:-1}" = 0 ] || exit "${status:-1}"

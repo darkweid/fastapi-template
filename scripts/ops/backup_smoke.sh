@@ -112,6 +112,25 @@ psql_smoke "INSERT INTO smoke_marker (id) VALUES (2)"
 # both inserts are recoverable from here on.
 pgbackrest_smoke check
 
+# Stopped, so the live server writes nothing more to the repository: from here
+# on the repository may change only if a drill wrote to it.
+"${COMPOSE[@]}" stop postgres
+
+# The newest archived segment and the backup labels; a drill that archived
+# or backed up would move one of them.
+repository_state() {
+  "${COMPOSE[@]}" run --rm --no-deps -T -u postgres postgres \
+    pgbackrest --stanza=main --output=json info \
+    | python3 -c 'import json, sys
+stanza = json.load(sys.stdin)[0]
+if not stanza["archive"] or not stanza["backup"]:
+    sys.exit("pgbackrest info shows no archive or no backup")
+print([archive["max"] for archive in stanza["archive"]])
+print([backup["label"] for backup in stanza["backup"]])'
+}
+repository_state > "$WORK_DIR/repository.before"
+echo "[smoke] repository before the drills (newest WAL, backups): $(tr '\n' ' ' < "$WORK_DIR/repository.before")"
+
 network="${PROJECT}_default"
 verify() {
   POSTGRES_IMAGE="$SMOKE_POSTGRES_IMAGE" \
@@ -131,5 +150,17 @@ echo "[smoke] verification restore to ${between}"
 verify --target "$between" || fail "the point-in-time restore failed"
 grep -Eq '^public\.smoke_marker -?[0-9]+ 1$' "$WORK_DIR/verify.out" \
   || fail "the restore to ${between} does not hold exactly the first row"
+
+echo "[smoke] checking that the drills left the repository alone"
+repository_state > "$WORK_DIR/repository.after"
+diff "$WORK_DIR/repository.before" "$WORK_DIR/repository.after" \
+  || fail "the repository changed during the drills"
+# The point-in-time drill promoted onto timeline 2; its history file in the
+# repository would mean the drill server archived.
+"${COMPOSE[@]}" run --rm --no-deps mc --insecure ls --recursive smoke/backups > "$WORK_DIR/objects"
+grep -q 'archive/main/' "$WORK_DIR/objects" || fail "the bucket listing shows no archive"
+if grep -q '00000002\.history' "$WORK_DIR/objects"; then
+  fail "a drill pushed 00000002.history into the repository"
+fi
 
 echo "[smoke] PASS"
