@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Hourly: verifies archiving works end to end and that no WAL segment was
+# dropped from the async queue. A drop leaves a hole in the WAL chain, which only
+# a new backup closes; the heartbeat stays red until one succeeds.
+set -euo pipefail
+
+STATE_DIR="${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}"
+LOG_DIR="${LOG_DIR:-/var/lib/postgresql/pgbackrest/log}"
+# Async mode writes drops to this file only; main-archive-push.log is never created.
+DROP_LOG="$LOG_DIR/main-archive-push-async.log"
+
+ping() {
+    [ -n "${BACKUP_ARCHIVE_HEARTBEAT_URL:-}" ] || return 0
+    curl -fsS -m 10 --retry 3 -o /dev/null "${BACKUP_ARCHIVE_HEARTBEAT_URL}$1" || true
+}
+
+if ! pgbackrest --stanza=main check; then
+    ping /fail
+    exit 1
+fi
+
+mkdir -p "$STATE_DIR"
+
+seen=0
+if [ -f "$STATE_DIR/dropped-count" ]; then
+    seen=$(cat "$STATE_DIR/dropped-count")
+fi
+dropped=0
+if [ -f "$DROP_LOG" ]; then
+    dropped=$(grep -c 'dropped WAL file' "$DROP_LOG" || true)
+fi
+
+if [ "$dropped" -lt "$seen" ]; then
+    echo "$dropped" > "$STATE_DIR/dropped-count"
+elif [ "$dropped" -gt "$seen" ]; then
+    echo "$dropped" > "$STATE_DIR/dropped-count"
+    touch "$STATE_DIR/gap-open"
+    ping /fail
+    "$(dirname "$0")/run-backup" diff || true
+fi
+
+if [ -f "$STATE_DIR/gap-open" ]; then
+    ping /fail
+    exit 1
+fi
+ping ""

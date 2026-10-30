@@ -53,5 +53,7 @@ RUN --mount=type=bind,source=infra/${RESOURCE_PROFILE:+resources/$RESOURCE_PROFI
     fi
 
 COPY --chmod=0644 infra/backup/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
+COPY --chmod=0755 infra/backup/bin/ /usr/local/bin/
+COPY --chmod=0644 infra/backup/crontab /etc/pgbackrest/crontab
 
 CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Runs one pgBackRest backup (full or diff) and reports it to the heartbeat.
+set -euo pipefail
+
+STATE_DIR="${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}"
+
+ping() {
+    [ -n "${BACKUP_HEARTBEAT_URL:-}" ] || return 0
+    curl -fsS -m 10 --retry 3 -o /dev/null "${BACKUP_HEARTBEAT_URL}$1" || true
+}
+
+case "${1:-}" in
+    full | diff) ;;
+    *)
+        echo "usage: run-backup full|diff" >&2
+        exit 2
+        ;;
+esac
+
+ping /start
+if pgbackrest --stanza=main --type="$1" backup; then
+    rm -f "$STATE_DIR/gap-open"
+    ping ""
+else
+    ping /fail
+    exit 1
+fi
