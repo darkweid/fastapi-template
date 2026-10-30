@@ -295,3 +295,13 @@ def test_pgbackrest_logs_in_as_the_database_owner() -> None:
 def test_the_sidecar_has_no_healthcheck() -> None:
     """supercronic exposes none; the heartbeats are the health signal."""
     assert "healthcheck" not in _compose()["services"]["backup"]
+
+
+def test_the_postgres_healthcheck_goes_over_tcp() -> None:
+    """The official image runs an init server on the unix socket only while it
+    initialises a fresh volume. A socket check answers healthy during it, so
+    `up --wait` could return mid-init and stanza-create run across the restart."""
+    for name in ("docker-compose.yml", "docker-compose.test.yml"):
+        compose = yaml.safe_load((PROJECT_ROOT / "infra" / name).read_text("utf-8"))
+        test = compose["services"]["postgres"]["healthcheck"]["test"]
+        assert "pg_isready -h 127.0.0.1 " in " ".join(test), name

@@ -375,21 +375,25 @@ echo "[deploy] starting data services"
 if [ "$BACKUP_ENABLED" = "true" ]; then
   # A stanza created by another cluster makes stanza-create and check fail on
   # purpose (a fresh box with an empty volume): restore first, see
-  # docs/readme/backups.md. io-timeout and db-timeout in the pgBackRest config
-  # stop pgBackRest itself; timeout only bounds the compose CLI.
+  # docs/readme/backups.md. The outer timeout bounds the compose CLI only and
+  # killing it leaves pgBackRest running in the container (its db-timeout is
+  # longer), so the inner timeout bounds the process itself.
   echo "[deploy] creating and checking the pgBackRest stanza"
   # An existing data volume never gets the directories made at image build time,
   # and pgBackRest turns file logging off when its log directory is missing.
-  "${COMPOSE[@]}" exec -T -u postgres postgres mkdir -p \
+  timeout 60 "${COMPOSE[@]}" exec -T -u postgres postgres mkdir -p \
     /var/lib/postgresql/pgbackrest/log \
     /var/lib/postgresql/pgbackrest/spool \
     /var/lib/postgresql/pgbackrest/state
-  timeout 300 "${COMPOSE[@]}" exec -T -u postgres postgres pgbackrest --stanza=main stanza-create
+  if ! timeout 300 "${COMPOSE[@]}" exec -T -u postgres postgres timeout 280 pgbackrest --stanza=main stanza-create; then
+    echo "[deploy] pgbackrest stanza-create failed: a stanza of another cluster means restore first (docs/readme/backups.md)"
+    exit 1
+  fi
   # The archive wrapper ships WAL only once this marker exists, so the init
   # server of a fresh volume never fails archiving before the stanza is there;
   # check needs the wrapper to ship, hence the marker comes first.
-  "${COMPOSE[@]}" exec -T -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
-  if ! timeout 300 "${COMPOSE[@]}" exec -T -u postgres postgres pgbackrest --stanza=main check; then
+  timeout 60 "${COMPOSE[@]}" exec -T -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
+  if ! timeout 300 "${COMPOSE[@]}" exec -T -u postgres postgres timeout 280 pgbackrest --stanza=main check; then
     echo "[deploy] pgbackrest check failed: WAL is not reaching the backup repository"
     exit 1
   fi

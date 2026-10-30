@@ -443,11 +443,15 @@ def test_backups_are_checked_after_postgres_starts_and_before_migrations() -> No
 
 
 def test_the_backup_steps_are_bounded() -> None:
+    """The outer timeout kills only the compose CLI; pgBackRest keeps running in
+    the container unless the inner timeout bounds it too."""
     lines = _script().splitlines()
 
     for step in (BACKUP_STANZA_CREATE, BACKUP_CHECK):
         (line,) = (line for line in lines if step in line and "exec" in line)
-        assert line.strip().replace("if ! ", "").startswith("timeout 300 ")
+        command = line.strip().replace("if ! ", "")
+        assert command.startswith("timeout 300 ")
+        assert "postgres postgres timeout 280 pgbackrest" in command
 
 
 def test_pgbackrest_runs_as_postgres() -> None:
@@ -462,16 +466,30 @@ def test_pgbackrest_runs_as_postgres() -> None:
 
 
 def test_a_disabled_box_removes_the_sidecar() -> None:
-    assert '"${COMPOSE[@]}" --profile backup rm -sf backup' in _script()
+    script = _script()
+    removal = '"${COMPOSE[@]}" --profile backup rm -sf backup'
+
+    assert (
+        script.index('if [ "$BACKUP_ENABLED" = "true" ]; then\n  # A stanza')
+        < script.index(BACKUP_SIDECAR_UP)
+        < script.index("\nelse\n  # Removes a sidecar")
+        < script.index(removal)
+        < script.index("alembic upgrade head")
+    )
 
 
 def test_backup_enabled_is_read_through_the_gate() -> None:
     script = _script()
-
-    assert script.index("python3 scripts/ops/check_env.py\n") < script.index(
+    read = (
         'BACKUP_ENABLED="$(python3 scripts/ops/check_env.py --enabled BACKUP_ENABLED)"'
     )
-    assert "COMPOSE+=(--profile backup)" in script
+
+    assert script.index("python3 scripts/ops/check_env.py\n") < script.index(read)
+    assert (
+        script.index(read)
+        < script.index("COMPOSE+=(--profile backup)")
+        < script.index("run --rm --no-deps nginx")
+    )
 
 
 def test_the_archive_marker_is_written_between_stanza_create_and_check() -> None:
@@ -492,7 +510,7 @@ def test_the_pgbackrest_directories_exist_before_the_stanza_is_created() -> None
     script = _script()
 
     assert (
-        script.index("mkdir -p")
+        script.index("exec -T -u postgres postgres mkdir -p")
         < script.index("pgbackrest/log")
         < script.index(BACKUP_STANZA_CREATE)
     )
