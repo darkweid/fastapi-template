@@ -36,8 +36,10 @@ The passphrase is the one thing the bucket cannot give back. Keep a copy outside
 ## Enabling backups on a box
 
 1. Create the bucket in the Hetzner console with **Object Lock enabled**. Hetzner allows the
-   lock only at creation, and versioning comes with it. Use a Hetzner project that holds
-   nothing else: S3 credentials reach every bucket of their project.
+   lock only at creation, and versioning comes with it. S3 credentials reach every bucket of
+   their Hetzner project: in a project of its own the backup key is isolated, in a shared one
+   (next to the media bucket) the other keys can read the backups and add delete markers. The
+   lock and the encryption hold either way, so a shared project is a valid choice.
 2. Create an access key for that project.
 3. Apply the lock default and the lifecycle rules, with the keys in the environment so they
    never touch a file:
@@ -173,8 +175,9 @@ recoverable without touching the live database.
    It works on a fresh box: the targets run the sidecar's service definition and need neither
    a deployed stack nor a running sidecar. Add `target=...` to stop before a bad moment.
 4. Check the data with `make psql`.
-5. Deploy. `stanza-create` finds the stanza of this very cluster and continues it on a new
-   timeline.
+5. Deploy right after the check. Until the first deploy writes the `stanza-ready` marker the
+   server archives nothing, which is safe only while the application is stopped. `stanza-create`
+   finds the stanza of this very cluster and continues it on a new timeline.
 6. `make backup-now type=full`.
 
 `deploy.sh` fails on a box whose volume holds a cluster other than the one in the bucket's
@@ -185,8 +188,9 @@ to restore first. Do not delete the stanza to get past it.
 
 A genuinely new database (another project, or a deliberate start from zero) must not share
 a stanza with the old one: pgBackRest would refuse it, and forcing it would orphan the old
-history. Give it a new repository path deliberately, in `infra/backup/pgbackrest.conf`
-(`repo1-path=/pgbackrest-<project>`), or use a new bucket.
+history. Give it a new repository path deliberately: `PGBACKREST_REPO1_PATH=/pgbackrest-<name>`
+in that box's `.env.backup` (pgBackRest reads it over `repo1-path` in
+`infra/backup/pgbackrest.conf`), or use a new bucket.
 
 ## Which tool when
 

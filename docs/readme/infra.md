@@ -37,7 +37,8 @@ Boxes differ in size, so the sizing is not in the base files. `infra/docker-comp
 ```
 infra/resources/<profile>/
   compose.yml          # overlay: cpus/memory limits for postgres, app, worker,
-                       # scheduler, nginx, redis; postgres shm_size and the
+                       # scheduler, nginx, redis and the backup sidecar;
+                       # postgres shm_size and the
                        # RESOURCE_PROFILE build arg; the app's WEB_CONCURRENCY
                        # (gunicorn workers); redis --maxmemory
   postgres/sizing.conf # shared_buffers, effective_cache_size, work_mem,
