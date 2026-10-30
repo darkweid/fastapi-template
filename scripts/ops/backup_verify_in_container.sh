@@ -64,7 +64,7 @@ pg_ctl -D /restore/data -m fast -w stop >/dev/null
 
 if [ -z "${RESTORE_TARGET:-}" ]; then
   if [ "$age" = "none" ]; then
-    echo "[verify] FAIL: no transaction was replayed after the backup: WAL written since never reached the repository" >&2
+    echo "[verify] FAIL: no transaction was replayed after the backup: either nothing was committed since it, or that WAL never reached the repository (see docs/readme/backups.md)" >&2
     exit 1
   fi
   if [ "$age" -gt "$MAX_AGE" ]; then

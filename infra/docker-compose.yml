@@ -68,8 +68,8 @@ services:
   # Scheduled pgBackRest backups and archive checks. It runs the postgres image
   # beside the server, on the same data volume and unix socket, because
   # pgBackRest backs up from the data directory. No healthcheck: supercronic has
-  # none, the heartbeat URLs in .env.backup are the health signal. Started with
-  # COMPOSE_PROFILES=backup.
+  # none, the heartbeat URLs in .env.backup are the health signal. Started by
+  # `--profile backup`, which deploy.sh adds while BACKUP_ENABLED is on.
   backup:
     container_name: template-backup
     image: template-postgres:18
