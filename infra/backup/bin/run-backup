@@ -3,6 +3,8 @@
 set -euo pipefail
 
 STATE_DIR="${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}"
+# pgBackRest's LockAcquireError: another backup of the stanza holds the lock.
+LOCK_HELD=50
 
 heartbeat() {
     [ -n "${BACKUP_HEARTBEAT_URL:-}" ] || return 0
@@ -19,9 +21,16 @@ esac
 
 mkdir -p "$STATE_DIR"
 heartbeat /start
-if pgbackrest --stanza=main --type="$1" backup; then
+status=0
+pgbackrest --stanza=main --type="$1" backup || status=$?
+if [ "$status" -eq 0 ]; then
     rm -f "$STATE_DIR/gap-open"
     heartbeat ""
+elif [ "$status" -eq "$LOCK_HELD" ]; then
+    # The backup holding the lock reports its own result and, when it succeeds,
+    # clears gap-open itself.
+    echo "run-backup: another backup is running; leaving the heartbeat to it" >&2
+    exit "$LOCK_HELD"
 else
     heartbeat /fail
     exit 1

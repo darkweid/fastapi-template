@@ -32,7 +32,7 @@ while true; do
   [ "$state" = "f" ] && break
   now="$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$container")"
   if [ "$now" != "running $restarts" ]; then
-    fail "the server stopped during recovery ($now); a target past the end of the archived WAL does this. Stop it with \`docker compose stop postgres\` (it restarts in a loop otherwise), then rerun \`make backup-restore\` with an earlier target"
+    fail "the server stopped during recovery ($now); a target past the end of the archived WAL does this. It restarts in a loop until you stop it with \`${COMPOSE[*]} stop postgres\` (or \`make down\`), then rerun \`make backup-restore\` with an earlier target"
   fi
   if [ "$SECONDS" -ge "$deadline" ]; then
     fail "recovery did not finish within ${TIMEOUT}s"

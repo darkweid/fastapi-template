@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # End-to-end check of the backup chain on a local S3 (`make test-backup`, the
 # CI backup-smoke job): MinIO with object lock behind TLS, the postgres image
-# with backups on, stanza-create, a full backup, rows written after it, and two
-# verification restores through scripts/ops/backup_verify.sh - one to the
-# latest point, which must return every row, and one to a moment between two
-# rows, which must return only the first. Needs Docker and openssl, no secret
-# and no network beyond the image registries.
+# with backups on, stanza-create, a full backup taken from a second container
+# on the server's data and socket volumes (the sidecar's shape), rows written
+# after it, and two verification restores through scripts/ops/backup_verify.sh -
+# one to the latest point, which must return every row, and one to a moment
+# between two rows, which must return only the first. Last, the live restore of
+# `make backup-restore` onto a fresh volume, as on a replacement box: it must
+# return every row and ship the new timeline's history file to the repository.
+# Needs Docker and openssl, no secret and no network beyond the image registries.
 #
 # BACKUP_SMOKE_SUFFIX names the compose project and the image tag (CI passes the
 # run id); every container, volume, network and image it creates is removed on
@@ -98,8 +101,9 @@ pgbackrest_smoke stanza-create
 "${COMPOSE[@]}" exec -T -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
 pgbackrest_smoke check
 
-echo "[smoke] full backup"
-"${COMPOSE[@]}" exec -T -u postgres postgres run-backup full
+echo "[smoke] full backup from the sidecar-shaped container"
+"${COMPOSE[@]}" run --rm --no-deps -T backup run-backup full
+"${COMPOSE[@]}" run --rm --no-deps -T backup check-archive
 
 echo "[smoke] writing rows after the backup"
 psql_smoke "CREATE TABLE smoke_marker (id int PRIMARY KEY, written_at timestamptz NOT NULL DEFAULT clock_timestamp())"
@@ -162,5 +166,25 @@ grep -q 'archive/main/' "$WORK_DIR/objects" || fail "the bucket listing shows no
 if grep -q '00000002\.history' "$WORK_DIR/objects"; then
   fail "a drill pushed 00000002.history into the repository"
 fi
+
+# The steps of `make backup-restore` (Makefile) on a volume that never held a
+# cluster, then the check that the promoted server archives its new timeline.
+echo "[smoke] live restore onto a fresh volume"
+"${COMPOSE[@]}" rm -sf postgres
+docker volume rm "${PROJECT}_postgres-data" >/dev/null
+"${COMPOSE[@]}" run --rm --no-deps -T -u postgres postgres mkdir -p \
+  /var/lib/postgresql/pgbackrest/log \
+  /var/lib/postgresql/pgbackrest/spool \
+  /var/lib/postgresql/pgbackrest/state
+"${COMPOSE[@]}" run --rm --no-deps -T -u postgres postgres pgbackrest --stanza=main --delta restore
+"${COMPOSE[@]}" run --rm --no-deps -T -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
+"${COMPOSE[@]}" up -d --no-deps postgres
+scripts/ops/backup_restore_wait.sh "${COMPOSE[@]}" || fail "the live restore did not leave recovery"
+[ "$(psql_smoke "SELECT count(*) FROM smoke_marker")" = "2" ] \
+  || fail "the live restore does not hold both rows"
+pgbackrest_smoke check
+"${COMPOSE[@]}" run --rm --no-deps mc --insecure ls --recursive smoke/backups > "$WORK_DIR/objects"
+grep -q '00000002\.history' "$WORK_DIR/objects" \
+  || fail "the restored server did not archive 00000002.history"
 
 echo "[smoke] PASS"

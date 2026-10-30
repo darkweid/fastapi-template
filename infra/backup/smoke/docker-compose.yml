@@ -1,6 +1,7 @@
 # End-to-end check of the backup chain against a local S3 (scripts/ops/backup_smoke.sh,
-# `make test-backup`): stanza, full backup, archived WAL, and a verification restore
-# to the latest point and to a point in time.
+# `make test-backup`): stanza, a full backup from a sidecar-shaped container,
+# archived WAL, verification restores to the latest point and to a point in time,
+# and a live restore onto a fresh volume.
 #
 # A file of its own rather than an overlay on infra/docker-compose.yml: that one
 # names its containers and pins a subnet, which would collide with a stack
@@ -52,6 +53,7 @@ services:
       PGBACKREST_PG1_USER: smoke
     volumes:
       - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U smoke -d smoke"]
       interval: 2s
@@ -61,6 +63,23 @@ services:
       minio:
         condition: service_healthy
 
+  # The deployed sidecar's shape (infra/docker-compose.yml, service backup): a
+  # second container on the server's data and socket volumes, so the scheduled
+  # backups' path is what the smoke backs up through.
+  backup:
+    image: ${SMOKE_POSTGRES_IMAGE}
+    pull_policy: never
+    profiles: [tools]
+    user: postgres
+    env_file: ${SMOKE_BACKUP_ENV_FILE}
+    environment:
+      BACKUP_ENABLED: "true"
+      PGBACKREST_PG1_USER: smoke
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
+
 volumes:
   minio-data:
   postgres-data:
+  postgres-socket:

@@ -5,6 +5,8 @@ import subprocess
 import pytest
 import yaml
 
+from scripts.ops.check_env import TRUTHY_VALUES
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BIN = PROJECT_ROOT / "infra/backup/bin"
 CRONTAB = PROJECT_ROOT / "infra/backup/crontab"
@@ -14,7 +16,7 @@ ARCHIVE_URL = "https://ping.example/archive"
 
 STUB = """#!/bin/sh
 echo "$@" >> "$STUB_LOG"
-case " $* " in *" $STUB_FAIL_ON "*) exit 1 ;; esac
+case " $* " in *" $STUB_FAIL_ON "*) exit "${STUB_FAIL_CODE:-1}" ;; esac
 exit 0
 """
 
@@ -117,7 +119,10 @@ def test_archive_wal_ships_nothing_before_the_stanza_exists(sandbox: Sandbox) ->
     assert sandbox.pgbackrest_calls() == []
 
 
-@pytest.mark.parametrize("value", ["true", "TRUE", "yes", "on", "1", "t", "y"])
+@pytest.mark.parametrize(
+    "value",
+    sorted(TRUTHY_VALUES) + sorted(v.upper() for v in TRUTHY_VALUES if v.isalpha()),
+)
 def test_archive_wal_ships_for_every_truthy_spelling(
     sandbox: Sandbox, value: str
 ) -> None:
@@ -166,6 +171,16 @@ def test_run_backup_success_closes_the_gap(sandbox: Sandbox) -> None:
     (sandbox.state / "gap-open").touch()
     assert sandbox.run("run-backup", "diff").returncode == 0
     assert not sandbox.gap_open()
+
+
+def test_run_backup_leaves_a_lock_collision_unreported(sandbox: Sandbox) -> None:
+    """pgBackRest exits 50 when another backup holds the lock; that backup reports
+    its own result, so a /fail here would page for a backup that is running fine."""
+    result = sandbox.run(
+        "run-backup", "diff", STUB_FAIL_ON="backup", STUB_FAIL_CODE="50"
+    )
+    assert result.returncode == 50
+    assert f"{BACKUP_URL}/fail" not in sandbox.pings()
 
 
 def test_check_archive_pings_fail_when_check_fails(sandbox: Sandbox) -> None:
@@ -242,6 +257,36 @@ def test_an_open_gap_keeps_the_heartbeat_red(sandbox: Sandbox) -> None:
     result = sandbox.run("check-archive", STUB_FAIL_ON="backup")
     assert result.returncode == 1
     assert sandbox.gap_open()
+    assert sandbox.pings()[-1] == f"{ARCHIVE_URL}/fail"
+
+
+def test_an_open_gap_retries_the_differential_every_hour(sandbox: Sandbox) -> None:
+    """The drop count does not change after a failed gap-closing backup, so the gap
+    marker alone has to bring the retry back."""
+    sandbox.write_drops(1)
+    assert sandbox.run("check-archive", STUB_FAIL_ON="backup").returncode == 1
+    sandbox.pgbackrest_log.unlink()
+
+    result = sandbox.run("check-archive")
+    assert result.returncode == 0
+    assert sandbox.pgbackrest_calls() == [
+        "--stanza=main check",
+        "--stanza=main --type=diff backup",
+    ]
+    assert not sandbox.gap_open()
+    assert sandbox.pings()[-1] == ARCHIVE_URL
+
+
+def test_a_gap_backup_colliding_with_a_running_backup_spares_its_heartbeat(
+    sandbox: Sandbox,
+) -> None:
+    """The backup already running closes the gap when it succeeds; until then only
+    the archive heartbeat is red."""
+    sandbox.write_drops(1)
+    result = sandbox.run("check-archive", STUB_FAIL_ON="backup", STUB_FAIL_CODE="50")
+    assert result.returncode == 1
+    assert sandbox.gap_open()
+    assert f"{BACKUP_URL}/fail" not in sandbox.pings()
     assert sandbox.pings()[-1] == f"{ARCHIVE_URL}/fail"
 
 
@@ -360,11 +405,34 @@ def test_a_restore_reports_success_only_after_recovery_ends() -> None:
     assert up < waits < following
 
 
+def test_a_restore_marks_the_stanza_before_the_server_starts() -> None:
+    """On a replacement box the volume has no stanza-ready marker, and without it the
+    promoted server's new .history file is reported archived but never shipped."""
+    result = subprocess.run(
+        ["make", "-n", "backup-restore", "CONFIRM=1"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    directories = next(i for i, line in enumerate(lines) if " mkdir -p " in line)
+    restore = next(i for i, line in enumerate(lines) if line.endswith(" restore"))
+    marker = next(i for i, line in enumerate(lines) if "state/stanza-ready" in line)
+    up = next(i for i, line in enumerate(lines) if " up " in line)
+    assert directories < restore < marker < up
+    for directory in ("log", "spool", "state"):
+        assert f"/var/lib/postgresql/pgbackrest/{directory}" in lines[directories]
+    for line in (lines[directories], lines[marker]):
+        words = line.split()
+        assert words[words.index("-u") + 1] == "postgres"
+
+
 def test_a_restart_loop_tells_the_operator_how_to_stop_it() -> None:
     """Under `restart: always` a failed recovery keeps restarting after the script
     exits, so the message has to say how to stop it and what to try next."""
     script = (PROJECT_ROOT / "scripts/ops/backup_restore_wait.sh").read_text()
-    assert "docker compose stop postgres" in script
+    assert r"stop it with \`${COMPOSE[*]} stop postgres\`" in script
     assert "with an earlier target" in script
 
 
@@ -431,7 +499,11 @@ def test_the_smoke_images_are_pinned() -> None:
     """MinIO publishes no community image any more; the smoke runs a rebuilt fork,
     so a tag alone would let whoever controls that repository swap the binary."""
     services = yaml.safe_load(SMOKE_COMPOSE.read_text())["services"]
-    pulled = [s["image"] for s in services.values() if "build" not in s]
+    pulled = [
+        s["image"]
+        for s in services.values()
+        if "build" not in s and s.get("pull_policy") != "never"
+    ]
     assert pulled
     for image in pulled:
         assert PINNED_IMAGE.match(image), image
@@ -445,3 +517,17 @@ def test_the_smoke_never_claims_a_global_name() -> None:
         assert "container_name" not in service
         assert "ports" not in service
     assert "networks" not in loaded
+
+
+def test_the_smoke_backs_up_through_the_sidecar_shape() -> None:
+    """Backing up from inside the server container would skip the socket volume
+    the deployed sidecar reaches the server through."""
+    smoke = yaml.safe_load(SMOKE_COMPOSE.read_text())["services"]
+    deployed = yaml.safe_load((PROJECT_ROOT / "infra/docker-compose.yml").read_text())[
+        "services"
+    ]
+    assert smoke["backup"]["volumes"] == deployed["backup"]["volumes"]
+    assert smoke["backup"]["user"] == deployed["backup"]["user"]
+    assert smoke["postgres"]["volumes"] == deployed["postgres"]["volumes"]
+    script = (PROJECT_ROOT / "scripts/ops/backup_smoke.sh").read_text()
+    assert "run --rm --no-deps -T backup run-backup full" in script

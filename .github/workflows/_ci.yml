@@ -515,8 +515,9 @@ jobs:
           pytest tests/integration tests/contract -m integration -v
 
   # Backs up to a local MinIO and restores from it (scripts/ops/backup_smoke.sh):
-  # the stanza, a full backup, archived WAL, and verification restores to the
-  # latest point and to a point in time, on the postgres image every box runs.
+  # the stanza, a full backup from a sidecar-shaped container, archived WAL,
+  # verification restores to the latest point and to a point in time, and a live
+  # restore onto a fresh volume, on the postgres image every box runs.
   # No secret: the S3 server, its keys and its certificate exist only for the
   # run. The suffix keeps the compose project and image tag apart from any
   # other run on the same daemon; the script removes all of it on exit.

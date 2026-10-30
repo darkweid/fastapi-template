@@ -135,9 +135,11 @@ backup-bucket: ## Apply object lock and lifecycle to the backup bucket: make bac
 	@test -n "$(BUCKET)" && test -n "$(REGION)" || { echo "Usage: make backup-bucket BUCKET=<bucket> REGION=<fsn1|nbg1|hel1>"; exit 1; }
 	scripts/ops/backup_bucket.sh apply $(BUCKET) $(REGION)
 
-# The backup targets run the sidecar's service definition (`run --rm --no-deps`),
-# so they work whether or not BACKUP_ENABLED started the sidecar, and before the
-# first deploy. Restore and verification: docs/readme/backups.md.
+# The backup targets start containers of their own: backup-info and backup-now
+# run the sidecar's service definition, backup-restore the postgres service
+# (`run --rm --no-deps` both), backup-verify a plain `docker run` on a throwaway
+# volume. So they work whether or not BACKUP_ENABLED started the sidecar, and
+# before the first deploy. Restore and verification: docs/readme/backups.md.
 #
 # The refusals are read while the Makefile is parsed, before any prerequisite
 # builds or any container stops; even `make -n` refuses.
@@ -174,16 +176,25 @@ backup-verify: backup-image ## Restore into a throwaway container and report: ma
 	scripts/ops/backup_verify.sh $(if $(value target),--target $(call shell_quote,target))
 
 # Works on a fresh box before its first deploy. Without target it restores to
-# the end of the archived WAL. `up --wait` alone would return at the
-# consistency point, before replay ends; backup_restore_wait.sh waits for the
-# server to leave recovery and fails if it restarts on the way.
+# the end of the archived WAL. The pgBackRest directories come first, or a fresh
+# volume restores without a log file. The stanza-ready marker is written before the
+# server starts: a fresh volume has none, and without it the archive command
+# reports the new timeline's .history file archived without shipping it, so a
+# second loss would restore the old timeline and drop this box's writes. A
+# restore from the stanza is what proves this cluster owns it. `up --wait` alone
+# would return at the consistency point, before replay ends;
+# backup_restore_wait.sh waits for the server to leave recovery and fails if it
+# restarts on the way.
 .PHONY: backup-restore
 backup-restore: backup-image ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] CONFIRM=1
 	$(DOCKER_COMPOSE) --profile backup stop app worker scheduler backup postgres
+	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres mkdir -p /var/lib/postgresql/pgbackrest/log /var/lib/postgresql/pgbackrest/spool /var/lib/postgresql/pgbackrest/state
 	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres pgbackrest --stanza=main --delta $(if $(value target),--type=time --target=$(call shell_quote,target) --target-action=promote) restore
+	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
 	$(DOCKER_COMPOSE) up -d --no-deps postgres
 	scripts/ops/backup_restore_wait.sh $(DOCKER_COMPOSE)
-	@echo "PostgreSQL runs on the restored data; app, worker, scheduler and the backup sidecar stay stopped."
+	@echo "PostgreSQL runs on the restored data; with BACKUP_ENABLED=true it archives the new timeline."
+	@echo "App, worker, scheduler and the backup sidecar stay stopped."
 	@echo "Next: check the data (make psql), deploy to start the rest of the stack,"
 	@echo "then take a full backup: make backup-now type=full"
 

@@ -51,6 +51,10 @@ if [ "$dropped" -ne "$seen" ] || [ "$inode" != "$seen_inode" ]; then
 fi
 if [ "$dropped" -gt "$seen" ]; then
     touch "$STATE_DIR/gap-open"
+fi
+# Retried every hour until a backup succeeds: the drop count stays the same
+# after a failed attempt, so only the marker brings the retry back.
+if [ -f "$STATE_DIR/gap-open" ]; then
     heartbeat /fail
     "$(dirname "$0")/run-backup" diff || true
 fi
