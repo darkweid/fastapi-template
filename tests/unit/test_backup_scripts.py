@@ -1,7 +1,9 @@
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BIN = PROJECT_ROOT / "infra/backup/bin"
@@ -282,3 +284,76 @@ def test_crontab_runs_the_spec_schedule() -> None:
         "0 22 * * 1-6": "run-backup diff",
         "17 * * * *": "check-archive",
     }
+
+
+VERIFY_SCRIPTS = (
+    PROJECT_ROOT / "scripts/ops/backup_verify.sh",
+    PROJECT_ROOT / "scripts/ops/backup_verify_in_container.sh",
+)
+SMOKE_COMPOSE = PROJECT_ROOT / "infra/backup/smoke/docker-compose.yml"
+PINNED_IMAGE = re.compile(r"^[\w./-]+:RELEASE\.[\w.-]+@sha256:[0-9a-f]{64}$")
+
+
+def test_the_verification_restore_never_archives() -> None:
+    """A drill server that archived would push a second timeline of WAL into the
+    live stanza, beside the history it was restored from."""
+    outer, inner = (path.read_text() for path in VERIFY_SCRIPTS)
+    assert "-e BACKUP_ENABLED=false" in outer
+    assert "--archive-mode=off" in inner
+
+
+def test_the_verification_restore_never_touches_the_live_volume() -> None:
+    for path in VERIFY_SCRIPTS:
+        assert "postgres-data" not in path.read_text()
+
+
+def test_a_live_restore_needs_confirmation() -> None:
+    """`make -n` executes nothing, so the refusal has to happen while make expands
+    the recipe, before any container is stopped."""
+    result = subprocess.run(
+        ["make", "-n", "backup-restore", "target=x"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "CONFIRM=1" in result.stderr
+
+
+def test_a_confirmed_restore_stops_the_writers_before_restoring() -> None:
+    result = subprocess.run(
+        ["make", "-n", "backup-restore", "target=2026-10-30 14:03:00+00", "CONFIRM=1"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    stop = next(i for i, line in enumerate(lines) if " stop " in line)
+    restore = next(i for i, line in enumerate(lines) if " restore" in line)
+    assert stop < restore
+    for service in ("app", "worker", "scheduler", "backup", "postgres"):
+        assert service in lines[stop].split()
+    assert "--target='2026-10-30 14:03:00+00'" in lines[restore]
+    assert "--target-action=promote" in lines[restore]
+
+
+def test_the_smoke_images_are_pinned() -> None:
+    """MinIO publishes no community image any more; the smoke runs a rebuilt fork,
+    so a tag alone would let whoever controls that repository swap the binary."""
+    services = yaml.safe_load(SMOKE_COMPOSE.read_text())["services"]
+    pulled = [s["image"] for s in services.values() if "build" not in s]
+    assert pulled
+    for image in pulled:
+        assert PINNED_IMAGE.match(image), image
+
+
+def test_the_smoke_never_claims_a_global_name() -> None:
+    """A container_name or a fixed network name would collide with a stack, or a
+    second smoke, running on the same daemon."""
+    loaded = yaml.safe_load(SMOKE_COMPOSE.read_text())
+    for service in loaded["services"].values():
+        assert "container_name" not in service
+        assert "ports" not in service
+    assert "networks" not in loaded

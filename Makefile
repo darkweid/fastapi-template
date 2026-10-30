@@ -72,7 +72,7 @@ run-dev: ## Build and start the dev stack with autoreload
 
 .PHONY: down
 down: ## Stop and remove the containers
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) --profile backup down
 
 .PHONY: shell
 shell: ## Open a bash shell inside the app container
@@ -93,7 +93,7 @@ deploy-image: ## Deploy a registry image: make deploy-image APP_IMAGE=ghcr.io/ow
 
 .PHONY: clean
 clean: ## Remove the stack together with its volumes, local images and orphans
-	$(DOCKER_COMPOSE) down -v --rmi local --remove-orphans
+	$(DOCKER_COMPOSE) --profile backup down -v --rmi local --remove-orphans
 
 .PHONY: clean-resources
 clean-resources: ## Remove unused Docker resources, keeping build cache and reusable images
@@ -134,6 +134,38 @@ restore: ## Restore the database from f=<backups/file.dump>
 backup-bucket: ## Apply object lock and lifecycle to the backup bucket: make backup-bucket BUCKET=... REGION=...
 	@test -n "$(BUCKET)" && test -n "$(REGION)" || { echo "Usage: make backup-bucket BUCKET=<bucket> REGION=<fsn1|nbg1|hel1>"; exit 1; }
 	scripts/ops/backup_bucket.sh apply $(BUCKET) $(REGION)
+
+# The backup targets run the sidecar's service definition (`run --rm --no-deps`),
+# so they work whether or not BACKUP_ENABLED started the sidecar, and before the
+# first deploy. Restore and verification: docs/readme/backups.md.
+.PHONY: backup-info
+backup-info: ## List the backups and the WAL range in the pgBackRest repository
+	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps backup pgbackrest --stanza=main info
+
+.PHONY: backup-now
+backup-now: ## Take a pgBackRest backup now: make backup-now type=full|diff
+	$(if $(filter full diff,$(type)),,$(error Usage: make backup-now type=full|diff))
+	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps backup run-backup $(type)
+
+.PHONY: backup-verify
+backup-verify: ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"]
+	$(DOCKER_COMPOSE) build postgres
+	scripts/ops/backup_verify.sh $(if $(value target),--target $(call shell_quote,target))
+
+# Expanded before anything runs, so even `make -n` refuses without CONFIRM=1.
+# The image is built first with the box's resource profile, so this works on a
+# fresh box before its first deploy. Without target it restores to the end of
+# the archived WAL.
+.PHONY: backup-restore
+backup-restore: ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] CONFIRM=1
+	$(if $(filter 1,$(CONFIRM)),,$(error This overwrites the live database; run again with CONFIRM=1))
+	$(DOCKER_COMPOSE) build postgres
+	$(DOCKER_COMPOSE) --profile backup stop app worker scheduler backup postgres
+	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres pgbackrest --stanza=main --delta $(if $(value target),--type=time --target=$(call shell_quote,target) --target-action=promote) restore
+	$(DOCKER_COMPOSE) up -d --no-deps --wait postgres
+	@echo "PostgreSQL is up on the restored data; app, worker, scheduler and the backup sidecar stay stopped."
+	@echo "Next: check the data (make psql), deploy to start the rest of the stack,"
+	@echo "then take a full backup: make backup-now type=full"
 
 .PHONY: psql
 psql: ## Open psql inside the postgres container
@@ -185,6 +217,10 @@ test-integration: ## Run the integration suite against a throwaway PostgreSQL an
 	REDIS_PORT="$$REDIS_TEST_PORT" \
 	REDIS_TEST_INSTANCE="127.0.0.1:$$REDIS_TEST_PORT" \
 	pytest tests/integration tests/contract -m integration -v
+
+.PHONY: test-backup
+test-backup: ## Back up to a local MinIO and restore from it, end to end (needs Docker)
+	bash scripts/ops/backup_smoke.sh
 
 .PHONY: test-all
 test-all: test test-integration ## Run the unit suite and then the integration suite
