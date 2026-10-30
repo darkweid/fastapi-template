@@ -68,6 +68,8 @@ SUBNET_ADDRESS_COUNTS = {
 # and docs refer to, and it never leaves the project.
 NETWORK_NAME_LINE = "    name: app-network\n"
 PROJECT_NAME_LINE = re.compile(r"^PROJECT_NAME=.*$", re.MULTILINE)
+# The token claims that tell this product's tokens from a sibling fork's.
+TOKEN_NAME_KEYS = ("JWT_ISSUER", "JWT_AUDIENCE")
 # The three addresses of the default subnet, never a prefix of a longer one
 # (172.30.0.1 is a prefix of 172.30.0.128).
 DEFAULT_SUBNET_ADDRESS = re.compile(r"(?<![\d.])172\.30\.0\.(0/24|128/25|1)(?![\d./])")
@@ -222,6 +224,15 @@ def plan_edits(root: Path, options: Options) -> dict[str, str]:
             )
         if path in SUBNET_ADDRESS_COUNTS and options.subnet != DEFAULT_SUBNET:
             text = _move_subnet(path, text, options.subnet)
+        if path == ENV_EXAMPLE_FILE:
+            for key in TOKEN_NAME_KEYS:
+                text = _replace_counted(
+                    path,
+                    text,
+                    f"\n{key}={TEMPLATE_PROJECT_NAME}\n",
+                    f"\n{key}={options.name}\n",
+                    1,
+                )
         if path == ENV_EXAMPLE_FILE and options.title is not None:
             # A literal replacement only because validate_title rejected `\`.
             text, found = PROJECT_NAME_LINE.subn(
@@ -302,6 +313,8 @@ def pending_before_deploy(env_text: str) -> tuple[str, ...]:
             pending.append(f"{key}: still a placeholder")
         if key in REQUIRED_IN_DEPLOY_KEYS and not value.strip():
             pending.append(f"{key}: empty, name the box's infra/resources profile")
+        if key in TOKEN_NAME_KEYS and value.strip() == TEMPLATE_PROJECT_NAME:
+            pending.append(f"{key}: still names the template")
         if key in PUBLIC_URL_KEYS and _points_at_localhost(value):
             pending.append(f"{key}: points at localhost, set the deployed frontend")
     return tuple(pending)
@@ -309,7 +322,7 @@ def pending_before_deploy(env_text: str) -> tuple[str, ...]:
 
 def env_hints(options: Options) -> tuple[str, ...]:
     """The lines an existing .env, which the run never touches, needs by hand."""
-    hints = []
+    hints = [f"{key}={options.name}" for key in TOKEN_NAME_KEYS]
     if options.title is not None:
         hints.append(f'PROJECT_NAME="{options.title}"')
     if options.subnet != DEFAULT_SUBNET:

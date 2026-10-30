@@ -22,8 +22,8 @@ from src.core.auth.token_helpers import (
     invalidate_session,
     is_replay_of_live_pair,
 )
+from src.core.auth.tokens import decode_token
 from src.core.errors.exceptions import UnauthorizedException
-from src.main.config import config
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +82,7 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
         token = token[7:].strip()
 
     try:
-        payload = jwt.decode(token, realm.secret, algorithms=[config.jwt.ALGORITHM])
-        payload_typed = cast(JWTPayload, payload)
+        payload_typed = cast(JWTPayload, decode_token(token, realm.secret))
     except jwt.ExpiredSignatureError:
         raise TokenExpiredError("Token expired") from None
     except jwt.PyJWTError:
@@ -170,15 +169,7 @@ async def decode_logout_identity(
         token = token[7:].strip()
 
     try:
-        payload = cast(
-            JWTPayload,
-            jwt.decode(
-                token,
-                realm.secret,
-                algorithms=[config.jwt.ALGORITHM],
-                options={"verify_exp": False},
-            ),
-        )
+        payload = cast(JWTPayload, decode_token(token, realm.secret, verify_exp=False))
     except jwt.PyJWTError:
         return None
 

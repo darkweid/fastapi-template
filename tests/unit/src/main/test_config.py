@@ -19,6 +19,8 @@ def _base_jwt_config_data() -> dict[str, object]:
         "JWT_USER_VERIFY_SECRET_KEY": "unit-test-verify-secret-key-long-enough",
         "JWT_USER_RESET_PASSWORD_SECRET_KEY": "unit-test-reset-secret-key-long-enough",
         "ALGORITHM": "HS256",
+        "JWT_ISSUER": "unit-test",
+        "JWT_AUDIENCE": "unit-test",
         "ACCESS_TOKEN_EXPIRE_MINUTES": 15,
         "REFRESH_TOKEN_EXPIRE_MINUTES": 129_600,
         "VERIFICATION_TOKEN_EXPIRE_MINUTES": 180,
@@ -228,6 +230,13 @@ def test_jwt_config_rejects_short_secret() -> None:
 def test_jwt_config_rejects_unknown_algorithm() -> None:
     with pytest.raises(ValidationError):
         JWTConfig(**{**_base_jwt_config_data(), "ALGORITHM": "none"})
+
+
+@pytest.mark.parametrize("field", ["JWT_ISSUER", "JWT_AUDIENCE"])
+def test_jwt_config_rejects_a_blank_token_name(field: str) -> None:
+    """A blank `aud` would let a token of any product sharing the secret in."""
+    with pytest.raises(ValidationError):
+        JWTConfig(**{**_base_jwt_config_data(), field: ""})
 
 
 @pytest.mark.parametrize("algorithm", ["HS256", "HS384", "HS512"])
@@ -483,6 +492,8 @@ def _jwt_config_payload(**overrides: object) -> dict[str, object]:
         "JWT_USER_VERIFY_SECRET_KEY": "b" * 32,
         "JWT_USER_RESET_PASSWORD_SECRET_KEY": "c" * 32,
         "ALGORITHM": "HS256",
+        "JWT_ISSUER": "unit-test",
+        "JWT_AUDIENCE": "unit-test",
         "ACCESS_TOKEN_EXPIRE_MINUTES": 15,
         "REFRESH_TOKEN_EXPIRE_MINUTES": 60,
         "VERIFICATION_TOKEN_EXPIRE_MINUTES": 60,

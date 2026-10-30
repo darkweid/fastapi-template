@@ -26,6 +26,7 @@ EXAMPLE = {
     "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
     "EMAIL_USER": "user@example.com",
     "RESOURCE_PROFILE": "",
+    "JWT_ISSUER": "fastapi-template",
 }
 
 
@@ -40,6 +41,7 @@ def _deployable_env() -> dict[str, str]:
         "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
         "EMAIL_USER": "user@example.com",
         "RESOURCE_PROFILE": "production",
+        "JWT_ISSUER": "acme",
     }
 
 
@@ -183,6 +185,19 @@ def test_an_empty_resource_profile_is_reported(value: str) -> None:
 
     assert collect_problems(EXAMPLE, actual) == [
         "RESOURCE_PROFILE is empty: a deploy needs it set"
+    ]
+
+
+@pytest.mark.parametrize("key", ["JWT_ISSUER", "JWT_AUDIENCE"])
+def test_a_token_name_left_at_the_template_default_is_reported(key: str) -> None:
+    """Two forks that both skipped init-project and share a secret would accept
+    each other's tokens."""
+    actual = _deployable_env()
+    actual[key] = "fastapi-template"
+
+    assert collect_problems(EXAMPLE | {key: "fastapi-template"}, actual) == [
+        f"{key} still names the template: run make init-project or set the "
+        "project's own name"
     ]
 
 

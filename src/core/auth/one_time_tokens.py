@@ -1,13 +1,11 @@
 from typing import Any
 
-import jwt
 from redis.asyncio import Redis
 
 from src.core.auth.challenges import INVALID_CHALLENGE_MESSAGE, ActiveChallengeRegistry
 from src.core.auth.realm import AuthRealm
-from src.core.auth.tokens import issue_token
+from src.core.auth.tokens import decode_token, issue_token
 from src.core.errors.exceptions import UnauthorizedException
-from src.main.config import config
 
 IDENTIFIER_CLAIM = "identifier"
 
@@ -66,11 +64,7 @@ async def decode_one_time_token(
     decode - a missing identifier, a mode mismatch, or a challenge that is
     superseded, spent, or claimed by a concurrent caller first.
     """
-    payload = jwt.decode(
-        token,
-        realm.one_time_secret(purpose),
-        algorithms=[config.jwt.ALGORITHM],
-    )
+    payload = decode_token(token, realm.one_time_secret(purpose))
 
     if expected_mode is not None and payload.get("mode") != expected_mode:
         raise UnauthorizedException(INVALID_CHALLENGE_MESSAGE)

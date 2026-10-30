@@ -168,6 +168,14 @@ done
 Every realm you add later brings its own secret fields, and the same rule
 applies to them — see [auth-realms.md](auth-realms.md).
 
+### Token issuer and audience
+
+`JWT_ISSUER` and `JWT_AUDIENCE` name this product inside every token it signs,
+and verification refuses a token naming another one. `make init-project` sets
+both to the project name; set them once, before the first user signs in:
+changing either later signs every session out and voids every emailed link.
+`check_env.py` refuses a deploy that still carries `fastapi-template` in either.
+
 ### Other credentials
 
 `make init-project` fills `POSTGRES_PASSWORD`, `REDIS_PASSWORD` and

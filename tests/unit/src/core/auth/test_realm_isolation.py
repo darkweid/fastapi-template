@@ -1,12 +1,11 @@
 from fastapi import Response
-import jwt
 import pytest
 
 from src.core.auth.cookies import TokenCookieResponder
 from src.core.auth.session_issuance import issue_session_pair
 from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.auth.token_transport import TokenTransport
-from src.core.auth.tokens import rotate_session_tokens
+from src.core.auth.tokens import decode_token, rotate_session_tokens
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import TokenModel
 from src.main.config import config
@@ -74,9 +73,7 @@ async def test_a_refresh_token_of_one_realm_cannot_rotate_in_another(
         redis_client=fake_redis,
         session_id="s1",
     )
-    payload = jwt.decode(
-        tokens.refresh_token, FIRST.secret, algorithms=[config.jwt.ALGORITHM]
-    )
+    payload = decode_token(tokens.refresh_token, FIRST.secret)
 
     with pytest.raises(UnauthorizedException):
         await rotate_session_tokens(payload, fake_redis, realm=SECOND)

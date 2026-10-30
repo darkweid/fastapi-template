@@ -6,6 +6,10 @@ class JWTPayload(TypedDict):
 
     sub: str  # User ID
     exp: int  # Expiration timestamp
+    iat: int
+    iss: str
+    # A product signs one audience; a shared identity service may name several.
+    aud: str | list[str]
     # Not a closed Literal: session tokens (access_token/refresh_token) are
     # core concepts and are checked against those literals at runtime where
     # it matters (src/core/auth/credentials.py, src/core/auth/dependencies.py).

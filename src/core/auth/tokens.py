@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -17,12 +16,17 @@ from src.core.schemas import TokenModel
 from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
 
+# Verification refuses a token without them, so a token signed before a claim
+# was introduced, or by hand without one, never authenticates.
+REQUIRED_CLAIMS = ("exp", "iat", "iss", "aud", "sub")
+
 
 def sign_token(
     *,
     sub: str,
     mode: str,
     jti: str,
+    issued_at: int,
     expires_at: int,
     secret: str,
     session_id: str | None = None,
@@ -31,7 +35,10 @@ def sign_token(
     """Sign one JWT from fixed claims; the same claims sign the same bytes."""
     payload: JWTPayload = {
         "sub": sub,
+        "iat": issued_at,
         "exp": expires_at,
+        "iss": config.jwt.JWT_ISSUER,
+        "aud": config.jwt.JWT_AUDIENCE,
         "mode": mode,
         "jti": jti,
     }
@@ -42,9 +49,34 @@ def sign_token(
     return str(jwt.encode(token_data, secret, config.jwt.ALGORITHM))
 
 
-def expiry_after(ttl_minutes: int) -> int:
-    """The `exp` claim of a token issued now that lives `ttl_minutes`."""
-    return int((get_utc_now() + timedelta(minutes=ttl_minutes)).timestamp())
+def decode_token(token: str, secret: str, *, verify_exp: bool = True) -> dict[str, Any]:
+    """Verify a token's signature, issuer and audience and return its claims.
+
+    Raises the PyJWT error of the first check that fails; `verify_exp=False`
+    relaxes only the expiry, never the signature, issuer or audience.
+    """
+    return dict(
+        jwt.decode(
+            token,
+            secret,
+            algorithms=[config.jwt.ALGORITHM],
+            audience=config.jwt.JWT_AUDIENCE,
+            issuer=config.jwt.JWT_ISSUER,
+            # `iat` is required but not compared with the clock: PyJWT refuses a
+            # token issued "in the future" with no leeway, so a host whose clock
+            # lags the issuer's by a second would refuse a fresh token. `exp`
+            # bounds the lifetime on its own.
+            options={
+                "require": list(REQUIRED_CLAIMS),
+                "verify_exp": verify_exp,
+                "verify_iat": False,
+            },
+        )
+    )
+
+
+def now_seconds() -> int:
+    return int(get_utc_now().timestamp())
 
 
 def build_token(
@@ -61,11 +93,13 @@ def build_token(
     the token is not live until a caller stores the jti.
     """
     jti = str(uuid4())
+    issued_at = now_seconds()
     token = sign_token(
         sub=sub,
         mode=mode,
         jti=jti,
-        expires_at=expiry_after(ttl_minutes),
+        issued_at=issued_at,
+        expires_at=issued_at + ttl_minutes * 60,
         secret=secret,
         session_id=session_id,
         extra_data=extra_data,
@@ -123,10 +157,10 @@ async def issue_token(
         # longest-lived credential of any session.
         index_key = keys.sessions(sub)
         index_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
-        now_seconds, _ = await redis_client.time()
-        await redis_client.zremrangebyscore(index_key, 0, int(now_seconds))
+        redis_now_seconds, _ = await redis_client.time()
+        await redis_client.zremrangebyscore(index_key, 0, int(redis_now_seconds))
         await redis_client.zadd(
-            index_key, {session_id: int(now_seconds) + index_ttl_seconds}
+            index_key, {session_id: int(redis_now_seconds) + index_ttl_seconds}
         )
         await redis_client.expire(index_key, index_ttl_seconds)
 
@@ -211,6 +245,7 @@ def sign_session_pair(
             sub=subject_id,
             mode="access_token",
             jti=pair.access_jti,
+            issued_at=pair.issued_at,
             expires_at=pair.access_expires_at,
             secret=realm.secret,
             session_id=session_id,
@@ -219,6 +254,7 @@ def sign_session_pair(
             sub=subject_id,
             mode="refresh_token",
             jti=pair.refresh_jti,
+            issued_at=pair.issued_at,
             expires_at=pair.refresh_expires_at,
             secret=realm.secret,
             session_id=session_id,
@@ -246,6 +282,7 @@ async def rotate_session_tokens(
         old_payload, redis_client, keys=realm.keys
     )
 
+    issued_at = now_seconds()
     live_pair = await execute_token_rotation(
         subject_id,
         session_id,
@@ -253,10 +290,11 @@ async def rotate_session_tokens(
         redis_client,
         keys=realm.keys,
         successor=SessionPair(
+            issued_at=issued_at,
             refresh_jti=str(uuid4()),
-            refresh_expires_at=expiry_after(config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES),
+            refresh_expires_at=issued_at + config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
             access_jti=str(uuid4()),
-            access_expires_at=expiry_after(config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES),
+            access_expires_at=issued_at + config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         ),
     )
     return sign_session_pair(subject_id, session_id, live_pair, realm=realm)

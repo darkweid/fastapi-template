@@ -15,6 +15,8 @@ Key compromise is isolated: leaking the reset-password key does not allow forgin
 
 **Why it matters:** A single shared secret is a single point of failure. Separate keys follow the principle of least privilege and limit blast radius.
 
+**Issuer and audience:** every token, session and single-use alike, carries `iss` (`JWT_ISSUER`), `aud` (`JWT_AUDIENCE`) and `iat`, and every verification (`decode_token` in `tokens.py`) requires all three plus `exp` and `sub`, checks the issuer and refuses a token whose audience does not name this product. Two forks that happen to share a secret cannot accept each other's tokens. A token whose `aud` is a list passes when the list names this product, the shape a sign-in service shared by several products issues. Changing either value signs every live session out and voids every link already sent, and so does the deploy that introduces them: during a rolling restart old and new instances refuse each other's tokens.
+
 ## Refresh Token Rotation and Reuse Detection
 
 `src/core/auth/rotate_refresh_token.lua`, `src/core/auth/token_helpers.py`
@@ -22,7 +24,7 @@ Key compromise is isolated: leaking the reset-password key does not allow forgin
 Every refresh request atomically (via Lua script):
 1. Checks if the presented JTI was already consumed. Within `REFRESH_TOKEN_REUSE_GRACE_SECONDS` (default 30, at most 60) of the rotation that consumed it, while the refresh token that rotation handed out is still the session's live one (not rotated yet), the replay is a client that lost the answer (`REPLAY`): it gets that same pair again, signed byte for byte, and nothing in Redis changes. Otherwise it is `REUSED`.
 2. Validates the JTI matches the stored active token (`INVALID`).
-3. Marks the old JTI as used, stamped with the rotation instant and the new pair's JTIs and expiry instants, with a TTL equal to the refresh token lifetime.
+3. Marks the old JTI as used, stamped with the rotation instant and the new pair's JTIs, issue instant and expiry instants, with a TTL equal to the refresh token lifetime.
 4. Stores the new refresh and access JTIs in place of the old pair, records the access JTI as the session's `latest-access` (the one token logout accepts), and refreshes the session's entry in the per-subject index, so a concurrent wipe of every session (password change, logout everywhere) cannot miss the new pair.
 
 A consumed token presented again in any other case **ends its session immediately** - that session only. This detects stolen refresh tokens: an attacker replaying a token the legitimate client already rotated, or the client replaying one the attacker rotated, kills the session both hold. The subject's other sessions stay: a stolen refresh token reaches no other session, and ending them all would let anyone holding an old token sign the subject out everywhere.

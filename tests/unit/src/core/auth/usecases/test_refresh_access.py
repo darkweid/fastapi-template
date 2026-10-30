@@ -1,14 +1,13 @@
 from dataclasses import dataclass
 from unittest.mock import Mock
 
-import jwt
 import pytest
 
 from src.core.auth.credentials import verify_jti
 from src.core.auth.session_issuance import issue_session_pair
+from src.core.auth.tokens import decode_token
 from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
 from src.core.errors.exceptions import AccessForbiddenException, UnauthorizedException
-from src.main.config import config
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.realm import build_test_realm
 
@@ -29,9 +28,7 @@ async def _build_old_payload(fake_redis: InMemoryRedis, session_id: str = "s1"):
         redis_client=fake_redis,
         session_id=session_id,
     )
-    return jwt.decode(
-        tokens.refresh_token, REALM.secret, algorithms=[config.jwt.ALGORITHM]
-    )
+    return decode_token(tokens.refresh_token, REALM.secret)
 
 
 @pytest.mark.asyncio
@@ -48,12 +45,8 @@ async def test_execute_rotates_the_refresh_token_and_keeps_the_session_id(
 
     result = await use_case.execute(principal, old_payload)
 
-    new_refresh_payload = jwt.decode(
-        result.refresh_token, REALM.secret, algorithms=[config.jwt.ALGORITHM]
-    )
-    new_access_payload = jwt.decode(
-        result.access_token, REALM.secret, algorithms=[config.jwt.ALGORITHM]
-    )
+    new_refresh_payload = decode_token(result.refresh_token, REALM.secret)
+    new_access_payload = decode_token(result.access_token, REALM.secret)
     assert new_refresh_payload["session_id"] == "s1"
     assert new_access_payload["session_id"] == "s1"
     assert new_access_payload["mode"] == "access_token"
@@ -72,9 +65,7 @@ async def test_execute_hands_out_a_live_pair_and_retires_the_old_access_token(
         redis_client=fake_redis,
         session_id="s2",
     )
-    old_payload = jwt.decode(
-        old_tokens.refresh_token, REALM.secret, algorithms=[config.jwt.ALGORITHM]
-    )
+    old_payload = decode_token(old_tokens.refresh_token, REALM.secret)
     use_case = RefreshAccessUseCase(fake_redis, realm=REALM, admission=Mock())
 
     result = await use_case.execute(FakePrincipal(id=SUBJECT_ID), old_payload)

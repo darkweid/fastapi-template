@@ -9,6 +9,7 @@ from src.core.auth.jwt_payload_schema import JWTPayload
 import src.core.auth.one_time_tokens as one_time_tokens
 import src.core.auth.token_helpers as token_helpers
 import src.core.auth.tokens as tokens
+from src.core.auth.tokens import decode_token
 from src.core.errors.exceptions import UnauthorizedException
 from src.main.config import config
 from src.user.auth.realm import (
@@ -85,12 +86,7 @@ async def test_create_access_token_stores_jti(
     token = await tokens.create_access_token(
         {"sub": "user"}, redis_client=fake_redis, realm=USER_AUTH_REALM
     )
-    decoded = jwt.decode(
-        token,
-        TEST_JWT_USER_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
-    )
+    decoded = decode_token(token, TEST_JWT_USER_SECRET_KEY, verify_exp=False)
 
     assert decoded["sub"] == "user"
     assert decoded["mode"] == "access_token"
@@ -113,12 +109,7 @@ async def test_create_access_token_ignores_removed_family_claim(
         session_id="session-1",
         realm=USER_AUTH_REALM,
     )
-    decoded = jwt.decode(
-        token,
-        TEST_JWT_USER_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
-    )
+    decoded = decode_token(token, TEST_JWT_USER_SECRET_KEY, verify_exp=False)
 
     assert "family" not in decoded
     assert decoded["session_id"] == "session-1"
@@ -139,12 +130,7 @@ async def test_create_refresh_token_stores_jti(
     token = await tokens.create_refresh_token(
         {"sub": "user"}, redis_client=fake_redis, realm=USER_AUTH_REALM
     )
-    decoded = jwt.decode(
-        token,
-        TEST_JWT_USER_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
-    )
+    decoded = decode_token(token, TEST_JWT_USER_SECRET_KEY, verify_exp=False)
 
     assert decoded["mode"] == "refresh_token"
     assert (
@@ -191,12 +177,7 @@ async def test_issue_one_time_token_stores_active_jti_for_verification(
         ttl_minutes=5,
         redis_client=fake_redis,
     )
-    decoded = jwt.decode(
-        token,
-        TEST_JWT_USER_VERIFY_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
-    )
+    decoded = decode_token(token, TEST_JWT_USER_VERIFY_SECRET_KEY, verify_exp=False)
 
     assert decoded["mode"] == "verification_token"
     assert decoded["identifier"] == "user@example.com"
@@ -206,6 +187,34 @@ async def test_issue_one_time_token_stores_active_jti_for_verification(
         await fake_redis.get(one_time_token_key("verification", "user@example.com"))
         == decoded["jti"]
     )
+
+
+@pytest.mark.asyncio
+async def test_decode_one_time_token_refuses_a_token_for_another_product(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A link minted by a sibling product sharing the secret must not confirm
+    an address here, and must leave this product's live challenge unspent."""
+    own_audience = config.jwt.JWT_AUDIENCE
+    monkeypatch.setattr(config.jwt, "JWT_AUDIENCE", "another-product")
+    token = await one_time_tokens.issue_one_time_token(
+        realm=USER_AUTH_REALM,
+        purpose=VERIFICATION_PURPOSE,
+        identifier="user@example.com",
+        mode="verification_token",
+        ttl_minutes=30,
+        redis_client=fake_redis,
+    )
+    monkeypatch.setattr(config.jwt, "JWT_AUDIENCE", own_audience)
+
+    with pytest.raises(jwt.InvalidAudienceError):
+        await one_time_tokens.decode_one_time_token(
+            token,
+            realm=USER_AUTH_REALM,
+            purpose=VERIFICATION_PURPOSE,
+            redis_client=fake_redis,
+        )
+    assert await fake_redis.get(one_time_token_key("verification", "user@example.com"))
 
 
 @pytest.mark.asyncio
@@ -229,17 +238,11 @@ async def test_issue_one_time_token_invalidates_previous_jti_for_verification(
         redis_client=fake_redis,
     )
 
-    first_decoded = jwt.decode(
-        first_token,
-        TEST_JWT_USER_VERIFY_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
+    first_decoded = decode_token(
+        first_token, TEST_JWT_USER_VERIFY_SECRET_KEY, verify_exp=False
     )
-    second_decoded = jwt.decode(
-        second_token,
-        TEST_JWT_USER_VERIFY_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
+    second_decoded = decode_token(
+        second_token, TEST_JWT_USER_VERIFY_SECRET_KEY, verify_exp=False
     )
 
     assert first_decoded["jti"] != second_decoded["jti"]
@@ -264,12 +267,7 @@ async def test_issue_one_time_token_stores_active_jti_for_reset_password(
         ttl_minutes=5,
         redis_client=fake_redis,
     )
-    decoded = jwt.decode(
-        token,
-        TEST_JWT_RESET_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
-    )
+    decoded = decode_token(token, TEST_JWT_RESET_SECRET_KEY, verify_exp=False)
 
     assert decoded["mode"] == "reset_password_token"
     assert decoded["identifier"] == "user@example.com"
@@ -302,17 +300,11 @@ async def test_issue_one_time_token_invalidates_previous_jti_for_reset_password(
         redis_client=fake_redis,
     )
 
-    first_decoded = jwt.decode(
-        first_token,
-        TEST_JWT_RESET_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
+    first_decoded = decode_token(
+        first_token, TEST_JWT_RESET_SECRET_KEY, verify_exp=False
     )
-    second_decoded = jwt.decode(
-        second_token,
-        TEST_JWT_RESET_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
+    second_decoded = decode_token(
+        second_token, TEST_JWT_RESET_SECRET_KEY, verify_exp=False
     )
 
     assert first_decoded["jti"] != second_decoded["jti"]
@@ -344,6 +336,7 @@ async def test_validate_token_structure_missing_fields(
 
 
 SUCCESSOR = token_helpers.SessionPair(
+    issued_at=FROZEN_NOW,
     refresh_jti="j2",
     refresh_expires_at=FROZEN_NOW + 600,
     access_jti="a2",
@@ -548,11 +541,8 @@ async def test_refresh_rotation_invalidates_previous_access_token_for_same_sessi
         session_id="session-1",
         realm=USER_AUTH_REALM,
     )
-    refresh_payload = jwt.decode(
-        refresh_token,
-        TEST_JWT_USER_SECRET_KEY,
-        algorithms=["HS256"],
-        options={"verify_exp": False},
+    refresh_payload = decode_token(
+        refresh_token, TEST_JWT_USER_SECRET_KEY, verify_exp=False
     )
 
     rotated = await tokens.rotate_session_tokens(

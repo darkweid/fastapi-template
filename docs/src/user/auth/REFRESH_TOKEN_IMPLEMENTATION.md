@@ -51,7 +51,7 @@ both cookies at their respective paths; this is a no-op for a client that never
 received them (`body` transport).
 
 Logout authenticates through `get_logout_identity`, which verifies the access token's
-signature but not its `exp`, and answers `None` rather than raising when it cannot
+signature, issuer and audience but not its `exp`, and answers `None` rather than raising when it cannot
 identify a session. Every other endpoint rejects an expired token, but logout cannot
 afford to: the refresh cookie is scoped to the refresh route and never reaches
 `/logout`, and a browser cannot drop an httponly cookie on its own — so a rejected
@@ -121,7 +121,7 @@ CSRF check fails → 403 (`CsrfFailedError`, `csrf_failed`).
 - Endpoint `POST /v1/users/auth/login/refresh` resolves the refresh token via `get_refresh_credentials` (cookie first, `Authorization` header second — see "Transport: cookie vs body" above), runs the CSRF gate (`verify_csrf`) when the token came from the cookie, then uses `get_access_by_refresh_token` to decode the token.
 - Dependency order on the route matters and is pinned by a test. `verify_csrf` is declared as a route-level dependency *between* the IP-based rate limiter and the user-scoped one, because the user-scoped limiter's identifier (`get_user_id_from_refresh_token`) reads and verifies the refresh cookie. Were CSRF checked later, a forged cross-site request would consume the victim's refresh budget — and could reach reuse detection — before being rejected with 403.
 - `verify_jti` (`src/core/auth/credentials.py`):
-  - Strips `Bearer` prefix if present and decodes JWT with the realm's secret (`JWT_USER_SECRET_KEY` for this realm).
+  - Strips `Bearer` prefix if present and decodes JWT with the realm's secret (`JWT_USER_SECRET_KEY` for this realm) through `decode_token`, which also checks `iss` and `aud`.
   - Extracts `jti`, `mode`, `sub` (user_id), `session_id`.
   - For refresh tokens:
     - Reads `user:used:<user_id>:<jti>`. A marker younger than `REFRESH_TOKEN_REUSE_GRACE_SECONDS` whose pair is still the session's live refresh token lets the token through to rotation, which answers that pair again (the client lost the answer); any other marker ends the session and returns 401 (“Token reuse detected”).
