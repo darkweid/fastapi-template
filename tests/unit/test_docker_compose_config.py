@@ -209,6 +209,16 @@ def test_postgres_reads_the_profile_last() -> None:
     assert f"mkdir -p {PROFILE_CONF_DIR}" in dockerfile
 
 
+def test_the_pgbackrest_config_directory_is_enterable() -> None:
+    """COPY --chmod=0644 gives the directory it creates the same mode, and then
+    neither postgres nor supercronic can read the config or the crontab."""
+    dockerfile = (PROJECT_ROOT / "infra/postgres/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "chmod 0755 /etc/pgbackrest" in dockerfile
+
+
 BACKUP_ENV_FILE = "../.env.backup"
 
 

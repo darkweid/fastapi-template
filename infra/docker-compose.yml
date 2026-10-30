@@ -73,6 +73,9 @@ services:
   backup:
     container_name: template-backup
     image: template-postgres:18
+    # The image is built for postgres and exists only locally; without this a
+    # pull asks Docker Hub for it and fails with "pull access denied".
+    pull_policy: never
     profiles: [backup]
     user: postgres
     command: ["supercronic", "/etc/pgbackrest/crontab"]
