@@ -515,3 +515,35 @@ def test_the_pgbackrest_directories_exist_before_the_stanza_is_created() -> None
         < script.index(BACKUP_STANZA_CREATE)
     )
     assert "pgbackrest/spool" in script and "pgbackrest/state" in script
+
+
+def test_the_post_reboot_wait_lists_the_backup_sidecar_when_backups_are_on() -> None:
+    """Without the profile `config` and `ps` never name the sidecar, and a
+    crash-looping one passes `make server-reboot`."""
+    tasks = yaml.safe_load(
+        (
+            PROJECT_ROOT / "infra/ansible/roles/app_checkout/tasks/stack_health.yml"
+        ).read_text(encoding="utf-8")
+    )
+    commands = {
+        task["name"]: task["ansible.builtin.command"]["cmd"]
+        for task in tasks
+        if "ansible.builtin.command" in task
+    }
+    compose = next(
+        task["ansible.builtin.set_fact"]["app_checkout_stack_compose"]
+        for task in tasks
+        if "app_checkout_stack_compose" in task.get("ansible.builtin.set_fact", {})
+    )
+
+    assert (
+        commands["Read whether backups are on"]
+        == "python3 scripts/ops/check_env.py --enabled BACKUP_ENABLED"
+    )
+    assert "--profile backup" in compose
+    assert commands["Read the services that should be running"].startswith(
+        "{{ app_checkout_stack_compose }} "
+    )
+    assert commands[
+        "Wait for every long-running service to be up and healthy"
+    ].startswith("{{ app_checkout_stack_compose }} ")

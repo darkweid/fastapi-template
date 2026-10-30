@@ -125,6 +125,22 @@ without `target` the drill fails when the last replayed transaction is older tha
 hours (`VERIFY_MAX_REPLAY_AGE_SECONDS` overrides the limit, in seconds). The check applies
 only without a target, since a drill to a past moment is old by design.
 
+A failure with no replayed transaction at all means nothing committed after the newest
+backup reached the repository. Right after a backup on a database nobody writes to (a box
+before its first users, a drill straight after `make backup-now`) that is expected: commit
+one transaction and close its WAL segment on the live server, then rerun the drill.
+
+```sql
+-- in `make psql` on the live box
+select txid_current();
+select pg_switch_wal();
+```
+
+`txid_current()` assigns a transaction id, so its commit writes a commit record with a
+timestamp; `pg_switch_wal()` closes the segment so the archiver ships it at once instead of
+after `archive_timeout`. If the database did have writes since the backup, treat it as the
+WAL gap below.
+
 A failure on age has two causes:
 
 - A quiet database. No write for two hours leaves nothing newer to replay. Look at whether
