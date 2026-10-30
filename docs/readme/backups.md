@@ -224,8 +224,9 @@ lock has ended. Act in this order:
    }
    export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
    s3api list-object-versions --bucket "$BUCKET" --prefix pgbackrest/ \
-     --query 'DeleteMarkers[?IsLatest].[Key, VersionId]' --output text > markers.txt
+     --query 'DeleteMarkers[?IsLatest] | [].[Key, VersionId]' --output text > markers.txt
    while read -r key version; do
+     [ "$key" = None ] && continue
      s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$version"
    done < markers.txt
    ```
@@ -234,8 +235,8 @@ lock has ended. Act in this order:
    `.env.backup` overrides it). Do this within 10 days of the markers being added: lifecycle
    expires a version 10 days after it became noncurrent, and the hidden versions are gone for
    good after that. An object the key overwrote instead of deleting has a new locked version on
-   top; copy the previous version back over it (`s3api copy-object --copy-source
-   "$BUCKET/<key>?versionId=<id>"`).
+   top; copy the previous version back over it (`s3api copy-object --bucket "$BUCKET"
+   --key <key> --copy-source "$BUCKET/<key>?versionId=<id>"`).
 3. `make backup-info` must list the backups and a WAL range ending a minute or two ago. Run
    the drill (`make backup-verify`) and take a full backup (`make backup-now type=full`).
 

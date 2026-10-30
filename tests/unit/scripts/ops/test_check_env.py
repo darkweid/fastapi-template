@@ -626,7 +626,7 @@ def test_backup_on_accepts_a_queue_limit_pgbackrest_parses(value: str) -> None:
     assert collect_problems(example, actual) == []
 
 
-# Refused by pgBackRest 2.60 at option parsing ("16 GiB", "16G1B", "16.5GB",
+# Refused by pgBackRest 2.60 at option parsing ("16 GiB", "16G1B", "16Gi", "16.5GB",
 # "-1GB", "1EB", "5PB"), or accepted by it but dropping every WAL segment
 # ("0", "16B", "1KB": a queue smaller than one 16 MiB segment).
 @pytest.mark.parametrize(
@@ -634,6 +634,8 @@ def test_backup_on_accepts_a_queue_limit_pgbackrest_parses(value: str) -> None:
     [
         "16 GiB",
         "16G1B",
+        "16Gi",
+        "16mi",
         "16.5GB",
         "-1GB",
         "+16GB",

@@ -59,7 +59,9 @@ BACKUP_QUEUE_MAX_KEY = "BACKUP_ARCHIVE_QUEUE_MAX"
 # optional unit, case ignored, every unit binary (KB is KiB). pgBackRest refuses
 # anything else at option parsing, so archive-push fails before its async process
 # starts and nothing bounds the queue.
-BACKUP_QUEUE_MAX_PATTERN = re.compile(r"^([0-9]+)(?:([kmgtp])i?b?|b)?$", re.IGNORECASE)
+BACKUP_QUEUE_MAX_PATTERN = re.compile(
+    r"^([0-9]+)(?:([kmgtp])(?:ib|b)?|b)?$", re.IGNORECASE
+)
 BACKUP_QUEUE_MAX_UNITS = {"k": 1, "m": 2, "g": 3, "t": 4, "p": 5}
 # Below one WAL segment every segment is dropped; above 4PiB pgBackRest refuses.
 BACKUP_QUEUE_MAX_RANGE = (16 * 1024**2, 4 * 1024**5)
