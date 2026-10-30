@@ -37,6 +37,11 @@ PUBLIC_URL_KEYS = ("PUBLIC_BASE_URL",)
 # also refuses a name with no profile behind it.
 REQUIRED_IN_DEPLOY_KEYS = ("RESOURCE_PROFILE",)
 
+# `make init-project` renames these to the project; a box still carrying the
+# template's name accepts tokens of every other fork that skipped it too.
+TOKEN_NAME_KEYS = ("JWT_ISSUER", "JWT_AUDIENCE")
+TEMPLATE_PROJECT_NAME = "fastapi-template"
+
 # get_s3_adapter refuses to build a client at all while S3 is disabled, so a
 # placeholder credential sitting under this prefix costs nothing and should
 # not fail the gate - only S3_ENABLED itself is checked in that state.
@@ -243,6 +248,12 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
         forbidden = FORBIDDEN_BOOLEANS.get(key)
         if forbidden is not None and as_bool(value) is forbidden:
             problems.append(f"{key}={value} is not allowed outside local development")
+
+        if key in TOKEN_NAME_KEYS and value.strip() == TEMPLATE_PROJECT_NAME:
+            problems.append(
+                f"{key} still names the template: run make init-project or set "
+                "the project's own name"
+            )
 
         if key in REQUIRED_IN_DEPLOY_KEYS and not value.strip():
             problems.append(f"{key} is empty: a deploy needs it set")

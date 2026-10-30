@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
 from unittest.mock import AsyncMock
@@ -10,12 +11,14 @@ from src.core.auth.credentials import verify_jti
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.session_issuance import issue_session_pair
 import src.core.auth.token_helpers as token_helpers
-from src.core.auth.tokens import rotate_session_tokens
+import src.core.auth.tokens as tokens
+from src.core.auth.tokens import decode_token, rotate_session_tokens
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import TokenModel
 from src.main.config import config
 from src.user.auth.realm import USER_AUTH_REALM
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.providers import ProvideValue
 
 TEST_JWT_USER_SECRET_KEY = "test-jwt-user-secret-key-not-real"
 
@@ -37,9 +40,7 @@ def _base_payload() -> dict[str, str | int]:
 
 
 def _decode(token: str | None) -> Any:
-    return jwt.decode(
-        token, config.jwt.JWT_USER_SECRET_KEY, algorithms=[config.jwt.ALGORITHM]
-    )
+    return decode_token(token, config.jwt.JWT_USER_SECRET_KEY)
 
 
 @pytest.fixture(autouse=True)
@@ -65,11 +66,7 @@ async def test_rotate_session_tokens_success(fake_redis: InMemoryRedis) -> None:
     )
 
     tokens = await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
-    decoded = jwt.decode(
-        tokens.refresh_token,
-        config.jwt.JWT_USER_SECRET_KEY,
-        algorithms=[config.jwt.ALGORITHM],
-    )
+    decoded = decode_token(tokens.refresh_token, config.jwt.JWT_USER_SECRET_KEY)
 
     assert decoded["session_id"] == payload["session_id"]
     assert decoded["jti"] != payload["jti"]
@@ -133,6 +130,7 @@ async def test_rotation_stamps_the_instant_and_the_new_pair_on_the_used_marker(
         "refresh_expires_at": refresh["exp"],
         "access_jti": access["jti"],
         "access_expires_at": access["exp"],
+        "issued_at": access["iat"],
     }
 
 
@@ -158,7 +156,13 @@ async def test_a_replay_inside_the_grace_window_gets_the_same_pair(
     """A mobile client whose refresh response was lost retries with the token it
     still holds; a 401 there signs it out for a network blip, and a new pair
     would leave the first one live beside it."""
+    rotated_at = datetime.fromtimestamp(FROZEN_NOW, tz=timezone.utc)
+    monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(rotated_at))
     payload, rotated = await _rotate_once(fake_redis, monkeypatch, grace=30)
+    # The replay is signed from the marker, never from the clock of the retry.
+    monkeypatch.setattr(
+        tokens, "get_utc_now", ProvideValue(rotated_at + timedelta(seconds=30))
+    )
     live_keys = {
         key: await fake_redis.get(key)
         for key in (
@@ -263,7 +267,13 @@ async def test_a_replay_after_a_logout_is_refused_without_calling_it_reuse(
     await token_helpers.invalidate_session(
         "user-id", "old-session", fake_redis, keys=AUTH_KEYS
     )
-    token = jwt.encode(payload, TEST_JWT_USER_SECRET_KEY, algorithm="HS256")
+    claims = {
+        **payload,
+        "iat": FROZEN_NOW,
+        "iss": config.jwt.JWT_ISSUER,
+        "aud": config.jwt.JWT_AUDIENCE,
+    }
+    token = jwt.encode(claims, TEST_JWT_USER_SECRET_KEY, algorithm="HS256")
 
     with pytest.raises(UnauthorizedException, match="Token invalidated or expired"):
         await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
@@ -368,11 +378,7 @@ async def _live_session(fake_redis: InMemoryRedis) -> JWTPayload:
         redis_client=fake_redis,
         session_id="session-1",
     )
-    return jwt.decode(
-        tokens.refresh_token,
-        config.jwt.JWT_USER_SECRET_KEY,
-        algorithms=[config.jwt.ALGORITHM],
-    )
+    return decode_token(tokens.refresh_token, config.jwt.JWT_USER_SECRET_KEY)
 
 
 async def _assert_dead(token: str, fake_redis: InMemoryRedis) -> None:

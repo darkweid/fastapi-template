@@ -16,6 +16,7 @@ from scripts.ops.init_project import (
     COMPOSE_FILE,
     DEFAULT_SUBNET,
     EDITED_FILES,
+    ENV_EXAMPLE_FILE,
     NAME_PREFIX,
     NAME_PREFIX_COUNTS,
     PASSWORD_KEYS,
@@ -185,6 +186,7 @@ def test_rename_leaves_no_template_name(template_files: Path) -> None:
     assert "    name: myapp-network\n" in compose
     assert "  app-network:\n" in compose
     assert "myapp-test-$$$$" in planned["Makefile"]
+    assert "\nJWT_ISSUER=myapp\nJWT_AUDIENCE=myapp\n" in planned[ENV_EXAMPLE_FILE]
 
 
 def test_default_subnet_leaves_the_addresses_alone(template_files: Path) -> None:
@@ -305,7 +307,8 @@ def test_a_new_secret_key_in_the_example_is_generated(tmp_path: Path) -> None:
 def test_pending_list_matches_the_deploy_gate(tmp_path: Path) -> None:
     """The summary must name exactly what check_env.py will refuse at the first
     deploy: placeholders outside dormant S3 keys, a localhost
-    PUBLIC_BASE_URL and an empty RESOURCE_PROFILE."""
+    PUBLIC_BASE_URL, an empty RESOURCE_PROFILE and a token name left at the
+    template's."""
     text = build_env(EXAMPLE_TEXT)
     gate = collect_problems(_parsed(EXAMPLE_TEXT, tmp_path), _parsed(text, tmp_path))
 
@@ -342,15 +345,14 @@ def test_hints_name_what_an_existing_env_needs() -> None:
     )
 
     assert env_hints(options) == (
+        "JWT_ISSUER=myapp",
+        "JWT_AUDIENCE=myapp",
         'PROJECT_NAME="Shop"',
         'TRUST_PROXY_HOSTS=["127.0.0.1","::1","10.42.7.128/25"]',
     )
-    assert (
-        env_hints(
-            Options(name="myapp", title=None, subnet=DEFAULT_SUBNET, dry_run=False)
-        )
-        == ()
-    )
+    assert env_hints(
+        Options(name="myapp", title=None, subnet=DEFAULT_SUBNET, dry_run=False)
+    ) == ("JWT_ISSUER=myapp", "JWT_AUDIENCE=myapp")
 
 
 def _git(root: Path, *args: str) -> None:

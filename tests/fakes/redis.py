@@ -464,6 +464,7 @@ class InMemoryRedis:
         access_ttl_seconds = int(keys_and_args[12])
         new_refresh_expires_at = int(keys_and_args[13])
         new_access_expires_at = int(keys_and_args[14])
+        new_issued_at = int(keys_and_args[15])
 
         now = int(self.wall_clock())
 
@@ -500,6 +501,7 @@ class InMemoryRedis:
                     "refresh_expires_at": new_refresh_expires_at,
                     "access_jti": new_access_jti,
                     "access_expires_at": new_access_expires_at,
+                    "issued_at": new_issued_at,
                 }
             ),
             ttl_seconds=used_ttl_seconds,

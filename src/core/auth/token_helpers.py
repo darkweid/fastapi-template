@@ -95,12 +95,14 @@ async def validate_token_structure(
 
 
 class SessionPair(NamedTuple):
-    """The jtis and expiry instants (unix seconds) of one access/refresh pair.
+    """The jtis, issue instant and expiry instants (unix seconds) of one
+    access/refresh pair.
 
     Everything a token's signature covers besides the subject, the session and
     the mode, so the same pair can be signed again byte for byte.
     """
 
+    issued_at: int
     refresh_jti: str
     refresh_expires_at: int
     access_jti: str
@@ -130,6 +132,7 @@ def parse_used_marker(value: str) -> UsedMarker | None:
         return UsedMarker(
             rotated_at=int(raw["at"]),
             successor=SessionPair(
+                issued_at=int(raw["issued_at"]),
                 refresh_jti=refresh_jti,
                 refresh_expires_at=int(raw["refresh_expires_at"]),
                 access_jti=access_jti,
@@ -223,6 +226,7 @@ async def execute_token_rotation(
             str(config.jwt.ACCESS_TOKEN_EXPIRE_MINUTES * 60),
             str(successor.refresh_expires_at),
             str(successor.access_expires_at),
+            str(successor.issued_at),
         ),
     )
 

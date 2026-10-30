@@ -278,6 +278,12 @@ class JWTConfig(BaseSettings):
 
     ALGORITHM: Literal["HS256", "HS384", "HS512"]
 
+    # Every token names who signed it (`iss`) and which product it is for
+    # (`aud`); verification refuses a token missing either, signed by another
+    # issuer, or whose `aud` (a string or a list) does not name this product.
+    JWT_ISSUER: str = Field(min_length=1, max_length=64)
+    JWT_AUDIENCE: str = Field(min_length=1, max_length=64)
+
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)
     VERIFICATION_TOKEN_EXPIRE_MINUTES: int = Field(gt=0)

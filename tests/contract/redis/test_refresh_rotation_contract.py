@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from datetime import timedelta
 import json
 from typing import Any, cast
 from uuid import uuid4
@@ -10,9 +11,11 @@ from redis.asyncio import Redis
 
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.session_issuance import issue_session_pair
+import src.core.auth.tokens as tokens
 from src.core.auth.tokens import rotate_session_tokens
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.schemas import TokenModel
+from src.core.utils.datetime_utils import get_utc_now
 from src.main.config import config
 from src.user.auth.realm import USER_AUTH_REALM
 
@@ -84,6 +87,9 @@ async def test_second_use_inside_the_grace_window_gets_the_same_pair(
     subject_id = str(uuid4())
     old = await _login(redis_backend, subject_id)
     rotated = await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
+    # A retry a second or more later must still get the pair signed at rotation.
+    later = get_utc_now() + timedelta(seconds=5)
+    monkeypatch.setattr(tokens, "get_utc_now", lambda: later)
 
     replayed = await rotate_session_tokens(old, redis_backend, realm=USER_AUTH_REALM)
 

@@ -319,7 +319,7 @@ for `app.conf` once the certificate is in place.
 
 ## Useful Make Targets
 - `make` (or `make help`) — list every target with its description
-- `make init-project NAME=<slug> [TITLE="..."] [SUBNET=a.b.c.0/24] [DRY_RUN=1]` — once, on a fresh fork: rename the compose project, containers, images, volumes and network, optionally move the pinned subnet, and write `.env` with generated secrets (`docs/readme/bootstrap.md`)
+- `make init-project NAME=<slug> [TITLE="..."] [SUBNET=a.b.c.0/24] [DRY_RUN=1]` — once, on a fresh fork: rename the compose project, containers, images, volumes and network, optionally move the pinned subnet, name the token issuer and audience after the project, and write `.env` with generated secrets (`docs/readme/bootstrap.md`)
 - `make run-dev` — build+up with override (reload)
 - `make run` — build+up prod-like
 - `make migrate` / `make migration m="add users table"` — apply/create Alembic revisions

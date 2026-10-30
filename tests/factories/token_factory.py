@@ -31,7 +31,10 @@ def build_access_payload(
     )
     return {
         "sub": user_id,
+        "iat": int(get_utc_now().timestamp()),
         "exp": int(expire.timestamp()),
+        "iss": config.jwt.JWT_ISSUER,
+        "aud": config.jwt.JWT_AUDIENCE,
         "mode": "access_token",
         "jti": jti or str(uuid4()),
         "session_id": session_id or str(uuid4()),
@@ -50,7 +53,10 @@ def build_refresh_payload(
     )
     return {
         "sub": user_id,
+        "iat": int(get_utc_now().timestamp()),
         "exp": int(expire.timestamp()),
+        "iss": config.jwt.JWT_ISSUER,
+        "aud": config.jwt.JWT_AUDIENCE,
         "mode": "refresh_token",
         "jti": jti or str(uuid4()),
         "session_id": session_id or str(uuid4()),

@@ -76,6 +76,124 @@ async def test_verify_jti_accepts_bearer_prefix(fake_redis: InMemoryRedis) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"aud": "another-product"},
+        {"iss": "another-issuer"},
+        {"aud": None},
+        {"iss": None},
+        {"iat": None},
+        {"sub": None},
+        {"exp": None},
+        {"aud": ["another-product"]},
+    ],
+    ids=[
+        "foreign-audience",
+        "foreign-issuer",
+        "no-audience",
+        "no-issuer",
+        "no-iat",
+        "no-subject",
+        "no-expiry",
+        "audience-list-without-this-product",
+    ],
+)
+async def test_verify_jti_refuses_a_token_not_issued_for_this_product(
+    fake_redis: InMemoryRedis, claims: dict[str, object]
+) -> None:
+    """A product sharing the signing secret, or an identity service signing for
+    several products, must not reach this one with a token meant elsewhere."""
+    payload: dict[str, object] = {**build_access_payload("user-1"), **claims}
+    payload = {key: value for key, value in payload.items() if value is not None}
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        AUTH_KEYS.access("user-1", str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=60,
+    )
+
+    with pytest.raises(UnauthorizedException, match="Invalid token"):
+        await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
+
+
+@pytest.mark.asyncio
+async def test_verify_jti_accepts_a_token_naming_several_audiences(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """A shared identity service lists every product a token is good for."""
+    payload = {
+        **build_access_payload("user-1"),
+        "aud": ["another-product", config.jwt.JWT_AUDIENCE],
+    }
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        AUTH_KEYS.access("user-1", str(payload["session_id"])),
+        str(payload["jti"]),
+        ex=60,
+    )
+
+    result = await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
+
+    assert result["sub"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_verify_jti_accepts_a_token_issued_a_moment_ahead_of_this_clock(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Hosts behind one balancer drift by a second or two; a token one of them
+    just issued must not answer 401 on another."""
+    payload = build_access_payload("user-1")
+    payload["iat"] = payload["iat"] + 10
+    token = encode_token(dict(payload), config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        AUTH_KEYS.access("user-1", payload["session_id"]), payload["jti"], ex=60
+    )
+
+    result = await verify_jti(token, fake_redis, realm=USER_AUTH_REALM)
+
+    assert result["sub"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_ignores_a_token_without_an_expiry(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Logout relaxes the expiry check, not the requirement that the claim exist:
+    a token without `exp` would otherwise name a session forever."""
+    await _live_logout_session(fake_redis)
+    payload: dict[str, object] = dict(
+        build_access_payload("user-1", session_id="session-1", jti=LIVE_ACCESS_JTI)
+    )
+    del payload["exp"]
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+
+    assert (
+        await dependencies.get_logout_identity(redis_client=fake_redis, token=token)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logout_identity_ignores_a_token_for_another_product(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """Relaxing `exp` for logout must not relax the audience."""
+    await _live_logout_session(fake_redis)
+    payload = {
+        **build_access_payload("user-1", session_id="session-1", jti=LIVE_ACCESS_JTI),
+        "aud": "another-product",
+    }
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+
+    assert (
+        await dependencies.get_logout_identity(redis_client=fake_redis, token=token)
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_verify_jti_expired_token(fake_redis: InMemoryRedis) -> None:
     payload = build_access_payload("user-1")
     payload["exp"] = int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp())
@@ -114,6 +232,7 @@ def _used_marker(at: int, refresh_jti: str) -> str:
             "refresh_expires_at": at + 600,
             "access_jti": "successor-access",
             "access_expires_at": at + 60,
+            "issued_at": at,
         }
     )
 

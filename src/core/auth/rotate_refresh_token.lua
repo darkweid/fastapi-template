@@ -13,6 +13,7 @@ local new_access_jti = ARGV[7]
 local access_ttl_seconds = tonumber(ARGV[8])
 local new_refresh_expires_at = tonumber(ARGV[9])
 local new_access_expires_at = tonumber(ARGV[10])
+local new_issued_at = tonumber(ARGV[11])
 
 -- The Redis server clock, not the app's: every app instance compares reuse
 -- against the same clock, so the grace window needs no clock sync between them.
@@ -51,6 +52,7 @@ redis.call('SETEX', used_key, used_ttl_seconds, cjson.encode({
     refresh_expires_at = new_refresh_expires_at,
     access_jti = new_access_jti,
     access_expires_at = new_access_expires_at,
+    issued_at = new_issued_at,
 }))
 
 -- The replacement pair and its index entry land in the same unit as the check.

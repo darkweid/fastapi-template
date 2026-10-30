@@ -412,7 +412,12 @@ async def test_reset_password_confirm_invalid_mode(
     payload = {
         "email": "user@example.com",
         "mode": "other",
+        "iat": int(datetime.now(timezone.utc).timestamp()),
         "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+        "iss": config.jwt.JWT_ISSUER,
+        "aud": config.jwt.JWT_AUDIENCE,
+        "sub": "user@example.com",
+        "identifier": "user@example.com",
     }
     token = jwt.encode(
         payload, config.jwt.JWT_USER_RESET_PASSWORD_SECRET_KEY, config.jwt.ALGORITHM
@@ -638,7 +643,7 @@ async def test_verify_email_usecase_success(
 
 
 @pytest.mark.asyncio
-async def test_verify_email_usecase_invalid_token(
+async def test_verify_email_usecase_expired_token(
     fake_session: FakeAsyncSession,
     fake_redis: InMemoryRedis,
     cache: InMemoryCache,
@@ -649,7 +654,11 @@ async def test_verify_email_usecase_invalid_token(
 
     payload = {
         "email": "user@example.com",
+        "iat": int((datetime.now(timezone.utc) - timedelta(hours=2)).timestamp()),
         "exp": int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()),
+        "iss": config.jwt.JWT_ISSUER,
+        "aud": config.jwt.JWT_AUDIENCE,
+        "sub": "user@example.com",
     }
     token = jwt.encode(
         payload, config.jwt.JWT_USER_VERIFY_SECRET_KEY, config.jwt.ALGORITHM
