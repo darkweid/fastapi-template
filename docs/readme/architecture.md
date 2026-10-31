@@ -25,7 +25,7 @@ Implementations:
 - `openapi.py`: Swagger UI parameters.
 - `presentation.py`: API assembly, versioning, exception handlers.
 - `route_logging.py`: logs routes grouped by method/tag for debugging.
-- `sentry.py`: Sentry init; `SENTRY_ENABLED` gates it even if the DSN is set, and it is skipped in DEBUG/TESTING.
+- `sentry.py`: Sentry init; `SENTRY_ENABLED` gates it even if the DSN is set, and it is skipped in DEBUG/TESTING. A process whose requests carry secrets passes `disabled_integrations`, `before_send` and `before_send_transaction` to keep them out of every event.
 - `web.py`: FastAPI app factory with middleware, CORS, Sentry, routers.
 
 Benefits:
