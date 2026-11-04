@@ -206,7 +206,7 @@ services:
 
   nginx:
     container_name: template-nginx
-    image: nginx:1.31.6
+    image: nginx:1.31.7
     restart: always
     volumes:
       # The directory, never its files one by one: `git checkout` on the box
