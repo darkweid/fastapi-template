@@ -236,7 +236,9 @@ jobs:
     # Also on a skipped push with no coverage report to carry, so that commit
     # still reaches Coveralls (see the coverage lookup in `changes`).
     if: ${{ !cancelled() && ((needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.verified != 'true') || (github.event_name == 'push' && needs.changes.outputs.coverage_run == '')) }}
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: setup-python publishes no Python 3.9 for Ubuntu 26.04,
+    # and the oldest-host step below needs it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     # The only job that writes anything back to the pull request. The Coveralls
