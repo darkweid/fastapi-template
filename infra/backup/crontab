@@ -2,3 +2,5 @@
 0 22 * * 0 run-backup full
 0 22 * * 1-6 run-backup diff
 17 * * * * check-archive
+# Two hours after the backup: an expire holds the backup lock.
+0 0 * * * run-expire

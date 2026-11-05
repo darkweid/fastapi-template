@@ -429,6 +429,7 @@ BACKUP_EXAMPLE = {
     "PGBACKREST_REPO1_CIPHER_PASS": "backup-cipher-pass-not-real",
     "BACKUP_HEARTBEAT_URL": "",
     "BACKUP_ARCHIVE_HEARTBEAT_URL": "",
+    "BACKUP_EXPIRE_HEARTBEAT_URL": "",
 }
 
 
@@ -442,6 +443,7 @@ def _deployable_backup_env() -> dict[str, str]:
         "PGBACKREST_REPO1_CIPHER_PASS": "0123456789abcdef" * 4,
         "BACKUP_HEARTBEAT_URL": "https://ping.example/backup",
         "BACKUP_ARCHIVE_HEARTBEAT_URL": "https://ping.example/archive",
+        "BACKUP_EXPIRE_HEARTBEAT_URL": "https://ping.example/expire",
     }
 
 
@@ -710,6 +712,7 @@ def test_backup_on_accepts_empty_heartbeat_urls() -> None:
         **_deployable_backup_env(),
         "BACKUP_HEARTBEAT_URL": "",
         "BACKUP_ARCHIVE_HEARTBEAT_URL": "",
+        "BACKUP_EXPIRE_HEARTBEAT_URL": "",
     }
 
     assert collect_backup_problems(BACKUP_EXAMPLE, actual) == []

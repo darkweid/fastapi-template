@@ -172,31 +172,14 @@ backup-now: backup-image ## Take a pgBackRest backup now, reported to no heartbe
 	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps -e BACKUP_HEARTBEAT_URL= backup run-backup $(type)
 
 .PHONY: backup-verify
-backup-verify: backup-image ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"]
-	scripts/ops/backup_verify.sh $(if $(value target),--target $(call shell_quote,target))
+backup-verify: backup-image ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"] [timeline=N]
+	scripts/ops/backup_verify.sh $(if $(value target),--target $(call shell_quote,target)) $(if $(value timeline),--timeline $(call shell_quote,timeline))
 
 # Works on a fresh box before its first deploy. Without target it restores to
-# the end of the archived WAL. The pgBackRest directories come first, or a fresh
-# volume restores without a log file. The stanza-ready marker is written before the
-# server starts: a fresh volume has none, and without it the archive command
-# reports the new timeline's .history file archived without shipping it, so a
-# second loss would restore the old timeline and drop this box's writes. A
-# restore from the stanza is what proves this cluster owns it. `up --wait` alone
-# would return at the consistency point, before replay ends;
-# backup_restore_wait.sh waits for the server to leave recovery and fails if it
-# restarts on the way.
+# the end of the archived WAL. The steps and the reasons: backup_restore.sh.
 .PHONY: backup-restore
-backup-restore: backup-image ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] CONFIRM=1
-	$(DOCKER_COMPOSE) --profile backup stop app worker scheduler backup postgres
-	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres mkdir -p /var/lib/postgresql/pgbackrest/log /var/lib/postgresql/pgbackrest/spool /var/lib/postgresql/pgbackrest/state
-	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres pgbackrest --stanza=main --delta $(if $(value target),--type=time --target=$(call shell_quote,target) --target-action=promote) restore
-	$(DOCKER_COMPOSE) run --rm --no-deps -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
-	$(DOCKER_COMPOSE) up -d --no-deps postgres
-	scripts/ops/backup_restore_wait.sh $(DOCKER_COMPOSE)
-	@echo "PostgreSQL runs on the restored data; with BACKUP_ENABLED=true it archives the new timeline."
-	@echo "App, worker, scheduler and the backup sidecar stay stopped."
-	@echo "Next: check the data (make psql), deploy to start the rest of the stack,"
-	@echo "then take a full backup: make backup-now type=full"
+backup-restore: backup-image ## Restore the live database from the repository: make backup-restore [target="2026-10-30 14:03:00+00"] [timeline=N] CONFIRM=1
+	CONFIRM=1 RESTORE_TARGET=$(call shell_quote,target) RESTORE_TIMELINE=$(call shell_quote,timeline) scripts/ops/backup_restore.sh $(DOCKER_COMPOSE)
 
 .PHONY: psql
 psql: ## Open psql inside the postgres container

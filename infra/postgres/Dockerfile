@@ -3,14 +3,15 @@
 # version while every compose stack runs another.
 FROM postgres:18-bookworm
 
-# ca-certificates: the slim base image ships none, and every pgBackRest call to
+# procps: the drill asks the sidecar with pgrep whether an expire is running, and a
+# missing pgrep reads as no. ca-certificates: the slim base image ships none, and every pgBackRest call to
 # the S3 endpoint fails with "unable to get local issuer certificate" without it.
 # pgbackrest stays unpinned (PGDG drops old builds from its pool); the version
 # check catches a major release that renames options, which pgBackRest refuses.
 # Both layers sit above the profile ARG and the config COPY so a sizing or
 # setting change does not repeat the download.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl pgbackrest \
+    && apt-get install -y --no-install-recommends ca-certificates curl pgbackrest procps \
     && rm -rf /var/lib/apt/lists/* \
     && pgbackrest version | grep -q '^pgBackRest 2\.'
 

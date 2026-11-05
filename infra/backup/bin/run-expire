@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Nightly, apart from the backup: removes what retention expired. Hetzner Object Storage
+# cuts a silent delete batch at 60 s and keeps deleting, so an attempt can fail on work
+# that is going fine, and the next one goes on from there. A failure costs no backup:
+# backup.info changes first, and leftover WAL only keeps the repository larger.
+set -euo pipefail
+
+# An expire holding the lock would make the backup at 22:00 skip its turn. The budget
+# ends the run of 00:00 well before it, the hour a run started by hand later in the day.
+BUDGET_SECONDS="${EXPIRE_BUDGET_SECONDS:-21600}"
+# UTC, until midnight; 24 turns it off for a run that needs no schedule (the smoke).
+STOP_HOUR="${EXPIRE_STOP_HOUR:-20}"
+PAUSE_SECONDS="${EXPIRE_PAUSE_SECONDS:-60}"
+
+# Both stops exit 1 and ping nothing, never /fail: one bad night is no incident, and
+# days of silence turn the heartbeat late.
+while true; do
+    if [ "$(date -u +%H)" -ge "$STOP_HOUR" ]; then
+        echo "run-expire: no new attempt from ${STOP_HOUR}:00 UTC, the backup at 22:00 needs the lock; the next run goes on" >&2
+        exit 1
+    fi
+    if pgbackrest --stanza=main expire; then
+        break
+    fi
+    if [ "$SECONDS" -ge "$BUDGET_SECONDS" ]; then
+        echo "run-expire: stopped trying after ${SECONDS}s; the next run goes on" >&2
+        exit 1
+    fi
+    sleep "$PAUSE_SECONDS"
+done
+
+if [ -n "${BACKUP_EXPIRE_HEARTBEAT_URL:-}" ]; then
+    curl -fsS -m 10 --retry 3 -o /dev/null "$BACKUP_EXPIRE_HEARTBEAT_URL" || true
+fi
