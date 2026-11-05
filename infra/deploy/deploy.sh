@@ -377,7 +377,8 @@ if [ "$BACKUP_ENABLED" = "true" ]; then
   # purpose (a fresh box with an empty volume): restore first, see
   # docs/readme/backups.md. The outer timeout bounds the compose CLI only and
   # killing it leaves pgBackRest running in the container (its db-timeout is
-  # longer), so the inner timeout bounds the process itself.
+  # longer), so the inner timeout bounds the process itself. check's has to outlast
+  # archive-timeout in pgbackrest.conf, or a slow bucket reads as a killed check.
   echo "[deploy] creating and checking the pgBackRest stanza"
   # An existing data volume never gets the directories made at image build time,
   # and pgBackRest turns file logging off when its log directory is missing.
@@ -393,7 +394,7 @@ if [ "$BACKUP_ENABLED" = "true" ]; then
   # server of a fresh volume never fails archiving before the stanza is there;
   # check needs the wrapper to ship, hence the marker comes first.
   timeout 60 "${COMPOSE[@]}" exec -T -u postgres postgres touch /var/lib/postgresql/pgbackrest/state/stanza-ready
-  if ! timeout 300 "${COMPOSE[@]}" exec -T -u postgres postgres timeout 280 pgbackrest --stanza=main check; then
+  if ! timeout 350 "${COMPOSE[@]}" exec -T -u postgres postgres timeout 330 pgbackrest --stanza=main check; then
     echo "[deploy] pgbackrest check failed: WAL is not reaching the backup repository"
     exit 1
   fi

@@ -13,9 +13,11 @@ CRONTAB = PROJECT_ROOT / "infra/backup/crontab"
 SEGMENT = "pg_wal/000000010000000000000001"
 BACKUP_URL = "https://ping.example/backup"
 ARCHIVE_URL = "https://ping.example/archive"
+EXPIRE_URL = "https://ping.example/expire"
 
 STUB = """#!/bin/sh
 echo "$@" >> "$STUB_LOG"
+[ -z "$STUB_SIDE_EFFECT" ] || eval "$STUB_SIDE_EFFECT"
 case " $* " in *" $STUB_FAIL_ON "*) exit "${STUB_FAIL_CODE:-1}" ;; esac
 exit 0
 """
@@ -43,8 +45,11 @@ class Sandbox:
             "PGBACKREST_CALLS": str(self.pgbackrest_log),
             "CURL_CALLS": str(self.curl_log),
             "STUB_FAIL_ON": "never-matches",
+            "STUB_SIDE_EFFECT": "",
             "BACKUP_HEARTBEAT_URL": BACKUP_URL,
             "BACKUP_ARCHIVE_HEARTBEAT_URL": ARCHIVE_URL,
+            "BACKUP_EXPIRE_HEARTBEAT_URL": EXPIRE_URL,
+            "EXPIRE_PAUSE_SECONDS": "0",
         }
 
     def mark_stanza_ready(self) -> None:
@@ -316,6 +321,174 @@ def _failing_curl(sandbox: Sandbox) -> Path:
     return directory
 
 
+EXPIRE_DATE_STUB = """#!/bin/sh
+[ "$*" = "-u +%H" ] && cat "$EXPIRE_HOUR_FILE"
+"""
+EXPIRE_SLEEP_STUB = """#!/bin/sh
+echo "$1" >> "$SLEEP_CALLS"
+"""
+
+
+class ExpireSandbox(Sandbox):
+    """run-expire with the clock and its pause stubbed: it reads the hour on every
+    attempt, so the real one would fail these tests from 20:00 UTC on."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.hour_file = root / "hour"
+        self.sleep_log = root / "sleep.calls"
+        self.set_hour("12")
+        for name, body in (("date", EXPIRE_DATE_STUB), ("sleep", EXPIRE_SLEEP_STUB)):
+            stub = self.stubs / name
+            stub.write_text(body)
+            stub.chmod(0o755)
+        self.env["EXPIRE_HOUR_FILE"] = str(self.hour_file)
+        self.env["SLEEP_CALLS"] = str(self.sleep_log)
+
+    def set_hour(self, hour: str) -> None:
+        self.hour_file.write_text(f"{hour}\n")
+
+    def sleeps(self) -> list[str]:
+        return _lines(self.sleep_log)
+
+    def fail_attempts(self, count: int) -> str:
+        """A side effect that fails the first `count` attempts of the stubbed pgbackrest."""
+        failures = self.root / "failures"
+        failures.write_text("x" * count)
+        return (
+            f'left="$(cat {failures})"; '
+            f'if [ -n "$left" ]; then printf %s "${{left#x}}" > {failures}; exit 104; fi'
+        )
+
+
+@pytest.fixture
+def expire(tmp_path: Path) -> ExpireSandbox:
+    return ExpireSandbox(tmp_path)
+
+
+def test_expire_that_succeeds_pings_its_own_heartbeat_only(
+    expire: ExpireSandbox,
+) -> None:
+    result = expire.run("run-expire")
+    assert result.returncode == 0
+    assert expire.pgbackrest_calls() == ["--stanza=main expire"]
+    assert expire.pings() == [EXPIRE_URL]
+
+
+def test_expire_retries_until_an_attempt_succeeds(expire: ExpireSandbox) -> None:
+    """The bucket cuts a delete batch at 60 s and keeps deleting: the next attempt goes on."""
+    result = expire.run("run-expire", STUB_SIDE_EFFECT=expire.fail_attempts(2))
+    assert result.returncode == 0
+    assert len(expire.pgbackrest_calls()) == 3
+    assert expire.pings() == [EXPIRE_URL]
+
+
+def test_expire_pauses_a_minute_between_attempts(expire: ExpireSandbox) -> None:
+    """Without the pause the loop hits the bucket and takes the lock back at once."""
+    result = expire.run(
+        "run-expire", STUB_SIDE_EFFECT=expire.fail_attempts(2), EXPIRE_PAUSE_SECONDS=""
+    )
+    assert result.returncode == 0
+    assert expire.sleeps() == ["60", "60"]
+
+
+def test_the_expire_budget_ends_well_before_the_backup() -> None:
+    """The scheduled run starts at 00:00, the backup at 22:00. An hour to spare: the
+    attempt under way when the budget ends still has to finish."""
+    script = (BIN / "run-expire").read_text()
+    match = re.search(r"EXPIRE_BUDGET_SECONDS:-(\d+)", script)
+    assert match is not None
+    assert int(match.group(1)) + 3600 < 22 * 3600
+
+
+@pytest.mark.parametrize("code", ["104", "50"])
+def test_expire_out_of_budget_pings_nothing(expire: ExpireSandbox, code: str) -> None:
+    """Silence is the alert: one bad night is no incident, several turn the heartbeat
+    late. Never /fail, and never the heartbeat of the backup."""
+    result = expire.run(
+        "run-expire",
+        STUB_FAIL_ON="expire",
+        STUB_FAIL_CODE=code,
+        EXPIRE_BUDGET_SECONDS="0",
+    )
+    assert result.returncode == 1
+    assert len(expire.pgbackrest_calls()) == 1
+    assert expire.pings() == []
+    assert "stopped trying" in result.stderr
+
+
+def test_expire_stops_on_the_budget_after_several_attempts(
+    expire: ExpireSandbox,
+) -> None:
+    """The first attempt is quick and the second outlasts the budget: only then it
+    stops. The budget leaves room for a first attempt on a loaded machine."""
+    second_is_slow = (
+        f'[ "$(wc -l < {expire.pgbackrest_log})" -lt 2 ] || /bin/sleep 11; exit 104'
+    )
+    result = expire.run(
+        "run-expire", STUB_SIDE_EFFECT=second_is_slow, EXPIRE_BUDGET_SECONDS="10"
+    )
+    assert result.returncode == 1
+    assert len(expire.pgbackrest_calls()) == 2
+    assert expire.pings() == []
+    assert "stopped trying" in result.stderr
+
+
+@pytest.mark.parametrize("hour", ["20", "21", "23"])
+def test_expire_starts_nothing_from_twenty_to_midnight(
+    expire: ExpireSandbox, hour: str
+) -> None:
+    """A run by hand late in the day must leave the lock free for the backup at 22:00."""
+    expire.set_hour(hour)
+    result = expire.run("run-expire")
+    assert result.returncode == 1
+    assert expire.pgbackrest_calls() == []
+    assert expire.pings() == []
+    assert "no new attempt from 20:00 UTC" in result.stderr
+    assert "stopped trying" not in result.stderr
+
+
+@pytest.mark.parametrize("hour", ["00", "08", "09", "19"])
+def test_expire_runs_from_midnight_to_twenty(expire: ExpireSandbox, hour: str) -> None:
+    """08 and 09 are not octal to the check."""
+    expire.set_hour(hour)
+    result = expire.run("run-expire")
+    assert result.returncode == 0
+    assert expire.pgbackrest_calls() == ["--stanza=main expire"]
+    assert expire.pings() == [EXPIRE_URL]
+
+
+def test_expire_stops_retrying_when_the_clock_reaches_the_deadline(
+    expire: ExpireSandbox,
+) -> None:
+    expire.set_hour("19")
+    # The budget ends the loop if the clock ever stops being read, and is long enough
+    # for one attempt on a loaded machine.
+    result = expire.run(
+        "run-expire",
+        STUB_SIDE_EFFECT=f"echo 20 > {expire.hour_file}; exit 104",
+        EXPIRE_BUDGET_SECONDS="30",
+    )
+    assert result.returncode == 1
+    assert len(expire.pgbackrest_calls()) == 1
+    assert expire.pings() == []
+    assert "no new attempt from 20:00 UTC" in result.stderr
+
+
+def test_expire_stop_hour_of_24_turns_the_clock_off(expire: ExpireSandbox) -> None:
+    expire.set_hour("23")
+    result = expire.run("run-expire", EXPIRE_STOP_HOUR="24")
+    assert result.returncode == 0
+    assert expire.pgbackrest_calls() == ["--stanza=main expire"]
+
+
+def test_expire_without_a_heartbeat_url_still_runs(expire: ExpireSandbox) -> None:
+    result = expire.run("run-expire", BACKUP_EXPIRE_HEARTBEAT_URL="")
+    assert result.returncode == 0
+    assert expire.pgbackrest_calls() == ["--stanza=main expire"]
+    assert expire.pings() == []
+
+
 def test_crontab_runs_the_spec_schedule() -> None:
     """Times are UTC: 22:00 is 03:00 in Asia/Tashkent."""
     entries = [
@@ -328,6 +501,7 @@ def test_crontab_runs_the_spec_schedule() -> None:
         "0 22 * * 0": "run-backup full",
         "0 22 * * 1-6": "run-backup diff",
         "17 * * * *": "check-archive",
+        "0 0 * * *": "run-expire",
     }
 
 

@@ -1,3 +1,4 @@
+import configparser
 import os
 from pathlib import Path
 import re
@@ -447,11 +448,24 @@ def test_the_backup_steps_are_bounded() -> None:
     the container unless the inner timeout bounds it too."""
     lines = _script().splitlines()
 
-    for step in (BACKUP_STANZA_CREATE, BACKUP_CHECK):
+    for step, outer, inner in (
+        (BACKUP_STANZA_CREATE, 300, 280),
+        (BACKUP_CHECK, 350, 330),
+    ):
         (line,) = (line for line in lines if step in line and "exec" in line)
         command = line.strip().replace("if ! ", "")
-        assert command.startswith("timeout 300 ")
-        assert "postgres postgres timeout 280 pgbackrest" in command
+        assert command.startswith(f"timeout {outer} ")
+        assert f"postgres postgres timeout {inner} pgbackrest" in command
+
+
+def test_the_deploy_check_outlasts_the_archive_timeout() -> None:
+    """Killed first, a check on a slow bucket reads as WAL not reaching the repository."""
+    config = configparser.ConfigParser(interpolation=None)
+    config.read(PROJECT_ROOT / "infra/backup/pgbackrest.conf", encoding="utf-8")
+    (line,) = (line for line in _script().splitlines() if BACKUP_CHECK in line)
+    match = re.search(r"postgres postgres timeout (\d+) pgbackrest", line)
+    assert match is not None
+    assert int(match.group(1)) > config["global"].getint("archive-timeout")
 
 
 def test_pgbackrest_runs_as_postgres() -> None:

@@ -50,6 +50,21 @@ def test_pgbackrest_config_holds_no_credentials() -> None:
             assert option.removeprefix("repo1-") not in forbidden
 
 
+def test_small_files_share_objects() -> None:
+    """One object per file costs minutes per backup at a locked bucket's pace."""
+    assert _pgbackrest()["global"]["repo1-bundle"] == "y"
+
+
+def test_a_backup_expires_nothing() -> None:
+    """A delete batch cut by the bucket would fail a good backup with rc=104."""
+    assert _pgbackrest()["global:backup"]["expire-auto"] == "n"
+
+
+def test_archive_timeout_leaves_room_for_a_slow_bucket() -> None:
+    """A backup waits this long for its last segment behind the async queue."""
+    assert _pgbackrest()["global"]["archive-timeout"] == "300"
+
+
 def test_pgbackrest_keeps_its_state_on_the_data_volume() -> None:
     """postgres-data is mounted at /var/lib/postgresql; state anywhere else is
     lost on container recreate, the log (the record of a dropped segment) with it."""
