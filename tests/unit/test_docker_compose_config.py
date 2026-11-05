@@ -228,6 +228,8 @@ def test_the_app_image_is_compiled_after_its_code_is_copied() -> None:
         line for line in dockerfile.splitlines() if "compileall" in line
     )
 
+    # pip compiles the dependencies itself, unless told not to.
+    assert "--no-compile" not in dockerfile
     assert "/app" in compile_line.split()
     assert "/usr/local/lib/python3.13" in compile_line.split()
     assert (

@@ -222,7 +222,7 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 - **Multi-stage build:** build dependencies are not present in the final image.
 - **Slim base image:** `python:3.13-slim-bookworm` minimizes attack surface.
 - **Non-root execution:** `appuser` is created and used for the runtime process.
-- **Bytecode only from the build:** the image is compiled once, as root, and `PYTHONDONTWRITEBYTECODE=1` stops the runtime from writing `.pyc` files.
+- **Bytecode only from the build:** every `.pyc` comes from the image build, and `PYTHONDONTWRITEBYTECODE=1` stops the runtime from writing any.
 
 **Why it matters:** Running as root inside a container means a container escape yields root on the host. Non-root execution, minimal images, and multi-stage builds reduce both the probability and impact of container compromise.
 
