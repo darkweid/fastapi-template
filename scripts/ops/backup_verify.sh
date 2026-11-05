@@ -88,6 +88,7 @@ docker run --rm -u root -v "$VOLUME:/restore" --entrypoint chown "$POSTGRES_IMAG
 # `docker run` would forward Ctrl-C to bash running as PID 1, which ignores it,
 # and the trap would wait out the whole recovery.
 docker run -d --name "$CONTAINER" \
+  --init \
   -u postgres \
   --memory "${VERIFY_MEMORY:-1g}" \
   --cpus "${VERIFY_CPUS:-1}" \

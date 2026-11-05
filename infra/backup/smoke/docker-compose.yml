@@ -43,6 +43,7 @@ services:
       dockerfile: infra/postgres/Dockerfile
     image: ${SMOKE_POSTGRES_IMAGE}
     pull_policy: never
+    init: true
     env_file: ${SMOKE_BACKUP_ENV_FILE}
     environment:
       POSTGRES_USER: smoke
