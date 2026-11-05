@@ -22,6 +22,10 @@ services:
       dockerfile: infra/postgres/Dockerfile
     image: template-postgres:18
     restart: always
+    # pgBackRest's async archiver outlives the archive command. Under PID 1 the
+    # postmaster would read its nonzero exit as a crashed child and restart the
+    # cluster, so an S3 outage would take the database down.
+    init: true
     # shm_size, the limits below, the app's WEB_CONCURRENCY, the redis limits and
     # the sizing in postgresql.conf are the local default; a deploy replaces them
     # with its resource profile (infra/resources/<profile>/compose.yml).

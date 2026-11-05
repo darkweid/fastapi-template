@@ -5,6 +5,10 @@ S3 bucket (Hetzner Object Storage), encrypted. Any moment inside the retention w
 be restored. The logical dump (`make backup`) stays as the portable copy; see
 *Which tool when* below.
 
+PostgreSQL runs under an init process (`init: true`). The async archiver outlives the
+archive command, and as PID 1 the postmaster would read its failure during an S3 outage
+as a crashed child and restart the cluster.
+
 Backups are off by default. `BACKUP_ENABLED=false` makes the archive command a no-op and
 starts no sidecar.
 

@@ -8,6 +8,8 @@
 # between two rows, which must return only the first. Last, the live restore of
 # `make backup-restore` onto a fresh volume, as on a replacement box: it must
 # return every row and ship the new timeline's history file to the repository.
+# Before the rows, an S3 outage: the server must not restart, a long session must
+# survive, and archiving must recover when the bucket returns.
 # Needs Docker and openssl, no secret and no network beyond the image registries.
 #
 # BACKUP_SMOKE_SUFFIX names the compose project and the image tag (CI passes the
@@ -104,6 +106,35 @@ pgbackrest_smoke check
 echo "[smoke] full backup from the sidecar-shaped container"
 "${COMPOSE[@]}" run --rm --no-deps -T backup run-backup full
 "${COMPOSE[@]}" run --rm --no-deps -T backup check-archive
+
+# A crash of the cluster, from the postmaster's log. Nothing else prints these; an
+# untracked child that exits 0 is harmless, so that line alone does not count.
+crash_lines() {
+  "${COMPOSE[@]}" logs --no-log-prefix postgres 2>/dev/null \
+    | grep -cE 'all server processes terminated; reinitializing|terminating any other active' || true
+}
+
+echo "[smoke] S3 outage: the server must keep running"
+[ "$(crash_lines)" = "0" ] || fail "the cluster crashed before the outage"
+"${COMPOSE[@]}" stop minio
+psql_smoke "SELECT pg_sleep(45)" >/dev/null &
+long_session=$!
+psql_smoke "CREATE TABLE smoke_filler (body text)"
+psql_smoke "INSERT INTO smoke_filler SELECT repeat(md5(i::text), 10) FROM generate_series(1, 1000) i"
+# archive_timeout closes a segment a minute at the latest; do not wait for it.
+psql_smoke "SELECT pg_switch_wal()" >/dev/null
+sleep 30
+[ "$(crash_lines)" = "0" ] || fail "the S3 outage crashed the cluster"
+wait "$long_session" || fail "a long session did not survive the S3 outage"
+
+echo "[smoke] the bucket is back: archiving must recover"
+"${COMPOSE[@]}" up -d --wait minio
+# Until the queued segments are gone, check waits on them and the switch.
+for attempt in 1 2 3; do
+  pgbackrest_smoke check && break
+  [ "$attempt" -lt 3 ] || fail "archiving did not recover after the bucket came back"
+  sleep 20
+done
 
 echo "[smoke] writing rows after the backup"
 psql_smoke "CREATE TABLE smoke_marker (id int PRIMARY KEY, written_at timestamptz NOT NULL DEFAULT clock_timestamp())"

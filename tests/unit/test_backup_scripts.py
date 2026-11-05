@@ -443,6 +443,18 @@ def test_a_cancelled_drill_exits_with_the_signal_convention() -> None:
     assert "trap 'exit 143' TERM" in script
 
 
+def test_postgres_runs_under_an_init_process() -> None:
+    """Without it an S3 outage crash-restarts the cluster: the async archiver is an
+    orphan of the postmaster, which reads its nonzero exit as a crashed child."""
+    for compose in (
+        "infra/docker-compose.yml",
+        "infra/backup/smoke/docker-compose.yml",
+    ):
+        services = yaml.safe_load((PROJECT_ROOT / compose).read_text())["services"]
+        assert services["postgres"]["init"] is True, compose
+    assert "--init" in (PROJECT_ROOT / "scripts/ops/backup_verify.sh").read_text()
+
+
 def test_a_refused_restore_builds_nothing() -> None:
     result = subprocess.run(
         ["make", "-n", "backup-restore"],
