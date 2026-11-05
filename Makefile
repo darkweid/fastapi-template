@@ -238,7 +238,7 @@ test-integration: ## Run the integration suite against a throwaway PostgreSQL an
 	COMPOSE="docker compose -p template-test-$$$$ --env-file .env.test -f $(COMPOSE_TEST)"; \
 	export POSTGRES_PORT= REDIS_PORT=; \
 	trap "$$COMPOSE down -v --remove-orphans >/dev/null 2>&1" EXIT INT TERM; \
-	$$COMPOSE up -d --wait --wait-timeout 120; \
+	$$COMPOSE up -d --build --wait --wait-timeout 120; \
 	PG_PORT="$$($$COMPOSE port postgres 5432 | sed 's/.*://')"; \
 	REDIS_TEST_PORT="$$($$COMPOSE port redis 6379 | sed 's/.*://')"; \
 	TESTING=true \
