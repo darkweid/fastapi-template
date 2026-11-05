@@ -91,6 +91,8 @@ class Sandbox:
             capture_output=True,
             text=True,
             check=False,
+            # A retry loop that lost its way out fails here instead of hanging the suite.
+            timeout=120,
         )
 
     def pgbackrest_calls(self) -> list[str]:
