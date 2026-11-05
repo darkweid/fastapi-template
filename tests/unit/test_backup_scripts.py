@@ -1388,3 +1388,27 @@ def test_the_smoke_backs_up_through_the_sidecar_shape() -> None:
     assert smoke["postgres"]["volumes"] == deployed["postgres"]["volumes"]
     script = (PROJECT_ROOT / "scripts/ops/backup_smoke.sh").read_text()
     assert "run --rm --no-deps -T backup run-backup full" in script
+
+
+def test_the_smoke_requires_a_bundle_after_the_first_full() -> None:
+    script = (PROJECT_ROOT / "scripts/ops/backup_smoke.sh").read_text()
+    first_full = script.index("backup run-backup full")
+    bundle_check = script.index("pgbackrest/backup/main/.*/bundle/")
+    assert (
+        first_full < bundle_check < script.index("backup run-backup full", bundle_check)
+    )
+    assert "grep -q 'pgbackrest/backup/main/.*/bundle/'" in script
+
+
+def test_the_smoke_gives_a_broken_expire_one_attempt_at_any_hour() -> None:
+    script = (PROJECT_ROOT / "scripts/ops/backup_smoke.sh").read_text()
+    runs = [line for line in script.splitlines() if "backup run-expire" in line]
+    assert len(runs) == 1
+    assert "-e EXPIRE_BUDGET_SECONDS=0" in runs[0]
+    assert "-e EXPIRE_STOP_HOUR=24" in runs[0]
+
+
+def test_the_smoke_restores_through_the_script() -> None:
+    script = (PROJECT_ROOT / "scripts/ops/backup_smoke.sh").read_text()
+    assert "scripts/ops/backup_restore.sh" in script
+    assert "--delta restore" not in script
