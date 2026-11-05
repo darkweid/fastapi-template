@@ -41,4 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder --chown=appuser:appuser /install /install
 COPY --chown=appuser:appuser . .
 
+# The base image ships the standard library without bytecode, `.dockerignore`
+# keeps the project's out of the context and PYTHONDONTWRITEBYTECODE stops the
+# runtime from caching any, so every process would compile both on each start.
+RUN python -m compileall -q -j 0 /app /usr/local/lib/python3.13
+
 USER appuser
