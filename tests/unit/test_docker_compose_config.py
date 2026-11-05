@@ -219,6 +219,26 @@ def test_the_pgbackrest_config_directory_is_enterable() -> None:
     assert "chmod 0755 /etc/pgbackrest" in dockerfile
 
 
+def test_the_app_image_is_compiled_after_its_code_is_copied() -> None:
+    """The runtime writes no bytecode, so whatever the build leaves uncompiled is
+    compiled again on every start, inside the service's CPU limit: on 0.5 CPU that
+    made each restart of a service about 2.5 seconds longer."""
+    dockerfile = (PROJECT_ROOT / "infra/docker/Dockerfile").read_text(encoding="utf-8")
+    compile_line = next(
+        line for line in dockerfile.splitlines() if "compileall" in line
+    )
+
+    # pip compiles the dependencies itself, unless told not to.
+    assert "--no-compile" not in dockerfile
+    assert "/app" in compile_line.split()
+    assert "/usr/local/lib/python3.13" in compile_line.split()
+    assert (
+        dockerfile.index("COPY --chown=appuser:appuser . .")
+        < dockerfile.index(compile_line)
+        < dockerfile.index("USER appuser")
+    )
+
+
 BACKUP_ENV_FILE = "../.env.backup"
 
 
