@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -679,6 +680,76 @@ def test_the_drill_container_is_capped() -> None:
     outer = VERIFY_SCRIPTS[0].read_text()
     assert '--memory "${VERIFY_MEMORY:-1g}"' in outer
     assert '--cpus "${VERIFY_CPUS:-1}"' in outer
+
+
+def _bucket(
+    tmp_path: Path, command: str, lifecycle_answer: str = ""
+) -> subprocess.CompletedProcess[str]:
+    """The real script with docker replaced by a recorder."""
+    (tmp_path / "docker").write_text(
+        "#!/bin/sh\n"
+        'echo "$@" >> "$DOCKER_CALLS"\n'
+        'case " $* " in *" get-bucket-lifecycle-configuration "*)\n'
+        f"  {lifecycle_answer} ;;\n"
+        "esac\n"
+    )
+    (tmp_path / "docker").chmod(0o755)
+    return subprocess.run(
+        [
+            "/bin/bash",
+            str(PROJECT_ROOT / "scripts/ops/backup_bucket.sh"),
+            command,
+            "bucket",
+            "hel1",
+        ],
+        env={
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "DOCKER_CALLS": str(tmp_path / "docker.calls"),
+            "AWS_ACCESS_KEY_ID": "key",
+            "AWS_SECRET_ACCESS_KEY": "secret",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_the_bucket_script_passes_the_checksum_settings_to_the_container(
+    tmp_path: Path,
+) -> None:
+    """aws-cli's default checksums are not what S3-compatible storage accepts."""
+    assert _bucket(tmp_path, "apply").returncode == 0
+    runs = _lines(tmp_path / "docker.calls")
+    assert len(runs) == 2
+    for run in runs:
+        assert "-e AWS_REQUEST_CHECKSUM_CALCULATION=when_required" in run
+        assert "-e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required" in run
+        assert "secret" not in run
+
+
+def test_show_prints_no_lifecycle_where_aws_cli_crashes(tmp_path: Path) -> None:
+    """What Hetzner answers for a bucket with no rules, and aws-cli's crash on it."""
+    result = _bucket(
+        tmp_path,
+        "show",
+        """echo "aws: [ERROR]: argument of type 'NoneType' is not a container" >&2; exit 255""",
+    )
+    assert result.returncode == 0
+    assert "no lifecycle" in result.stdout
+    assert "console" in result.stdout
+
+
+def test_show_fails_on_any_other_lifecycle_error(tmp_path: Path) -> None:
+    result = _bucket(tmp_path, "show", 'echo "AccessDenied" >&2; exit 255')
+    assert result.returncode == 1
+    assert "AccessDenied" in result.stderr
+
+
+def test_show_prints_the_lifecycle_it_reads(tmp_path: Path) -> None:
+    result = _bucket(tmp_path, "show", """echo '{"Rules": [{"ID": "noncurrent"}]}'""")
+    assert result.returncode == 0
+    assert '{"Rules": [{"ID": "noncurrent"}]}' in result.stdout
+    assert "no lifecycle" not in result.stdout
 
 
 def test_the_smoke_images_are_pinned() -> None:

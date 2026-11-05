@@ -31,9 +31,12 @@ esac
 
 aws() {
     # The key values pass by name only, so they never appear on a command line.
+    # aws-cli's default checksums are not what S3-compatible storage accepts.
     docker run --rm \
         -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
         -e AWS_DEFAULT_REGION="$region" \
+        -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+        -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
         -v "$config_dir:/config:ro" \
         "$AWS_CLI_IMAGE" \
         --endpoint-url "https://$region.your-objectstorage.com" \
@@ -54,9 +57,14 @@ case "$command" in
         echo "object lock:"
         aws get-object-lock-configuration --bucket "$bucket"
         echo "lifecycle:"
-        # aws-cli crashes on Hetzner's answer for a bucket that has no lifecycle yet.
-        if ! aws get-bucket-lifecycle-configuration --bucket "$bucket"; then
-            echo "lifecycle: none or unreadable (a bucket without lifecycle fails this way; run apply)" >&2
+        # aws-cli crashes on Hetzner's answer for a bucket that has no lifecycle yet, which
+        # cannot tell none from unreadable. Any other error is a real one.
+        if lifecycle="$(aws get-bucket-lifecycle-configuration --bucket "$bucket" 2>&1)"; then
+            printf '%s\n' "$lifecycle"
+        elif [[ "$lifecycle" == *NoneType* ]]; then
+            echo "no lifecycle, or one aws-cli cannot read: check the bucket in the Hetzner console"
+        else
+            printf '%s\n' "$lifecycle" >&2
             exit 1
         fi
         ;;
