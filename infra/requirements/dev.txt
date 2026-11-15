@@ -5,7 +5,7 @@
 #    pip-compile --output-file=dev.txt dev.in
 #
 aioboto3==15.5.0
-    # via -r base.in
+    # via -r requirements/base.in
 aiobotocore[boto3]==2.25.1
     # via aioboto3
 aiofiles==25.1.0
@@ -14,7 +14,7 @@ aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.14.5
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   aiobotocore
     #   taskiq
 aioitertools==0.13.0
@@ -22,13 +22,13 @@ aioitertools==0.13.0
 aiosignal==1.4.0
     # via aiohttp
 aiosmtplib==5.1.3
-    # via -r base.in
+    # via -r requirements/base.in
 alembic==1.20.1
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   alembic-postgresql-enum
 alembic-postgresql-enum==1.11.1
-    # via -r base.in
+    # via -r requirements/base.in
 annotated-doc==0.0.5
     # via fastapi
 annotated-types==0.8.0
@@ -39,17 +39,17 @@ anyio==4.15.1
     #   starlette
     #   taskiq
 argon2-cffi==25.1.0
-    # via -r base.in
+    # via -r requirements/base.in
 argon2-cffi-bindings==26.1.0
     # via argon2-cffi
 ast-serialize==0.13.1
     # via mypy
 asyncpg==0.32.0
-    # via -r base.in
+    # via -r requirements/base.in
 attrs==26.1.0
     # via aiohttp
 black==26.10.1
-    # via -r dev.in
+    # via -r requirements/dev.in
 boto3==1.40.61
     # via aiobotocore
 botocore==1.40.61
@@ -67,7 +67,7 @@ cfgv==3.5.0
     # via pre-commit
 click==8.5.0
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   black
     #   pip-tools
     #   uvicorn
@@ -75,12 +75,12 @@ coverage[toml]==7.16.2
     # via pytest-cov
 distlib==0.4.3
     # via virtualenv
-dnspython==2.9.0
+dnspython==2.9.2
     # via email-validator
 email-validator==2.3.0
-    # via -r base.in
+    # via -r requirements/base.in
 fastapi==0.162.0
-    # via -r base.in
+    # via -r requirements/base.in
 filelock==4.2.4
     # via
     #   python-discovery
@@ -95,7 +95,7 @@ greenlet==3.5.6
     # via sqlalchemy
 gunicorn==26.2.0
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   uvicorn-worker
 h11==0.16.0
     # via
@@ -104,7 +104,7 @@ h11==0.16.0
 httpcore2==2.16.0
     # via httpx2
 httpx2==2.16.0
-    # via -r dev.in
+    # via -r requirements/dev.in
 identify==2.6.20
     # via pre-commit
 idna==3.20
@@ -116,7 +116,7 @@ idna==3.20
 iniconfig==2.3.0
     # via pytest
 jinja2==3.1.6
-    # via -r base.in
+    # via -r requirements/base.in
 jmespath==1.1.0
     # via
     #   aiobotocore
@@ -126,7 +126,7 @@ librt==0.16.0
     # via mypy
 mako==1.4.3
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   alembic
 markupsafe==3.0.3
     # via
@@ -138,7 +138,7 @@ multidict==6.9.1
     #   aiohttp
     #   yarl
 mypy==2.4.1
-    # via -r dev.in
+    # via -r requirements/dev.in
 mypy-extensions==1.1.0
     # via
     #   black
@@ -159,7 +159,7 @@ pathspec==1.1.1
     #   black
     #   mypy
 pip-tools==7.6.2
-    # via -r dev.in
+    # via -r requirements/dev.in
 platformdirs==4.12.2
     # via
     #   black
@@ -169,7 +169,7 @@ pluggy==1.6.0
     #   pytest
     #   pytest-cov
 pre-commit==4.7.0
-    # via -r dev.in
+    # via -r requirements/dev.in
 propcache==0.5.4
     # via
     #   aiohttp
@@ -180,34 +180,34 @@ pycron==3.3.0
     # via taskiq
 pydantic==2.14.1
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   fastapi
     #   pydantic-settings
     #   taskiq
 pydantic-core==2.50.1
     # via pydantic
 pydantic-settings==2.16.2
-    # via -r base.in
+    # via -r requirements/base.in
 pygments==2.21.0
     # via pytest
 pyjwt==2.15.1
-    # via -r base.in
+    # via -r requirements/base.in
 pyproject-hooks==1.3.3
     # via
     #   build
     #   pip-tools
 pytest==9.2.0
     # via
-    #   -r dev.in
+    #   -r requirements/dev.in
     #   pytest-asyncio
     #   pytest-cov
     #   pytest-randomly
 pytest-asyncio==1.4.1
-    # via -r dev.in
+    # via -r requirements/dev.in
 pytest-cov==7.1.0
-    # via -r dev.in
+    # via -r requirements/dev.in
 pytest-randomly==5.0.0
-    # via -r dev.in
+    # via -r requirements/dev.in
 python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
@@ -217,49 +217,49 @@ python-discovery==1.6.1
 python-dotenv==1.2.4
     # via pydantic-settings
 python-multipart==0.0.32
-    # via -r base.in
+    # via -r requirements/base.in
 pytokens==0.4.1
     # via black
 pyyaml==6.0.3
     # via pre-commit
 redis==8.1.0
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   taskiq-redis
 s3transfer==0.14.0
     # via boto3
 sentry-sdk==2.73.0
-    # via -r base.in
+    # via -r requirements/base.in
 six==1.17.0
     # via python-dateutil
 sqlalchemy[asyncio]==2.1.6
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   alembic
     #   alembic-postgresql-enum
 starlette==1.10.0
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   fastapi
 taskiq[reload]==0.13.0
     # via
-    #   -r base.in
-    #   -r dev.in
+    #   -r requirements/base.in
+    #   -r requirements/dev.in
     #   taskiq-redis
 taskiq-dependencies==1.5.7
     # via taskiq
 taskiq-redis==1.2.4
-    # via -r base.in
+    # via -r requirements/base.in
 truststore==0.10.4
     # via
     #   httpcore2
     #   httpx2
 types-pyyaml==6.0.12.20260906
-    # via -r dev.in
+    # via -r requirements/dev.in
 types-requests==2.33.0.20261006
-    # via -r dev.in
+    # via -r requirements/dev.in
 types-ujson==5.10.0.20250822
-    # via -r dev.in
+    # via -r requirements/dev.in
 typing-extensions==4.16.0
     # via
     #   alembic
@@ -283,19 +283,19 @@ urllib3==2.8.0
     #   sentry-sdk
     #   types-requests
 uuid6==2025.0.1
-    # via -r base.in
+    # via -r requirements/base.in
 uvicorn==0.54.0
     # via
-    #   -r base.in
+    #   -r requirements/base.in
     #   uvicorn-worker
 uvicorn-worker==0.4.0
-    # via -r base.in
+    # via -r requirements/base.in
 virtualenv==21.14.13
     # via pre-commit
 watchdog==6.0.0
     # via taskiq
 websockets==17.3
-    # via -r dev.in
+    # via -r requirements/dev.in
 wheel==0.48.0
     # via pip-tools
 wrapt==1.17.3
