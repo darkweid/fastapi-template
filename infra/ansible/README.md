@@ -29,7 +29,7 @@ What a provisioned server has:
 
 ## Prerequisites
 
-- Python 3.12 or newer on your machine, then `make ansible-deps` (a virtualenv in
+- Python 3.13 or newer on your machine, then `make ansible-deps` (a virtualenv in
   `infra/ansible/.venv` plus the pinned collections; `make req-sync-dev` would
   uninstall Ansible from the dev environment, hence its own).
 - `sshpass`, only for a provider that hands the server over with a root password
