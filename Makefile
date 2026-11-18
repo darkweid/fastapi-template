@@ -169,7 +169,7 @@ backup-info: backup-image ## List the backups and the WAL range in the pgBackRes
 # nor, when it fails, pages anyone.
 .PHONY: backup-now
 backup-now: backup-image ## Take a pgBackRest backup now, reported to no heartbeat: make backup-now type=full|diff
-	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps -e BACKUP_HEARTBEAT_URL= backup run-backup $(type)
+	$(DOCKER_COMPOSE) --profile backup run --rm --no-deps -e BACKUP_HEARTBEAT_URL= -e BACKUP_RETRY_PAUSES= backup run-backup $(type)
 
 .PHONY: backup-verify
 backup-verify: backup-image ## Restore into a throwaway container and report: make backup-verify [target="2026-10-30 14:03:00+00"] [timeline=N]

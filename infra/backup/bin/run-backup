@@ -5,6 +5,15 @@ set -euo pipefail
 STATE_DIR="${STATE_DIR:-/var/lib/postgresql/pgbackrest/state}"
 # pgBackRest's LockAcquireError: another backup of the stanza holds the lock.
 LOCK_HELD=50
+# Pauses before each new attempt after a failure. pgBackRest gives up on an S3 error
+# after about 3 minutes (2 retries), and Hetzner Object Storage has answered 504 for
+# that long. Empty means one attempt: the hourly gap backup, backup-now and the smoke.
+read -r -a RETRY_PAUSES <<< "${BACKUP_RETRY_PAUSES-300 600 900 900}"
+# No retry starts later than this many seconds after the run began: the expire of
+# 00:00 takes the lock two hours after the backup of 22:00, and an attempt begun
+# within the hour has the other hour to finish. The pauses above, with attempts of
+# about 3 minutes, fit inside it.
+RETRY_WINDOW="${BACKUP_RETRY_WINDOW_SECONDS:-3600}"
 
 heartbeat() {
     [ -n "${BACKUP_HEARTBEAT_URL:-}" ] || return 0
@@ -18,20 +27,56 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+case "${BACKUP_RETRY_PAUSES-}" in
+    *$'\n'*)
+        echo "run-backup: BACKUP_RETRY_PAUSES must be one line" >&2
+        heartbeat /fail
+        exit 2
+        ;;
+esac
+for value in "${RETRY_PAUSES[@]+"${RETRY_PAUSES[@]}"}" "$RETRY_WINDOW"; do
+    case "$value" in
+        # Leading zeros read as octal in arithmetic; seven digits are past any sane wait.
+        '' | *[!0-9]* | 0?* | ???????*)
+            echo "run-backup: BACKUP_RETRY_PAUSES and BACKUP_RETRY_WINDOW_SECONDS take whole seconds, got '$value'" >&2
+            heartbeat /fail
+            exit 2
+            ;;
+    esac
+done
 
 mkdir -p "$STATE_DIR"
 heartbeat /start
-status=0
-pgbackrest --stanza=main --type="$1" backup || status=$?
-if [ "$status" -eq 0 ]; then
-    rm -f "$STATE_DIR/gap-open"
-    heartbeat ""
-elif [ "$status" -eq "$LOCK_HELD" ]; then
-    # The backup holding the lock reports its own result and, when it succeeds,
-    # clears gap-open itself.
-    echo "run-backup: another backup is running; leaving the heartbeat to it" >&2
-    exit "$LOCK_HELD"
-else
-    heartbeat /fail
-    exit 1
-fi
+attempts=$((${#RETRY_PAUSES[@]} + 1))
+attempt=1
+while true; do
+    status=0
+    pgbackrest --stanza=main --type="$1" backup || status=$?
+    if [ "$status" -eq 0 ]; then
+        rm -f "$STATE_DIR/gap-open"
+        heartbeat ""
+        exit 0
+    fi
+    # Only at the first attempt: the backup holding the lock reports its own result and,
+    # when it succeeds, clears gap-open itself. On a retry the holder may be a gap backup
+    # failing on the same outage, a backup-now or an expire, none of which speaks for
+    # this run, so the lock counts as one more failure.
+    if [ "$status" -eq "$LOCK_HELD" ] && [ "$attempt" -eq 1 ]; then
+        echo "run-backup: another backup is running; leaving the heartbeat to it" >&2
+        exit "$LOCK_HELD"
+    fi
+    if [ "$attempt" -ge "$attempts" ]; then
+        echo "run-backup: attempt $attempt/$attempts failed with rc=$status; giving up" >&2
+        break
+    fi
+    pause="${RETRY_PAUSES[$((attempt - 1))]}"
+    if [ $((SECONDS + pause)) -gt "$RETRY_WINDOW" ]; then
+        echo "run-backup: attempt $attempt/$attempts failed with rc=$status; the next would start past ${RETRY_WINDOW}s, giving up" >&2
+        break
+    fi
+    echo "run-backup: attempt $attempt/$attempts failed with rc=$status; the next one in ${pause}s" >&2
+    sleep "$pause"
+    attempt=$((attempt + 1))
+done
+heartbeat /fail
+exit 1

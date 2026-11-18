@@ -61,6 +61,8 @@ class Sandbox:
             "BACKUP_ARCHIVE_HEARTBEAT_URL": ARCHIVE_URL,
             "BACKUP_EXPIRE_HEARTBEAT_URL": EXPIRE_URL,
             "EXPIRE_PAUSE_SECONDS": "0",
+            # One attempt, so a failing backup does not sleep; the retry tests drop it.
+            "BACKUP_RETRY_PAUSES": "",
         }
 
     def mark_stanza_ready(self) -> None:
@@ -377,6 +379,131 @@ class ExpireSandbox(Sandbox):
 @pytest.fixture
 def expire(tmp_path: Path) -> ExpireSandbox:
     return ExpireSandbox(tmp_path)
+
+
+@pytest.fixture
+def retrying(tmp_path: Path) -> ExpireSandbox:
+    """run-backup with its default retry pauses and the pause stubbed."""
+    sandbox = ExpireSandbox(tmp_path)
+    del sandbox.env["BACKUP_RETRY_PAUSES"]
+    return sandbox
+
+
+def _fail_backups(sandbox: ExpireSandbox, count: int) -> str:
+    """fail_attempts for the backup calls only: the curl stub runs the side effect too,
+    and the /start ping comes first."""
+    return f'case "$*" in *" backup") {sandbox.fail_attempts(count)} ;; esac'
+
+
+def test_run_backup_retries_a_failure_before_paging(retrying: ExpireSandbox) -> None:
+    result = retrying.run("run-backup", "diff", STUB_FAIL_ON="backup")
+    assert result.returncode == 1
+    assert retrying.pgbackrest_calls() == ["--stanza=main --type=diff backup"] * 5
+    assert retrying.sleeps() == ["300", "600", "900", "900"]
+    assert retrying.pings() == [f"{BACKUP_URL}/start", f"{BACKUP_URL}/fail"]
+
+
+def test_run_backup_that_succeeds_on_a_retry_reports_success(
+    retrying: ExpireSandbox,
+) -> None:
+    retrying.state.mkdir()
+    (retrying.state / "gap-open").touch()
+    result = retrying.run(
+        "run-backup", "diff", STUB_SIDE_EFFECT=_fail_backups(retrying, 2)
+    )
+    assert result.returncode == 0
+    assert len(retrying.pgbackrest_calls()) == 3
+    assert retrying.sleeps() == ["300", "600"]
+    assert retrying.pings() == [f"{BACKUP_URL}/start", BACKUP_URL]
+    assert not retrying.gap_open()
+
+
+def test_run_backup_counts_a_lock_met_on_a_retry_as_a_failure(
+    retrying: ExpireSandbox,
+) -> None:
+    """During the pause a gap backup failing on the same outage, a backup-now or an
+    expire can take the lock; none of them reports for this run."""
+    result = retrying.run(
+        "run-backup",
+        "diff",
+        STUB_SIDE_EFFECT=_fail_backups(retrying, 1),
+        STUB_FAIL_ON="backup",
+        STUB_FAIL_CODE="50",
+    )
+    assert result.returncode == 1
+    assert len(retrying.pgbackrest_calls()) == 5
+    assert retrying.pings() == [f"{BACKUP_URL}/start", f"{BACKUP_URL}/fail"]
+
+
+def test_run_backup_steps_aside_from_a_lock_at_once(retrying: ExpireSandbox) -> None:
+    result = retrying.run(
+        "run-backup", "diff", STUB_FAIL_ON="backup", STUB_FAIL_CODE="50"
+    )
+    assert result.returncode == 50
+    assert retrying.sleeps() == []
+    assert retrying.pings() == [f"{BACKUP_URL}/start"]
+
+
+def test_run_backup_starts_no_retry_past_its_window(retrying: ExpireSandbox) -> None:
+    """The pause is stubbed, so the run's clock stays near zero: 300 and 600 fit a
+    window of 800 s, 900 does not, and the run gives up instead of sleeping."""
+    result = retrying.run(
+        "run-backup", "diff", STUB_FAIL_ON="backup", BACKUP_RETRY_WINDOW_SECONDS="800"
+    )
+    assert result.returncode == 1
+    assert len(retrying.pgbackrest_calls()) == 3
+    assert retrying.sleeps() == ["300", "600"]
+    assert retrying.pings() == [f"{BACKUP_URL}/start", f"{BACKUP_URL}/fail"]
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"BACKUP_RETRY_PAUSES": "5min"},
+        {"BACKUP_RETRY_PAUSES": "300,600"},
+        {"BACKUP_RETRY_PAUSES": "300\n600"},
+        {"BACKUP_RETRY_PAUSES": "300 08"},
+        {"BACKUP_RETRY_PAUSES": "9999999"},
+        {"BACKUP_RETRY_WINDOW_SECONDS": "1h"},
+    ],
+)
+def test_run_backup_refuses_a_malformed_retry_setting(
+    retrying: ExpireSandbox, env: dict[str, str]
+) -> None:
+    """Pages at once: a bad value would otherwise end the run on sleep with no /fail."""
+    result = retrying.run("run-backup", "diff", **env)
+    assert result.returncode == 2
+    assert retrying.pgbackrest_calls() == []
+    assert retrying.pings() == [f"{BACKUP_URL}/fail"]
+
+
+def test_the_backup_retries_fit_their_window() -> None:
+    """Every retry has to start inside the window with attempts of about 3 minutes,
+    and the window has to leave an hour to the expire, two hours after the backup."""
+    script = (BIN / "run-backup").read_text()
+    pauses = re.search(r"BACKUP_RETRY_PAUSES-([\d ]+)\}", script)
+    window = re.search(r"BACKUP_RETRY_WINDOW_SECONDS:-(\d+)\}", script)
+    assert pauses is not None
+    assert window is not None
+    values = [int(pause) for pause in pauses.group(1).split()]
+    assert sum(values) + len(values) * 180 <= int(window.group(1)) <= 3600
+
+
+def test_backup_now_makes_one_attempt() -> None:
+    """An operator waits on it; retries would hold the terminal for an hour."""
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    recipe = re.search(r"^backup-now:.*\n\t(.*)$", makefile, re.MULTILINE)
+    assert recipe is not None
+    assert "-e BACKUP_RETRY_PAUSES= " in recipe.group(1)
+
+
+def test_the_hourly_gap_backup_makes_one_attempt(retrying: ExpireSandbox) -> None:
+    """The next hour's check retries it; a retry inside would hold the check an hour."""
+    retrying.write_drops(1)
+    result = retrying.run("check-archive", STUB_FAIL_ON="backup")
+    assert result.returncode == 1
+    assert retrying.pgbackrest_calls().count("--stanza=main --type=diff backup") == 1
+    assert retrying.sleeps() == []
 
 
 def test_expire_that_succeeds_pings_its_own_heartbeat_only(

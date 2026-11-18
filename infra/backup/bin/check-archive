@@ -53,10 +53,11 @@ if [ "$dropped" -gt "$seen" ]; then
     touch "$STATE_DIR/gap-open"
 fi
 # Retried every hour until a backup succeeds: the drop count stays the same
-# after a failed attempt, so only the marker brings the retry back.
+# after a failed attempt, so only the marker brings the retry back. One attempt per
+# hour: retries inside run-backup would hold this check, and its heartbeat, for an hour.
 if [ -f "$STATE_DIR/gap-open" ]; then
     heartbeat /fail
-    "$(dirname "$0")/run-backup" diff || true
+    BACKUP_RETRY_PAUSES="" "$(dirname "$0")/run-backup" diff || true
 fi
 
 if [ -f "$STATE_DIR/gap-open" ]; then
