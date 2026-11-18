@@ -86,7 +86,9 @@ The passphrase is the one thing the bucket cannot give back. Keep a copy outside
    at the bucket in the Hetzner console then.
 4. Create three Fettle heartbeats (or any monitor that takes a URL ping):
    - backup: `period` 86400 s, `grace` 21600 s. A scheduled run pings `/start`, then the
-     bare URL on success or `/fail` on failure.
+     bare URL on success or `/fail` on failure. A failed attempt is retried after 5, 10, 15
+     and 15 minutes (`BACKUP_RETRY_PAUSES`), and the last retry starts within an hour of the
+     start (`BACKUP_RETRY_WINDOW_SECONDS`): a short outage of the bucket pages nobody.
    - archive: `period` 3600 s, `grace` 1800 s. The hourly check pings the bare URL when
      archiving works and `/fail` otherwise.
    - expire: `period` 86400 s, `grace` 259200 s. It pings the bare URL only on success and
@@ -127,10 +129,11 @@ seconds of refused connections. Deploy such a change at a quiet hour.
 `make backup-info` lists the backups and the WAL range in the repository.
 
 A manual `make backup-now` does not ping the heartbeat, and a failure there pages nobody;
-only the scheduled runs report.
+only the scheduled runs report. It makes one attempt, without the scheduled run's retries.
 
-Do not deploy at 22:00 UTC. A deploy that recreates the sidecar kills the backup running
-at that moment, and the heartbeat goes red.
+Do not deploy from 22:00 UTC until the backup has finished: after a failure it retries for up
+to an hour, and the last attempt may run past it. A deploy that recreates the sidecar kills
+the backup running at that moment, and the heartbeat goes red.
 
 ## Alerts
 
@@ -146,7 +149,9 @@ leaves a hole recovery cannot cross. The hourly check notices the drop in the pg
 log, pings archive `/fail` and starts a differential backup that closes the gap, and
 retries it every hour until one succeeds. When a scheduled backup is running at that moment,
 the differential steps aside without paging the backup heartbeat, and the running backup
-closes the gap when it succeeds. The heartbeat turns green again after a backup succeeds.
+closes the gap when it succeeds. The differential makes one attempt, with no retries, and
+when the scheduled backup is waiting to retry, the differential runs and reports to the
+backup heartbeat itself. The heartbeat turns green again after a backup succeeds.
 Until then a restore reaches only the moment before the hole.
 
 The causes seen most often: the bucket or endpoint is unreachable, a key was revoked, the

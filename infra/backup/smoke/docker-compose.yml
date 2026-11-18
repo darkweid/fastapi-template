@@ -76,6 +76,8 @@ services:
     environment:
       BACKUP_ENABLED: "true"
       PGBACKREST_PG1_USER: smoke
+      # One attempt: a broken backup must fail the smoke, not retry for an hour.
+      BACKUP_RETRY_PAUSES: ""
     volumes:
       - postgres-data:/var/lib/postgresql
       - postgres-socket:/var/run/postgresql
