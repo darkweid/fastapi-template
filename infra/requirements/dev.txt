@@ -29,7 +29,7 @@ alembic==1.20.1
     #   alembic-postgresql-enum
 alembic-postgresql-enum==1.11.1
     # via -r base.in
-annotated-doc==0.0.6
+annotated-doc==0.0.7
     # via fastapi
 annotated-types==0.8.0
     # via pydantic
@@ -80,9 +80,9 @@ dnspython==2.9.2
     # via email-validator
 email-validator==2.4.0
     # via -r base.in
-fastapi==0.163.1
+fastapi==0.165.0
     # via -r base.in
-filelock==4.2.10
+filelock==4.2.12
     # via
     #   python-discovery
     #   virtualenv
@@ -102,9 +102,9 @@ h11==0.16.0
     # via
     #   httpcore2
     #   uvicorn
-httpcore2==2.16.0
+httpcore2==2.16.2
     # via httpx2
-httpx2==2.16.0
+httpx2==2.16.2
     # via -r dev.in
 identify==2.6.20
     # via pre-commit
@@ -161,7 +161,7 @@ pathspec==1.1.1
     #   mypy
 pip-tools==7.7.0
     # via -r dev.in
-platformdirs==4.14.5
+platformdirs==4.14.7
     # via
     #   black
     #   virtualenv
@@ -213,11 +213,11 @@ python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
     #   botocore
-python-discovery==1.9.5
+python-discovery==1.9.6
     # via virtualenv
 python-dotenv==1.2.4
     # via pydantic-settings
-python-multipart==0.0.33
+python-multipart==0.0.34
     # via -r base.in
 pytokens==0.4.1
     # via black
@@ -233,7 +233,7 @@ sentry-sdk==2.75.0
     # via -r base.in
 six==1.17.0
     # via python-dateutil
-sqlalchemy[asyncio]==2.1.8
+sqlalchemy[asyncio]==2.1.9
     # via
     #   -r base.in
     #   alembic
@@ -291,7 +291,7 @@ uvicorn==0.54.0
     #   uvicorn-worker
 uvicorn-worker==0.4.0
     # via -r base.in
-virtualenv==21.15.6
+virtualenv==21.15.9
     # via pre-commit
 watchdog==7.1.0
     # via taskiq

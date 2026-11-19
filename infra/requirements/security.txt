@@ -8,7 +8,7 @@ bandit==1.9.4
     # via -r security.in
 boolean-py==5.0
     # via license-expression
-cachecontrol[filecache]==0.14.4
+cachecontrol[filecache]==0.15.0
     # via
     #   cachecontrol
     #   pip-audit
@@ -20,7 +20,7 @@ cyclonedx-python-lib==11.12.0
     # via pip-audit
 defusedxml==0.7.1
     # via py-serializable
-filelock==4.2.10
+filelock==4.2.12
     # via cachecontrol
 idna==3.20
     # via requests
@@ -44,7 +44,7 @@ pip-audit==2.10.1
     # via -r security.in
 pip-requirements-parser==32.0.1
     # via pip-audit
-platformdirs==4.14.5
+platformdirs==4.14.7
     # via pip-audit
 py-serializable==2.2.0
     # via cyclonedx-python-lib
