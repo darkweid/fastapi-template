@@ -169,7 +169,7 @@ async def test_issue_one_time_token_stores_active_jti_for_verification(
 
     # The core neither lowercases nor validates: normalization is the
     # perimeter's job, so the identifier here arrives already normalized.
-    token = await one_time_tokens.issue_one_time_token(
+    token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=VERIFICATION_PURPOSE,
         identifier="user@example.com",
@@ -197,7 +197,7 @@ async def test_decode_one_time_token_refuses_a_token_for_another_product(
     an address here, and must leave this product's live challenge unspent."""
     own_audience = config.jwt.JWT_AUDIENCE
     monkeypatch.setattr(config.jwt, "JWT_AUDIENCE", "another-product")
-    token = await one_time_tokens.issue_one_time_token(
+    token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=VERIFICATION_PURPOSE,
         identifier="user@example.com",
@@ -221,7 +221,7 @@ async def test_decode_one_time_token_refuses_a_token_for_another_product(
 async def test_issue_one_time_token_invalidates_previous_jti_for_verification(
     fake_redis: InMemoryRedis,
 ) -> None:
-    first_token = await one_time_tokens.issue_one_time_token(
+    first_token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=VERIFICATION_PURPOSE,
         identifier="user@example.com",
@@ -229,7 +229,7 @@ async def test_issue_one_time_token_invalidates_previous_jti_for_verification(
         ttl_minutes=5,
         redis_client=fake_redis,
     )
-    second_token = await one_time_tokens.issue_one_time_token(
+    second_token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=VERIFICATION_PURPOSE,
         identifier="user@example.com",
@@ -259,7 +259,7 @@ async def test_issue_one_time_token_stores_active_jti_for_reset_password(
     fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(tokens, "get_utc_now", ProvideValue(fixed_now))
 
-    token = await one_time_tokens.issue_one_time_token(
+    token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=RESET_PASSWORD_PURPOSE,
         identifier="user@example.com",
@@ -283,7 +283,7 @@ async def test_issue_one_time_token_stores_active_jti_for_reset_password(
 async def test_issue_one_time_token_invalidates_previous_jti_for_reset_password(
     fake_redis: InMemoryRedis,
 ) -> None:
-    first_token = await one_time_tokens.issue_one_time_token(
+    first_token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=RESET_PASSWORD_PURPOSE,
         identifier="user@example.com",
@@ -291,7 +291,7 @@ async def test_issue_one_time_token_invalidates_previous_jti_for_reset_password(
         ttl_minutes=5,
         redis_client=fake_redis,
     )
-    second_token = await one_time_tokens.issue_one_time_token(
+    second_token, _ = await one_time_tokens.issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=RESET_PASSWORD_PURPOSE,
         identifier="user@example.com",

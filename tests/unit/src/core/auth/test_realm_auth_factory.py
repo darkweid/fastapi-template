@@ -8,6 +8,7 @@ from src.core.errors.exceptions import UnauthorizedException
 from src.user.models import User
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession
+from tests.helpers.requests import build_request
 
 
 class FakePrincipalRepository:
@@ -57,7 +58,10 @@ async def test_a_token_minted_for_one_realm_is_rejected_by_another(
 
     with pytest.raises(UnauthorizedException):
         await second_auth.authenticate(
-            token=token, session=FakeAsyncSession(), redis_client=fake_redis
+            request=build_request(),
+            token=token,
+            session=FakeAsyncSession(),
+            redis_client=fake_redis,
         )
 
 
@@ -84,7 +88,10 @@ async def test_a_token_minted_for_one_realm_is_accepted_by_that_same_realm(
     )
 
     authenticated = await first_auth.authenticate(
-        token=token, session=FakeAsyncSession(), redis_client=fake_redis
+        request=build_request(),
+        token=token,
+        session=FakeAsyncSession(),
+        redis_client=fake_redis,
     )
 
     assert authenticated.principal is principal

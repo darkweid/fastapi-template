@@ -5,8 +5,10 @@ from redis.asyncio import Redis
 
 from loggers import get_logger
 from src.core.auth.dependencies import PrincipalT
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.realm import AuthRealm
+from src.core.auth.reuse import RefreshReuseCallback, report_refresh_reuse
 from src.core.auth.tokens import rotate_session_tokens
 from src.core.errors.exceptions import CoreException
 from src.core.schemas import TokenModel
@@ -28,6 +30,10 @@ class RefreshAccessUseCase(Generic[PrincipalT]):
     ago, whose successor refresh token has not been rotated yet, gets that
     pair again. Both tokens name the refresh
     token's subject, which is the one the principal was loaded from.
+
+    Side effects:
+    - Awaits the realm's `on_refresh_reuse`, if it has one, when rotation ended
+      the session over a reuse.
     """
 
     def __init__(
@@ -35,15 +41,18 @@ class RefreshAccessUseCase(Generic[PrincipalT]):
         redis_client: Redis,
         realm: AuthRealm,
         admission: Callable[[PrincipalT], None],
+        on_refresh_reuse: RefreshReuseCallback | None = None,
     ) -> None:
         self.redis_client = redis_client
         self.realm = realm
         self.admission = admission
+        self.on_refresh_reuse = on_refresh_reuse
 
     async def execute(
         self,
         principal: PrincipalT,
         old_token_payload: JWTPayload,
+        ip: str | None = None,
     ) -> TokenModel:
         try:
             self.admission(principal)
@@ -55,6 +64,10 @@ class RefreshAccessUseCase(Generic[PrincipalT]):
             )
             raise
 
-        return await rotate_session_tokens(
-            old_token_payload, self.redis_client, realm=self.realm
-        )
+        try:
+            return await rotate_session_tokens(
+                old_token_payload, self.redis_client, realm=self.realm
+            )
+        except RefreshTokenReuseError as error:
+            await report_refresh_reuse(self.on_refresh_reuse, error, ip)
+            raise

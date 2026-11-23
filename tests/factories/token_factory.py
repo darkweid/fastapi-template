@@ -90,7 +90,7 @@ async def build_refresh_token(
 
 
 async def build_verification_token(data: dict[str, Any], redis_client: Any) -> str:
-    return await issue_one_time_token(
+    issued = await issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=VERIFICATION_PURPOSE,
         identifier=normalize_email(str(data["email"])),
@@ -98,10 +98,11 @@ async def build_verification_token(data: dict[str, Any], redis_client: Any) -> s
         ttl_minutes=config.jwt.VERIFICATION_TOKEN_EXPIRE_MINUTES,
         redis_client=redis_client,
     )
+    return issued.token
 
 
 async def build_reset_password_token(data: dict[str, Any], redis_client: Any) -> str:
-    return await issue_one_time_token(
+    issued = await issue_one_time_token(
         realm=USER_AUTH_REALM,
         purpose=RESET_PASSWORD_PURPOSE,
         identifier=normalize_email(str(data["email"])),
@@ -109,3 +110,4 @@ async def build_reset_password_token(data: dict[str, Any], redis_client: Any) ->
         ttl_minutes=config.jwt.RESET_PASSWORD_TOKEN_EXPIRE_MINUTES,
         redis_client=redis_client,
     )
+    return issued.token

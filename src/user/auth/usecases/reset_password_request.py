@@ -16,6 +16,7 @@ from src.user.auth.services.email_notifier import (
     get_reset_password_notifier,
 )
 from src.user.events import UserPasswordResetRequested
+from src.user.policies import account_blocked
 
 logger = get_logger(__name__)
 
@@ -26,8 +27,9 @@ class ResetPasswordRequestUseCase:
 
     Answers success whether or not anything was sent, the unelapsed throttle
     window included: a caller must not be able to tell an unknown address from
-    one that was mailed a minute ago. The throttle key is released when the
-    transaction fails to commit.
+    one that was mailed a minute ago. A blocked account is answered the same
+    way and claims, sends and records nothing. The throttle key is released
+    when anything after the claim fails, the commit included.
 
     Side effects:
     - Appends `user.password_reset_requested` to the event log when an email
@@ -54,9 +56,16 @@ class ResetPasswordRequestUseCase:
                 )
                 return SuccessResponse(success=True)
 
+            if account_blocked(user):
+                logger.debug(
+                    "[ResetPasswordRequest] User with email %s is blocked.",
+                    mask_email(data.email),
+                )
+                return SuccessResponse(success=True)
+
             throttle_key = USER_AUTH_REALM.keys.throttle("password-reset", user.email)
             try:
-                await self.notifier.send(
+                slot = await self.notifier.send(
                     uow=uow,
                     user=user,
                     throttle_key=throttle_key,
@@ -68,21 +77,22 @@ class ResetPasswordRequestUseCase:
                 )
                 return SuccessResponse(success=True)
 
-            # Anonymous: anyone may type an address into that form, and this
-            # row is what later tells a takeover attempt from a forgotten
-            # password. The throttled and unknown-address branches above
-            # return before it - neither queued an email.
-            await uow.publish(
-                Actor.anonymous(ip=ip),
-                UserPasswordResetRequested(object_id=user.id),
-            )
             try:
+                # Anonymous: anyone may type an address into that form, and this
+                # row is what later tells a takeover attempt from a forgotten
+                # password. The branches above return before it - none of them
+                # queued an email.
+                await uow.publish(
+                    Actor.anonymous(ip=ip),
+                    UserPasswordResetRequested(object_id=user.id),
+                )
                 await uow.commit()
             except Exception:
                 # The rollback discards the outbox row, but the throttle key in
                 # Redis survives it: release it so a retry is not locked out
                 # for the full TTL with no email queued.
-                await self.notifier.release_throttle(throttle_key)
+                if slot:
+                    await self.notifier.release_throttle(slot)
                 raise
 
             logger.info(

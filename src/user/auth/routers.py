@@ -167,6 +167,7 @@ async def login_user(
     ],
 )
 async def get_access_by_refresh(
+    request: Request,
     response: Response,
     user_and_payload: Annotated[
         tuple[User, JWTPayload], Depends(get_access_by_refresh_token)
@@ -184,7 +185,9 @@ async def get_access_by_refresh(
     Native clients send the refresh token in the Authorization header.
     """
     current_user, old_payload = user_and_payload
-    tokens = await use_case.execute(current_user, old_payload)
+    tokens = await use_case.execute(
+        current_user, old_payload, ip=get_client_ip(request)
+    )
     return responder.apply(tokens, response, transport)
 
 

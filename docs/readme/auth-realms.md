@@ -66,6 +66,12 @@ Follow `src/user/auth/` as the worked example throughout.
    # ... one alias per RealmAuth field the module's router needs, following
    # src/user/auth/dependencies.py's list verbatim.
    ```
+   `on_refresh_reuse` is optional: an async callback given the
+   `RefreshTokenReuseError` (subject and session id) and the caller's address
+   once a reused refresh token has ended its session. A realm that records
+   nothing leaves it out; one that records passes the same function here and to
+   `RefreshAccessUseCase`, since either may detect the reuse. It opens its own
+   database session (`src/user/auth/usecases/record_refresh_reuse.py`).
    This file stays short, like the user realm's, whose only addition to the
    aliases is its `get_user_actor` helper.
 
@@ -81,7 +87,9 @@ Follow `src/user/auth/` as the worked example throughout.
    `src/user/auth/usecases/refresh_access.py` / `logout.py`.
    `get_refresh_access_use_case` takes
    `redis_client: Annotated[Redis, Depends(get_redis_client)]` and builds
-   `RefreshAccessUseCase` with the realm and an admission callable. The logout
+   `RefreshAccessUseCase` with the realm and an admission callable, plus
+   `on_refresh_reuse` where the realm has one; the router passes the caller's
+   address to `execute` as `ip`. The logout
    provider builds `LogoutUseCase(redis_client, realm=...)`, which takes no
    admission; the user realm wraps it in `UserLogoutUseCase` only to record a
    sign-out event through the unit of work, so its provider also depends on

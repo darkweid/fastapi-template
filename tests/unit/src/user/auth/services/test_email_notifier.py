@@ -4,7 +4,7 @@ import pytest
 
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.utils.security import build_throttle_key
-from src.user.auth.services.email_notifier import EmailNotifier
+from src.user.auth.services.email_notifier import EmailNotifier, ThrottleSlot
 from src.user.auth.tasks import (
     send_reset_password_email_task,
     send_verification_email_task,
@@ -72,7 +72,10 @@ async def test_email_notifier_queues_task_with_expected_payload(
     )
     # throttle_key travels as a keyword: a positional slot is one silent
     # mismatch away from binding the wrong value.
-    assert dispatcher.enqueue_transactional.await_args.kwargs == {"throttle_key": None}
+    assert dispatcher.enqueue_transactional.await_args.kwargs == {
+        "throttle_key": None,
+        "throttle_owner": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -163,9 +166,10 @@ async def test_release_throttle_deletes_key(
         AsyncMock(), fake_redis, task, throttle_message, log_label
     )
     throttle_key = build_throttle_key(throttle_namespace, "user@example.com")
-    await fake_redis.set(throttle_key, "1", ex=60)
+    slot = ThrottleSlot(throttle_key, "owner")
+    await fake_redis.set(slot.key, slot.owner, ex=60)
 
-    await notifier.release_throttle(throttle_key)
+    await notifier.release_throttle(slot)
 
     assert await fake_redis.exists(throttle_key) == 0
 
@@ -181,11 +185,49 @@ async def test_release_throttle_swallows_redis_errors(
     throttle_namespace: str,
 ) -> None:
     redis_client = AsyncMock()
-    redis_client.delete.side_effect = ConnectionError("redis down")
+    redis_client.eval.side_effect = ConnectionError("redis down")
     notifier = build_notifier(
         AsyncMock(), redis_client, task, throttle_message, log_label
     )
 
-    await notifier.release_throttle("any-key")
+    await notifier.release_throttle(ThrottleSlot("any-key", "owner"))
 
-    redis_client.delete.assert_awaited_once_with("any-key")
+    redis_client.eval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_release_throttle_leaves_a_slot_claimed_by_a_newer_send(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """The slot expires in a minute while a commit can take longer to fail: by
+    then the window belongs to another send, and dropping it uncaps the address."""
+    notifier = build_notifier(
+        AsyncMock(), fake_redis, send_verification_email_task, "throttled", "log"
+    )
+    await fake_redis.set("slot", "newer-owner", ex=60)
+
+    await notifier.release_throttle(ThrottleSlot("slot", "older-owner"))
+
+    assert await fake_redis.get("slot") == "newer-owner"
+
+
+@pytest.mark.asyncio
+async def test_the_queued_task_carries_the_slot_the_send_answers(
+    fake_redis: InMemoryRedis,
+    fake_uow: FakeUnitOfWork,
+) -> None:
+    dispatcher = AsyncMock()
+    notifier = build_notifier(
+        dispatcher, fake_redis, send_verification_email_task, "throttled", "log"
+    )
+
+    slot = await notifier.send(
+        uow=fake_uow, user=build_user(email="user@example.com"), throttle_key="slot"
+    )
+
+    assert slot is not None
+    assert await fake_redis.get("slot") == slot.owner
+    assert dispatcher.enqueue_transactional.await_args.kwargs == {
+        "throttle_key": "slot",
+        "throttle_owner": slot.owner,
+    }

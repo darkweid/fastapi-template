@@ -5,6 +5,7 @@ from pydantic import SecretStr
 import pytest
 
 from src.main.config import config
+from src.user.auth.realm import USER_AUTH_REALM, VERIFICATION_PURPOSE
 from src.user.auth.tasks import send_verification_email_task
 from taskiq_worker.broker import broker
 import taskiq_worker.dependencies as tasks_dependencies
@@ -157,3 +158,29 @@ def test_disabled_cache_builds_no_dedicated_client(
 
     assert tasks_dependencies.get_cache_redis_singleton() is tasks_client
     assert created_with == []
+
+
+@pytest.mark.parametrize(("retries", "sent"), [(None, 1), (0, 1), (1, 0)])
+async def test_a_message_resent_by_the_retry_middleware_is_known_as_a_retry(
+    retries: int | None,
+    sent: int,
+    fake_redis: InMemoryRedis,
+    override_tasks_redis_client: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The label is SmartRetryMiddleware's own; a rename there would turn every
+    retry into a first run that retires a newer link."""
+    mailer = MockMailer()
+    monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mailer))
+    await fake_redis.set(
+        USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, "user@example.com"),
+        "newer-jti",
+        ex=600,
+    )
+    kicker = send_verification_email_task.kicker()
+    if retries is not None:
+        kicker = kicker.with_labels(_retries=retries)
+
+    await kicker.kiq("user@example.com", "John Doe")
+
+    assert len(mailer.sent_template_emails) == sent

@@ -44,6 +44,16 @@ class UserSignedOut(DomainEvent):
     all_sessions: bool
 
 
+class UserRefreshReuseDetected(DomainEvent):
+    """A rotated-out refresh token of the account came back, so either the
+    owner or a thief holds a copy the other already used. Its session ended."""
+
+    code = "user.refresh_reuse_detected"
+    object_type = ObjectType.USER
+
+    session_id: str
+
+
 class UserPasswordChanged(DomainEvent):
     code = "user.password_changed"
     object_type = ObjectType.USER

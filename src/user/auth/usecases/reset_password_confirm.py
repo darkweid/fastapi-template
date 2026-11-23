@@ -21,6 +21,7 @@ from src.user.auth.realm import RESET_PASSWORD_PURPOSE, USER_AUTH_REALM
 from src.user.auth.schemas import ResetPasswordModel
 from src.user.cache_keys import user_cache_keys
 from src.user.events import UserPasswordReset
+from src.user.policies import account_blocked
 
 logger = get_logger(__name__)
 
@@ -30,7 +31,10 @@ class ResetPasswordConfirmUseCase:
     Confirm a password reset with a single-use token and store the new password.
 
     An invalid, expired or superseded token answers success=False instead of
-    raising, so a wrong token cannot be told apart from a wrong email.
+    raising, so a wrong token cannot be told apart from a wrong email. A blocked
+    account is refused the same way, sessions and login-failure counter left
+    alone; that is decided on the locked row and after hashing, so neither the
+    answer nor its timing tells it apart.
 
     Side effects:
     - Appends `user.password_reset` to the event log, in this transaction.
@@ -81,21 +85,29 @@ class ResetPasswordConfirmUseCase:
 
         new_password_hash = await hash_password(data.password)
         async with self.uow as uow:
-            user = await uow.users.update(
+            # The locked read waits for a sign-in holding the row, and the wipe
+            # comes after it: that sign-in has its session in the index by
+            # then, and a later one finds the new hash.
+            locked_user = await uow.users.get_single(
                 uow.session,
-                {"password_hash": new_password_hash},
+                for_update=True,
+                populate_existing=True,
                 email=normalized_email,
             )
-            if not user:
+            if not locked_user or account_blocked(locked_user):
                 logger.info(
-                    "[ResetPasswordConfirm] User with email %s not found.",
+                    "[ResetPasswordConfirm] User with email %s not found or blocked.",
                     mask_email(normalized_email),
                 )
                 return SuccessResponse(success=False)
 
-            # The flushed UPDATE takes the row lock, and the wipe comes after
-            # it: a sign-in holding that lock has its session in the index by
-            # then, and a later one finds the new hash.
+            user = await uow.users.update(
+                uow.session,
+                {"password_hash": new_password_hash},
+                id=locked_user.id,
+            )
+            if not user:
+                return SuccessResponse(success=False)
             await uow.flush()
             await invalidate_all_sessions(
                 str(user.id), self.redis_client, keys=USER_AUTH_REALM.keys

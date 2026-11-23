@@ -12,7 +12,7 @@ from src.core.errors.exceptions import (
 )
 from src.core.schemas import SuccessResponse
 from src.event_log.actor import Actor
-from src.user.auth.realm import USER_AUTH_REALM
+from src.user.auth.realm import RESET_PASSWORD_PURPOSE, USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
 from src.user.models import User
@@ -299,3 +299,29 @@ async def test_update_password_commit_failure_after_invalidation(
     )
     uow.flush.assert_awaited_once()
     uow.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_password_retires_the_live_reset_link(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
+) -> None:
+    """Whoever could read the mailbox when the link was requested must not undo
+    the change with it. The address is the locked row's: the first read may be
+    older than an email change."""
+    user = build_user(email="old@example.com", password=CURRENT_PASSWORD)
+    locked = build_user(
+        user_id=user.id, email="new@example.com", password=CURRENT_PASSWORD
+    )
+    users_repo = FakeUsersRepository(user=user, updated_user=locked)
+    users_repo.get_single.side_effect = [user, locked]
+    uow = build_uow(fake_session, users_repo)
+    reset_key = USER_AUTH_REALM.keys.one_time(RESET_PASSWORD_PURPOSE, locked.email)
+    await fake_redis.set(reset_key, "jti", ex=600)
+
+    await UpdateUserPasswordUseCase(
+        uow=uow, redis_client=fake_redis, cache=cache
+    ).execute(data=change_password_data(), user_id=user.id, actor=Actor.user(user.id))
+
+    assert await fake_redis.exists(reset_key) == 0

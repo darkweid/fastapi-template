@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import jwt
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.errors.exceptions import InstanceProcessingException
@@ -22,6 +23,7 @@ from src.user.auth.schemas import (
     ResetPasswordModel,
     SendResetPasswordRequestModel,
 )
+from src.user.auth.services.email_notifier import ThrottleSlot
 from src.user.auth.usecases.register import RegisterUseCase
 from src.user.auth.usecases.resend_verification import SendVerificationUseCase
 from src.user.auth.usecases.reset_password_confirm import ResetPasswordConfirmUseCase
@@ -74,9 +76,12 @@ class FakeUsersRepository:
         return self._updated_user
 
 
+SLOT = ThrottleSlot("throttle:key", "owner")
+
+
 class FakeEmailNotifier:
     def __init__(self) -> None:
-        self.send = AsyncMock()
+        self.send = AsyncMock(return_value=SLOT)
         self.release_throttle = AsyncMock()
 
 
@@ -106,6 +111,7 @@ async def test_register_usecase_creates_user_and_sends_email(
     )
 
     call_order: list[str] = []
+    uow.flush = AsyncMock(side_effect=lambda: call_order.append("flush"))
     notifier.send = AsyncMock(side_effect=lambda **_: call_order.append("notify"))
     uow.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
@@ -116,12 +122,16 @@ async def test_register_usecase_creates_user_and_sends_email(
     assert created_data["password_hash"] != data.password
     notifier.send.assert_awaited_once()
     users_repo.create.assert_awaited_once()
-    uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
-    assert call_order == ["notify", "commit"]
+    # A duplicate fails at the flush, before it could claim the send window of
+    # the account that owns the address.
+    assert call_order == ["flush", "notify", "commit"]
     assert notifier.send.await_args.kwargs == {
         "uow": uow,
         "user": user,
+        "throttle_key": USER_AUTH_REALM.keys.throttle(
+            "resend_verification", user.email
+        ),
     }
     logged_actor, logged_event = uow.published[0]
     # Anonymous: filling in the form proves nothing about owning the address.
@@ -240,10 +250,7 @@ async def test_resend_verification_releases_throttle_when_commit_fails(
             data=ResendVerificationModel(email=user.email),
         )
 
-    expected_throttle_key = USER_AUTH_REALM.keys.throttle(
-        "resend_verification", user.email
-    )
-    notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
+    notifier.release_throttle.assert_awaited_once_with(SLOT)
 
 
 @pytest.mark.asyncio
@@ -307,8 +314,7 @@ async def test_reset_password_request_releases_throttle_when_commit_fails(
             data=SendResetPasswordRequestModel(email=user.email),
         )
 
-    expected_throttle_key = USER_AUTH_REALM.keys.throttle("password-reset", user.email)
-    notifier.release_throttle.assert_awaited_once_with(expected_throttle_key)
+    notifier.release_throttle.assert_awaited_once_with(SLOT)
 
 
 @pytest.mark.asyncio
@@ -741,3 +747,225 @@ async def test_verify_email_usecase_commit_failure_still_consumes_the_token(
     )
     uow.flush.assert_not_awaited()
     uow.rollback.assert_awaited_once()
+
+
+def registration() -> CreateUserModel:
+    return CreateUserModel(
+        first_name="John",
+        last_name="Doe",
+        email="john@example.com",
+        username="john_doe",
+        phone_number="+1234567890",
+        password="StrongPass1!",
+    )
+
+
+@pytest.mark.asyncio
+async def test_register_succeeds_without_mail_while_the_throttle_is_busy(
+    fake_session: FakeAsyncSession,
+) -> None:
+    uow = build_uow(fake_session, FakeUsersRepository(user=build_user()))
+    notifier = FakeEmailNotifier()
+    notifier.send.side_effect = InstanceProcessingException("throttled")
+
+    await RegisterUseCase(uow=uow, notifier=notifier).execute(data=registration())
+
+    notifier.send.assert_awaited_once()
+    uow.commit.assert_awaited_once()
+    assert uow.published_codes == ["user.registered"]
+
+
+@pytest.mark.asyncio
+async def test_register_sends_unthrottled_while_redis_is_down(
+    fake_session: FakeAsyncSession,
+) -> None:
+    """The throttle must not make registration depend on Redis."""
+    user = build_user()
+    uow = build_uow(fake_session, FakeUsersRepository(user=user))
+    notifier = FakeEmailNotifier()
+    notifier.send.side_effect = [RedisConnectionError("down"), None]
+
+    await RegisterUseCase(uow=uow, notifier=notifier).execute(data=registration())
+
+    assert notifier.send.await_args.kwargs == {"uow": uow, "user": user}
+    uow.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_registration_claims_nothing(
+    fake_session: FakeAsyncSession,
+) -> None:
+    """It would otherwise hold the window of the account owning the address."""
+    uow = build_uow(fake_session, FakeUsersRepository(user=build_user()))
+    uow.flush = AsyncMock(side_effect=RuntimeError("duplicate"))
+    notifier = FakeEmailNotifier()
+
+    with pytest.raises(RuntimeError, match="duplicate"):
+        await RegisterUseCase(uow=uow, notifier=notifier).execute(data=registration())
+
+    notifier.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing", ["publish", "commit"])
+async def test_register_releases_the_throttle_when_a_later_step_fails(
+    failing: str, fake_session: FakeAsyncSession
+) -> None:
+    uow = build_uow(fake_session, FakeUsersRepository(user=build_user()))
+    setattr(uow, failing, AsyncMock(side_effect=RuntimeError("failed")))
+    notifier = FakeEmailNotifier()
+
+    with pytest.raises(RuntimeError, match="failed"):
+        await RegisterUseCase(uow=uow, notifier=notifier).execute(data=registration())
+
+    notifier.release_throttle.assert_awaited_once_with(SLOT)
+
+
+@pytest.mark.asyncio
+async def test_reset_password_request_releases_throttle_when_publish_fails(
+    fake_session: FakeAsyncSession,
+) -> None:
+    user = build_user()
+    uow = build_uow(fake_session, FakeUsersRepository(user=user))
+    uow.publish = AsyncMock(side_effect=RuntimeError("publish failed"))
+    notifier = FakeEmailNotifier()
+
+    with pytest.raises(RuntimeError, match="publish failed"):
+        await ResetPasswordRequestUseCase(uow=uow, notifier=notifier).execute(
+            data=SendResetPasswordRequestModel(email=user.email)
+        )
+
+    notifier.release_throttle.assert_awaited_once_with(SLOT)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_verified", [True, False])
+async def test_a_blocked_account_is_sent_no_link(
+    is_verified: bool, fake_session: FakeAsyncSession
+) -> None:
+    """Refused before the throttle claim: a busy window would show in the answer
+    time of the next request and outlive an unblock."""
+    user = build_user(is_active=False, is_verified=is_verified)
+    uow = build_uow(fake_session, FakeUsersRepository(user=user))
+    notifier = FakeEmailNotifier()
+
+    resent = await SendVerificationUseCase(uow=uow, notifier=notifier).execute(
+        data=ResendVerificationModel(email=user.email)
+    )
+    reset = await ResetPasswordRequestUseCase(
+        uow=uow.fresh(), notifier=notifier
+    ).execute(data=SendResetPasswordRequestModel(email=user.email))
+
+    assert resent == reset == SuccessResponse(success=True)
+    notifier.send.assert_not_awaited()
+    assert uow.published == []
+
+
+@pytest.mark.asyncio
+async def test_reset_password_confirm_refuses_a_blocked_account(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
+) -> None:
+    """Hashed first, or the fast refusal tells a blocked account apart."""
+    user = build_user(is_active=False)
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    hashed = AsyncMock(return_value="hash")
+    wipe = AsyncMock()
+    module = "src.user.auth.usecases.reset_password_confirm"
+    monkeypatch.setattr(f"{module}.hash_password", hashed)
+    monkeypatch.setattr(f"{module}.invalidate_all_sessions", wipe)
+    failures_key = USER_AUTH_REALM.keys.login_failures(user.email)
+    await fake_redis.setex(failures_key, 600, "25")
+    token = await build_reset_password_token({"email": user.email}, fake_redis)
+
+    result = await ResetPasswordConfirmUseCase(
+        uow=uow, redis_client=fake_redis, cache=cache
+    ).execute(data=ResetPasswordModel(token=token, password="StrongPass1!"))
+
+    assert result == SuccessResponse(success=False)
+    hashed.assert_awaited_once()
+    users_repo.get_single.assert_awaited_once_with(
+        fake_session, for_update=True, populate_existing=True, email=user.email
+    )
+    users_repo.update.assert_not_awaited()
+    wipe.assert_not_awaited()
+    assert await fake_redis.get(failures_key) == "25"
+    assert uow.published == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_verified", [True, False])
+async def test_verify_email_refuses_a_blocked_account(
+    is_verified: bool,
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
+) -> None:
+    """A blocked account that is already verified too: success would confirm it."""
+    user = build_user(is_active=False, is_verified=is_verified)
+    users_repo = FakeUsersRepository(user=user)
+    uow = build_uow(fake_session, users_repo)
+    token = await build_verification_token({"email": user.email}, fake_redis)
+
+    result = await VerifyEmailUseCase(
+        uow=uow, redis_client=fake_redis, cache=cache
+    ).execute(token)
+
+    assert result == SuccessResponse(success=False)
+    users_repo.update.assert_not_awaited()
+    assert uow.published == []
+
+
+@pytest.mark.asyncio
+async def test_verify_email_decides_on_the_locked_row(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    cache: InMemoryCache,
+) -> None:
+    """A row deleted meanwhile is not a verified one, whatever was read before."""
+    user = build_user(is_verified=False)
+    users_repo = FakeUsersRepository(user=user)
+    users_repo.update = AsyncMock(return_value=None)
+    uow = build_uow(fake_session, users_repo)
+    token = await build_verification_token({"email": user.email}, fake_redis)
+
+    result = await VerifyEmailUseCase(
+        uow=uow, redis_client=fake_redis, cache=cache
+    ).execute(token)
+
+    assert result == SuccessResponse(success=False)
+    users_repo.get_single.assert_awaited_once_with(
+        fake_session, for_update=True, populate_existing=True, email=user.email
+    )
+    assert uow.published == []
+    uow.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_verify_email_spends_the_token_with_no_transaction_open(
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
+) -> None:
+    """A slow Redis would otherwise hold a pooled connection idle in transaction."""
+    user = build_user(is_verified=False)
+    uow = build_uow(fake_session, FakeUsersRepository(user=user))
+    in_transaction: list[bool] = []
+
+    async def decode(*_: object, **__: object) -> str:
+        in_transaction.append(fake_session.in_transaction())
+        return user.email
+
+    monkeypatch.setattr(
+        "src.user.auth.usecases.verify_email.decode_one_time_token", decode
+    )
+
+    await VerifyEmailUseCase(uow=uow, redis_client=fake_redis, cache=cache).execute(
+        "token"
+    )
+
+    assert in_transaction == [False]

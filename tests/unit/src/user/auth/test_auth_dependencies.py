@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from typing import Any
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import jwt
 import pytest
@@ -16,11 +18,17 @@ from src.core.auth.credentials import (
     verify_jti,
 )
 from src.core.auth.csrf import build_csrf_token
-from src.core.auth.dependencies import Authenticated
-from src.core.auth.errors import CsrfFailedError, TokenExpiredError
+from src.core.auth.dependencies import Authenticated, RealmAuth, build_realm_auth
+from src.core.auth.errors import (
+    CsrfFailedError,
+    RefreshTokenReuseError,
+    TokenExpiredError,
+)
 from src.core.auth.jwt_payload_schema import JWTPayload
+from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
 from src.core.errors.codes import ErrorCode
 from src.core.errors.exceptions import UnauthorizedException
+from src.event_log.enums import ActorType
 from src.main.config import CookieConfig, config
 from src.user.auth import dependencies
 from src.user.auth.dependencies import (
@@ -36,6 +44,8 @@ from src.user.auth.dependencies import (
 )
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 from src.user.auth.realm import USER_AUTH_REALM
+from src.user.auth.usecases.record_refresh_reuse import record_refresh_reuse
+from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.models import User
 from src.user.repositories import UserRepository
 from tests.factories.token_factory import (
@@ -44,7 +54,7 @@ from tests.factories.token_factory import (
     encode_access_payload,
 )
 from tests.factories.user_factory import build_user
-from tests.fakes.db import FakeAsyncSession
+from tests.fakes.db import FakeAsyncSession, FakeSessionFactory, FakeUnitOfWork
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.requests import build_request
 
@@ -238,9 +248,13 @@ def _used_marker(at: int, refresh_jti: str) -> str:
 
 
 async def _rotated_refresh_token(
-    fake_redis: InMemoryRedis, *, marker: str, live_refresh_jti: str
+    fake_redis: InMemoryRedis,
+    *,
+    marker: str,
+    live_refresh_jti: str,
+    subject: str = "user-1",
 ) -> tuple[JWTPayload, str]:
-    payload = build_refresh_payload("user-1")
+    payload = build_refresh_payload(subject)
     await fake_redis.set(
         AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         live_refresh_jti,
@@ -352,6 +366,7 @@ async def test_authenticate_access_token_success(
     monkeypatch.setattr(UserRepository, "get_single", get_single_mock)
 
     result = await authenticate_access_token(
+        request=build_request(),
         token=token,
         session=fake_session,
         redis_client=fake_redis,
@@ -377,6 +392,7 @@ async def test_authenticate_access_token_wrong_mode(
 
     with pytest.raises(UnauthorizedException):
         await authenticate_access_token(
+            request=build_request(),
             token=token,
             session=fake_session,
             redis_client=fake_redis,
@@ -471,6 +487,7 @@ async def test_get_access_by_refresh_token_success(
     monkeypatch.setattr(UserRepository, "get_single", get_single_mock)
 
     result_user, result_payload = await get_access_by_refresh_token(
+        request=build_request(),
         credentials=RefreshCredentials(token=token, from_cookie=False),
         _csrf=None,
         session=fake_session,
@@ -499,10 +516,10 @@ async def test_get_user_id_from_refresh_token_missing_header(
 async def test_get_user_id_from_refresh_token_success(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    payload = build_access_payload("user-1")
+    payload = build_refresh_payload("user-1")
     token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
     await fake_redis.set(
-        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
+        AUTH_KEYS.refresh(payload["sub"], payload["session_id"]),
         payload["jti"],
         ex=60,
     )
@@ -513,6 +530,208 @@ async def test_get_user_id_from_refresh_token_success(
     result = await get_user_id_from_refresh_token(request)
 
     assert result == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_get_user_id_from_refresh_token_rejects_an_access_token(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route refuses an access token anyway; counted here first, a leaked one
+    would spend the subject's refresh budget."""
+    payload = build_access_payload("user-1")
+    token = encode_token(payload, config.jwt.JWT_USER_SECRET_KEY)
+    await fake_redis.set(
+        AUTH_KEYS.access(payload["sub"], payload["session_id"]),
+        payload["jti"],
+        ex=60,
+    )
+    request = build_request(headers={"Authorization": token})
+    monkeypatch.setattr(
+        core_auth_dependencies, "get_redis_client", AsyncMock(return_value=fake_redis)
+    )
+
+    with pytest.raises(UnauthorizedException):
+        await get_user_id_from_refresh_token(request)
+
+
+ENTRY_POINTS = [
+    "authenticate",
+    "access_by_refresh",
+    "principal_id_from_refresh_token",
+    "principal_id_from_access_token",
+]
+
+
+async def _enter(
+    name: str, auth: RealmAuth[User], token: str, redis_client: InMemoryRedis
+) -> object:
+    request = build_request(headers={"Authorization": token})
+    if name.startswith("principal_id"):
+        return await getattr(auth, name)(request)
+    if name == "authenticate":
+        return await auth.authenticate(
+            request=request,
+            token=token,
+            session=FakeAsyncSession(),
+            redis_client=redis_client,
+        )
+    return await auth.access_by_refresh(
+        request=request,
+        credentials=RefreshCredentials(token=token, from_cookie=False),
+        _csrf=None,
+        session=FakeAsyncSession(),
+        redis_client=redis_client,
+    )
+
+
+def _realm_auth(**kwargs: Any) -> RealmAuth[User]:
+    return build_realm_auth(
+        realm=USER_AUTH_REALM,
+        principal_type=User,
+        repository_factory=UserRepository,
+        admission=Mock(),
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def limiter_redis(fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        core_auth_dependencies, "get_redis_client", AsyncMock(return_value=fake_redis)
+    )
+
+
+@pytest.mark.parametrize("entry_point", ENTRY_POINTS)
+async def test_every_entry_point_reports_the_reuse_it_detected(
+    entry_point: str, fake_redis: InMemoryRedis, limiter_redis: None
+) -> None:
+    """Whichever dependency meets the token first ends the session, so a path
+    without the callback would swallow the one sign of a theft."""
+    payload, token = await _rotated_refresh_token(
+        fake_redis, marker="used", live_refresh_jti="successor"
+    )
+    callback = AsyncMock()
+
+    with pytest.raises(RefreshTokenReuseError):
+        await _enter(
+            entry_point, _realm_auth(on_refresh_reuse=callback), token, fake_redis
+        )
+
+    callback.assert_awaited_once()
+    error, ip = callback.await_args.args
+    assert (error.subject_id, error.session_id, ip) == (
+        payload["sub"],
+        payload["session_id"],
+        "127.0.0.1",
+    )
+    key = AUTH_KEYS.refresh(payload["sub"], payload["session_id"])
+    assert await fake_redis.exists(key) == 0
+
+
+async def test_a_replay_of_an_ended_session_is_not_reported(
+    fake_redis: InMemoryRedis, limiter_redis: None
+) -> None:
+    _, token = await _rotated_refresh_token(
+        fake_redis, marker="used", live_refresh_jti="successor"
+    )
+    callback = AsyncMock()
+    auth = _realm_auth(on_refresh_reuse=callback)
+    with pytest.raises(RefreshTokenReuseError):
+        await auth.principal_id_from_refresh_token(
+            build_request(headers={"Authorization": token})
+        )
+
+    with pytest.raises(UnauthorizedException) as again:
+        await auth.principal_id_from_refresh_token(
+            build_request(headers={"Authorization": token})
+        )
+
+    assert not isinstance(again.value, RefreshTokenReuseError)
+    callback.assert_awaited_once()
+
+
+async def test_a_realm_without_a_reuse_callback_answers_the_same_401(
+    fake_redis: InMemoryRedis, limiter_redis: None
+) -> None:
+    _, token = await _rotated_refresh_token(
+        fake_redis, marker="used", live_refresh_jti="successor"
+    )
+
+    with pytest.raises(RefreshTokenReuseError):
+        await _realm_auth().principal_id_from_refresh_token(
+            build_request(headers={"Authorization": token})
+        )
+
+
+async def test_a_failed_reuse_record_keeps_the_401_and_is_reported_without_its_row(
+    fake_redis: InMemoryRedis, limiter_redis: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, token = await _rotated_refresh_token(
+        fake_redis, marker="used", live_refresh_jti="successor"
+    )
+    capture = Mock()
+    monkeypatch.setattr("src.core.auth.reuse.sentry_sdk.capture_exception", capture)
+    callback = AsyncMock(side_effect=RuntimeError("Key (email)=(a@example.com)"))
+
+    with pytest.raises(RefreshTokenReuseError):
+        await _realm_auth(on_refresh_reuse=callback).principal_id_from_refresh_token(
+            build_request(headers={"Authorization": token})
+        )
+
+    reported = capture.call_args.args[0]
+    assert "RuntimeError" in str(reported) and "a@example.com" not in str(reported)
+
+
+async def test_rotation_reports_its_own_reuse(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two refreshes may both pass the dependency before either rotates: the
+    loser's reuse is seen by the rotation script alone."""
+    error = RefreshTokenReuseError("reuse", subject_id="u", session_id="s")
+    monkeypatch.setattr(
+        "src.core.auth.usecases.refresh_access.rotate_session_tokens",
+        AsyncMock(side_effect=error),
+    )
+    callback = AsyncMock()
+    use_case = RefreshAccessUseCase[User](
+        fake_redis, USER_AUTH_REALM, Mock(), on_refresh_reuse=callback
+    )
+
+    with pytest.raises(RefreshTokenReuseError):
+        await use_case.execute(build_user(), {"sub": "u"}, ip="203.0.113.7")
+
+    callback.assert_awaited_once_with(error, "203.0.113.7")
+
+
+def test_the_user_realm_records_reuse_on_both_paths(fake_redis: InMemoryRedis) -> None:
+    use_case = get_refresh_access_use_case(fake_redis)
+
+    assert use_case.on_refresh_reuse is record_refresh_reuse
+
+
+async def test_the_user_realm_records_reuse_from_its_limiter(
+    fake_redis: InMemoryRedis, limiter_redis: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions = FakeSessionFactory()
+    recorder = "src.user.auth.usecases.record_refresh_reuse"
+    uow = FakeUnitOfWork()
+    monkeypatch.setattr(f"{recorder}.async_session", sessions)
+    monkeypatch.setattr(f"{recorder}.ApplicationUnitOfWork", Mock(return_value=uow))
+    payload, token = await _rotated_refresh_token(
+        fake_redis, marker="used", live_refresh_jti="successor", subject=str(uuid4())
+    )
+
+    with pytest.raises(RefreshTokenReuseError):
+        await get_user_id_from_refresh_token(
+            build_request(headers={"Authorization": token})
+        )
+
+    [(actor, event)] = uow.published
+    assert (actor.actor_type, actor.ip) == (ActorType.ANONYMOUS, "127.0.0.1")
+    assert event.code == "user.refresh_reuse_detected"
+    assert str(event.object_id) == payload["sub"]
+    assert event.session_id == payload["session_id"]
+    uow.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

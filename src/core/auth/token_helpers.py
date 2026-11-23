@@ -10,6 +10,7 @@ from typing import NamedTuple, cast
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.redis_keys import AuthRedisKeyBuilder
 from src.core.auth.redis_scripts import ROTATE_REFRESH_TOKEN_SCRIPT
@@ -59,17 +60,21 @@ async def invalidate_session(
     redis_client: Redis,
     *,
     keys: AuthRedisKeyBuilder,
-) -> None:
+) -> bool:
     """
     Drop one session: its active auth keys, and its entry in the
     sessions:{uid} index that invalidate_all_sessions walks.
+
+    False when no key was left: something else had already ended it. Of several
+    concurrent calls one answers True.
     """
-    await redis_client.delete(
+    deleted = await redis_client.delete(
         keys.access(subject_id, session_id),
         keys.refresh(subject_id, session_id),
         keys.latest_access(subject_id, session_id),
     )
     await redis_client.zrem(keys.sessions(subject_id), session_id)
+    return bool(deleted)
 
 
 async def validate_token_structure(
@@ -195,8 +200,9 @@ async def execute_token_rotation(
     Every other verdict ends the token's session - only that one: a stolen
     refresh token reaches no other session of the subject, and ending them all
     would let anyone holding an old token sign the subject out everywhere.
-    All of them raise 401 under one error code, but the message a detected
-    reuse carries differs from the rest and reaches the client.
+    All of them raise 401 under one error code. A detected reuse is
+    RefreshTokenReuseError, raised only by the call that ended the session: a
+    logout or a concurrent detection that got there first is not a new reuse.
     """
 
     refresh_ttl_seconds = config.jwt.REFRESH_TOKEN_EXPIRE_MINUTES * 60
@@ -261,7 +267,9 @@ async def execute_token_rotation(
             result,
         )
 
-    await invalidate_session(subject_id, session_id, redis_client, keys=keys)
-    if result == "INVALID":
+    ended = await invalidate_session(subject_id, session_id, redis_client, keys=keys)
+    if result == "INVALID" or not ended:
         raise UnauthorizedException("Token invalidated or expired")
-    raise UnauthorizedException(REUSE_DETECTED_MESSAGE)
+    raise RefreshTokenReuseError(
+        REUSE_DETECTED_MESSAGE, subject_id=subject_id, session_id=session_id
+    )
