@@ -8,6 +8,7 @@ import pytest
 import sentry_sdk
 
 import src.core.auth.errors  # noqa: F401 - register domain subclasses for the walk; every new domain errors module must be imported here the same way
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.errors import exceptions as exc, handlers
 from src.core.errors.codes import ErrorCode
 from src.core.errors.handlers import (
@@ -216,13 +217,18 @@ def _all_core_exception_classes() -> list[type[exc.CoreException]]:
 
 
 ALLOWED_EXTRA_KEYS = {"retry_after", "errors"}
+# Constructor arguments an exception requires beyond the message.
+REQUIRED_ARGUMENTS: dict[type[exc.CoreException], dict[str, str]] = {
+    RefreshTokenReuseError: {"subject_id": "subject", "session_id": "session"},
+}
 
 
 @pytest.mark.parametrize("exception_class", _all_core_exception_classes())
 async def test_every_exception_answers_the_error_contract(
     exception_class: type[exc.CoreException],
 ) -> None:
-    response = await handle_core_exception(make_request(), exception_class("boom"))
+    error = exception_class("boom", **REQUIRED_ARGUMENTS.get(exception_class, {}))
+    response = await handle_core_exception(make_request(), error)
     body = json.loads(response.body)
     assert set(body) - ALLOWED_EXTRA_KEYS == {"code", "message"}
     assert body["code"] in set(ErrorCode)
