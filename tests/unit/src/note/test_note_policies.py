@@ -63,3 +63,11 @@ async def test_a_missing_note_and_a_foreign_one_answer_the_same_text(
         policies.ensure_note_view_access(uuid4(), uuid4(), UserRole.VIEWER)
 
     assert str(missing.value) == str(foreign.value)
+
+
+def test_a_note_is_not_printed_with_its_text() -> None:
+    """A repr reaches log lines, and the title is the user's own text."""
+    note = build_note(title="private title")
+
+    assert "private title" not in repr(note)
+    assert str(note.id) in repr(note)

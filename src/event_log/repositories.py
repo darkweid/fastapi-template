@@ -1,10 +1,14 @@
 import sentry_sdk
-from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from sqlalchemy.exc import (
+    DBAPIError,
+    SQLAlchemyError,
+    TimeoutError as PoolTimeoutError,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
-from src.core.errors.describe import scrub
+from src.core.errors.describe import is_database_outage, scrub
 from src.event_log.events import PublishedEvent
 from src.event_log.models import EventLog
 
@@ -23,7 +27,7 @@ class EventLogRepository(BaseRepository[EventLog]):
 
     async def record(self, session: AsyncSession, published: PublishedEvent) -> None:
         """Append one row, and never let that failure become the caller's, short
-        of a lost connection.
+        of an unreachable database.
 
         Called by `ApplicationUnitOfWork.publish`, never by a use case: the
         journal is one reader of an event, and nothing else may hang on
@@ -55,10 +59,12 @@ class EventLogRepository(BaseRepository[EventLog]):
                     )
                 )
         except SQLAlchemyError as error:
-            # The connection took the caller's transaction with it: there is no
-            # action left to protect, and going on would end in a
+            # An outage in any form takes the caller's transaction with it: there
+            # is no action left to protect, and going on would end in a
             # PendingRollbackError that hides the outage.
-            if isinstance(error, DBAPIError) and error.connection_invalidated:
+            if isinstance(error, (DBAPIError, PoolTimeoutError)) and is_database_outage(
+                error
+            ):
                 raise
             # Swallowed on purpose: an audit row is never worth failing the
             # action it describes. The SAVEPOINT is what keeps that possible -

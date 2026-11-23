@@ -2,9 +2,9 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 from loggers import get_logger
+from src.core.errors.log_scrubbing import install_log_scrubbing
 from src.core.middleware import register_middlewares
 from src.core.proxy_headers import TrustedProxyHeadersMiddleware
 from src.main.config import config
@@ -22,7 +22,13 @@ from src.main.presentation import include_exceptions_handlers, include_routers
 from src.main.route_logging import log_routes_summary
 from src.main.sentry import init_sentry
 
+# uvicorn logs whatever escapes the application here, traceback and all: an error
+# raised once the response has started is past every middleware. Under gunicorn its
+# worker writes to the same logger, only with gunicorn's handlers.
+SERVER_ERROR_LOGGER = "uvicorn.error"
+
 init_sentry()
+install_log_scrubbing(SERVER_ERROR_LOGGER)
 register_event_subscribers()
 logging.getLogger("uvicorn.access").disabled = True
 logger = get_logger(__name__)
@@ -81,8 +87,6 @@ def get_application() -> FastAPI:
 
     include_routers(application)
     log_routes_summary(application, include_debug_list=config.app.DEBUG)
-
-    application.add_middleware(SentryAsgiMiddleware)
 
     return application
 

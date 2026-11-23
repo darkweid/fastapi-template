@@ -4,7 +4,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 import pytest
-from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 from src.core.errors.exceptions import CoreException
 from src.core.middleware import DOCS_CONTENT_SECURITY_POLICY
@@ -42,7 +41,6 @@ def test_get_application_registers_middlewares() -> None:
     middleware_classes = {middleware.cls for middleware in app.user_middleware}
 
     assert CORSMiddleware in middleware_classes
-    assert SentryAsgiMiddleware in middleware_classes
     assert isinstance(app.openapi(), dict)
 
 

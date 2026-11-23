@@ -110,18 +110,34 @@ def assert_outage(response: httpx2.Response, reported: list[BaseException]) -> N
 async def test_a_refused_connection_is_an_outage(
     reported: list[BaseException],
 ) -> None:
-    with socket.socket() as unused:
-        unused.bind(("127.0.0.1", 0))
-        port = unused.getsockname()[1]
-    engine = build_engine(
-        make_url(get_settings().postgres.dsn_async).set(host="127.0.0.1", port=port)
-    )
+    # The local port of an open connection: taken, so nothing else listens on it,
+    # and refused at once, where macOS lets a merely bound one time out.
+    with (
+        socket.create_server(("127.0.0.1", 0)) as server,
+        socket.create_connection(server.getsockname()) as held,
+    ):
+        engine = build_engine(
+            make_url(get_settings().postgres.dsn_async).set(
+                host="127.0.0.1", port=held.getsockname()[1]
+            )
+        )
+        response = await answer(select_one(engine))
 
-    assert_outage(await answer(select_one(engine)), reported)
+    assert_outage(response, reported)
     assert str(reported[0]) == "OperationalError driver=ConnectionRefusedError"
 
 
-async def test_an_unresolved_host_is_an_outage(reported: list[BaseException]) -> None:
+@pytest.fixture
+def no_name_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fail(*_: Any, **__: Any) -> None:
+        raise socket.gaierror(socket.EAI_NONAME, "unknown host")
+
+    monkeypatch.setattr(asyncio.BaseEventLoop, "getaddrinfo", fail)
+
+
+async def test_an_unresolved_host_is_an_outage(
+    no_name_resolves: None, reported: list[BaseException]
+) -> None:
     engine = build_engine(
         make_url(get_settings().postgres.dsn_async).set(host="database.invalid")
     )
@@ -248,6 +264,7 @@ async def test_a_journal_write_on_a_killed_connection_is_an_outage(
 
 
 async def test_an_unreachable_database_in_the_auth_dependency_is_an_outage(
+    no_name_resolves: None,
     reported: list[BaseException],
 ) -> None:
     engine = build_engine(

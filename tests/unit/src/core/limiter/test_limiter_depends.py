@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import logging
+import traceback
 from unittest.mock import AsyncMock, Mock
 
 from fastapi import Request, Response
 import pytest
 import redis.exceptions as redis_exc
 
+import src.core.limiter as limiter_module
 from src.core.limiter import FastAPILimiter
 import src.core.limiter.depends as limiter_depends
 from src.core.limiter.depends import RateLimiter
@@ -474,3 +476,17 @@ async def test_a_limiter_logs_no_key(
     assert "secret@example.com" not in caplog.text
     [refusal] = [r for r in caplog.records if "Limit exceeded" in r.getMessage()]
     assert refusal.levelno == logging.INFO
+
+
+async def test_a_failed_start_keeps_the_text_of_the_redis_error_out(
+    limiter_state: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = AsyncMock()
+    client.script_load.side_effect = redis_exc.ResponseError("unknown 'SET s3cr3t'")
+
+    with capture_logger(caplog, limiter_module.logger):
+        with pytest.raises(RuntimeError, match="script: ResponseError$") as caught:
+            await FastAPILimiter.init(client)
+
+    assert "s3cr3t" not in "".join(traceback.format_exception(caught.value))
+    assert "s3cr3t" not in caplog.text

@@ -1,11 +1,14 @@
 from pathlib import PurePosixPath
 from typing import Any
 
+from botocore.exceptions import BotoCoreError, ClientError
+from jinja2 import TemplateRuntimeError
+
 from loggers import get_logger
 from src.core.email_service.enums import MessageType
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.smtp_mailer import SmtpMailer
-from src.core.errors.describe import scrub
+from src.core.errors.describe import reportable
 from src.core.errors.exceptions import InfrastructureException
 from src.core.storage.s3.dependencies import build_s3_adapter
 from src.core.utils.security import mask_email
@@ -13,6 +16,16 @@ from src.main.config import config
 from taskiq_worker.broker import broker
 
 logger = get_logger(__name__)
+
+# Rendering and header building put a template value or an address into the text of
+# these, and botocore an object key, on top of what `reportable` knows.
+DELIVERY_ECHOING_ERRORS = (
+    ValueError,
+    KeyError,
+    TemplateRuntimeError,
+    BotoCoreError,
+    ClientError,
+)
 
 
 def get_mailer() -> AbstractMailer:
@@ -42,9 +55,12 @@ async def send_email_task(
         )
     except Exception as error:
         # An SMTP error quotes the recipients, and taskiq logs whatever leaves the
-        # task, so a stand-in is raised, unchained.
-        failure = scrub(error)
+        # task, so a stand-in is raised, unchained; an error that echoes nothing
+        # is raised as it is.
+        failure = reportable(error, DELIVERY_ECHOING_ERRORS)
         logger.error("Failed to send email", exc_info=failure)
+        if failure is error:
+            raise
         raise failure from None
 
 
@@ -99,6 +115,8 @@ async def send_email_with_s3_attachments_task(
             "Email with S3 attachments sent to %s", [mask_email(r) for r in recipients]
         )
     except Exception as error:
-        failure = scrub(error)
+        failure = reportable(error, DELIVERY_ECHOING_ERRORS)
         logger.error("Failed to send email with S3 attachments", exc_info=failure)
+        if failure is error:
+            raise
         raise failure from None

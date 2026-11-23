@@ -85,7 +85,9 @@ class FastAPILimiter:
             cls.lua_sha = await redis_client.script_load(cls.lua_script)
         except Exception as e:
             logger.error(f"Failed to load Lua script: {describe_error(e)}")
-            raise RuntimeError(f"Failed to load Lua script: {describe_error(e)}") from e
+            raise RuntimeError(
+                f"Failed to load Lua script: {describe_error(e)}"
+            ) from None
 
         logger.info("Rate limiter started successfully.")
 

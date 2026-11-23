@@ -68,7 +68,7 @@ async def test_send_verification_email_cleans_up_token_and_throttle_on_failure(
     monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mock_mailer))
     await fake_redis.set("throttle:key", "1", ex=60)
 
-    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
+    with pytest.raises(RuntimeError, match="send failed"):
         await send_verification_email_task(
             "user@example.com",
             "John Doe",
@@ -132,7 +132,7 @@ async def test_send_reset_password_email_cleans_up_token_and_throttle_on_failure
     monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mock_mailer))
     await fake_redis.set("throttle:key", "1", ex=60)
 
-    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
+    with pytest.raises(RuntimeError, match="send failed"):
         await send_reset_password_email_task(
             "user@example.com",
             "John Doe",
@@ -166,7 +166,7 @@ async def test_send_verification_email_releases_throttle_when_token_creation_fai
     )
     await fake_redis.set("throttle:key", "1", ex=60)
 
-    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
+    with pytest.raises(RuntimeError, match="token issuance failed"):
         await send_verification_email_task(
             "user@example.com",
             "John Doe",
@@ -281,7 +281,7 @@ async def test_a_failed_send_takes_back_only_what_it_holds(
     monkeypatch.setattr(mailer, "send_template", superseded)
     monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mailer))
 
-    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
+    with pytest.raises(RuntimeError, match="send failed"):
         await task(
             EMAIL,
             "John Doe",

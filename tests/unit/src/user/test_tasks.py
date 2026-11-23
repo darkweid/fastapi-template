@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
+from sqlalchemy.exc import DBAPIError
 
 from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.cache.memory_cache import InMemoryCache
@@ -45,7 +46,9 @@ class FakeUsersRepository:
         self, session: FakeAsyncSession, ids: list[UUID], *, created_before: datetime
     ) -> list[UserIdentity]:
         if ids in self._failing:
-            raise RuntimeError("Key (email)=(leaked@example.com) already exists")
+            raise DBAPIError(
+                "UPDATE", None, ValueError("Key (email)=(leaked@example.com)")
+            )
         return [UserIdentity(id=user_id, email=f"{user_id}@e.com") for user_id in ids]
 
 
@@ -163,8 +166,7 @@ async def test_a_failing_cleanup_batch_is_reported_and_passed_over(
     run.units[0].rollback.assert_awaited_once()
     run.captured.assert_called_once()
     (reported,) = run.captured.call_args.args
-    assert "RuntimeError" in str(reported)
-    assert "leaked@example.com" not in str(reported)
+    assert str(reported).endswith(": DBAPIError driver=ValueError")
     assert reported.__cause__ is None and reported.__context__ is None
 
 

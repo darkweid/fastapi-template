@@ -7,8 +7,8 @@ from taskiq import InMemoryBroker, TaskiqMessage, TaskiqResult
 from taskiq.receiver import Receiver
 from taskiq.receiver.receiver import logger as receiver_logger
 
-import taskiq_worker.app  # noqa: F401 - installs the filter, as the worker does
-from taskiq_worker.log_scrubbing import TASKIQ_RECEIVER_LOGGER, ScrubbedTracebacks
+from src.core.errors.log_scrubbing import ScrubbedTracebacks
+from taskiq_worker.app import TASKIQ_RECEIVER_LOGGER
 
 REFUSED = DBAPIError("SELECT 1", None, ValueError("'secret@example.com'"))
 

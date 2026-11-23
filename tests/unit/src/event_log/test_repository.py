@@ -4,7 +4,13 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import (
+    DBAPIError,
+    IntegrityError,
+    OperationalError,
+    SQLAlchemyError,
+    TimeoutError as PoolTimeoutError,
+)
 
 from src.event_log.actor import Actor
 from src.event_log.enums import ActorType, ObjectType
@@ -144,15 +150,30 @@ async def test_a_failed_insert_is_reported_without_the_row(
     assert reported.__cause__ is None
 
 
-async def test_a_lost_connection_is_the_callers_error(fake_session) -> None:
+class DriverError(Exception):
+    sqlstate = "53300"
+
+
+@pytest.mark.parametrize(
+    "outage",
+    [
+        DBAPIError("insert", {}, Exception("closed"), connection_invalidated=True),
+        DBAPIError("insert", {}, DriverError()),
+        OperationalError("insert", {}, Exception("refused")),
+        PoolTimeoutError("QueuePool limit"),
+    ],
+    ids=["invalidated", "sqlstate", "operational", "pool"],
+)
+async def test_an_unreachable_database_is_the_callers_error(
+    fake_session, outage: SQLAlchemyError
+) -> None:
     """Its transaction is gone, so a swallowed failure resurfaces at the commit
     as a PendingRollbackError and turns a 503 into a 500."""
-    lost = DBAPIError("insert", {}, Exception("closed"), connection_invalidated=True)
-    fake_session.fail_nested_with = lost
+    fake_session.fail_nested_with = outage
 
     with (
         patch("src.event_log.repositories.sentry_sdk.capture_exception") as captured,
-        pytest.raises(DBAPIError),
+        pytest.raises(type(outage)),
     ):
         await _record(
             fake_session,

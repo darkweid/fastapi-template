@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import jwt
 import pytest
+from sqlalchemy.exc import DBAPIError
 from starlette.requests import Request as StarletteRequest
 
 from src.core.auth import dependencies as core_auth_dependencies
@@ -673,7 +674,8 @@ async def test_a_failed_reuse_record_keeps_the_401_and_is_reported_without_its_r
     )
     capture = Mock()
     monkeypatch.setattr("src.core.auth.reuse.sentry_sdk.capture_exception", capture)
-    callback = AsyncMock(side_effect=RuntimeError("Key (email)=(a@example.com)"))
+    refused = DBAPIError("INSERT", None, ValueError("Key (email)=(a@example.com)"))
+    callback = AsyncMock(side_effect=refused)
 
     with pytest.raises(RefreshTokenReuseError):
         await _realm_auth(on_refresh_reuse=callback).principal_id_from_refresh_token(
@@ -681,7 +683,7 @@ async def test_a_failed_reuse_record_keeps_the_401_and_is_reported_without_its_r
         )
 
     reported = capture.call_args.args[0]
-    assert "RuntimeError" in str(reported) and "a@example.com" not in str(reported)
+    assert str(reported).endswith(": DBAPIError driver=ValueError")
 
 
 async def test_a_hanging_reuse_record_is_cut_off_and_reported(

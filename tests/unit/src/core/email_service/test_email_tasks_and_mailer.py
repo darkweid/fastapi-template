@@ -3,6 +3,8 @@ import traceback
 from unittest.mock import AsyncMock
 
 from aiosmtplib import SMTPRecipientRefused, SMTPRecipientsRefused
+from botocore.exceptions import ClientError, ParamValidationError
+from jinja2 import TemplateNotFound, UndefinedError
 import pytest
 from taskiq import InMemoryBroker
 from taskiq.middlewares import SmartRetryMiddleware
@@ -118,7 +120,7 @@ async def test_send_email_with_s3_attachments_task_failure_keeps_keys(
     )
     await fake_s3.upload_bytes("outbox/report.pdf", b"pdf-bytes")
 
-    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
+    with pytest.raises(RuntimeError, match="send failed"):
         await send_email_with_s3_attachments_task(
             "S", ["a@b.com"], ["outbox/report.pdf"], "plain", cleanup=True
         )
@@ -190,7 +192,7 @@ async def test_email_tasks_propagate_exceptions(
     )
     monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
-    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
+    with pytest.raises(RuntimeError, match="fail"):
         await send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
 
 
@@ -266,3 +268,52 @@ async def test_a_scrubbed_failure_is_still_retried(
     await task.kiq("Subj", [ADDRESS], "tpl.html", {"k": "v"}, "html")
 
     assert send.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError(f"invalid address {ADDRESS}"),
+        KeyError(ADDRESS),
+        UndefinedError(f"'dict object' has no attribute '{ADDRESS}'"),
+        ParamValidationError(report=ADDRESS),
+        ClientError({"Error": {"Message": ADDRESS}}, "GetObject"),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+async def test_an_error_quoting_a_rendered_value_is_replaced(
+    error: Exception,
+    mock_mailer: MockMailer,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(mock_mailer, "send_template", AsyncMock(side_effect=error))
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
+
+    with capture_logger(caplog, tasks.logger), pytest.raises(ScrubbedError) as caught:
+        await send_email_task("Subj", [ADDRESS], "tpl.html", {}, "html")
+
+    for text in (caplog.text, "".join(traceback.format_exception(caught.value))):
+        assert type(error).__name__ in text
+        assert ADDRESS not in text
+
+
+async def test_an_error_that_quotes_nothing_keeps_its_text_and_its_cause(
+    mock_mailer: MockMailer,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing template is fixed by its name, not by the word TemplateNotFound."""
+    missing = TemplateNotFound("no_such.html")
+    cause = missing.__cause__ = FileNotFoundError("templates/no_such.html")
+    monkeypatch.setattr(mock_mailer, "send_template", AsyncMock(side_effect=missing))
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
+
+    with (
+        capture_logger(caplog, tasks.logger),
+        pytest.raises(TemplateNotFound) as caught,
+    ):
+        await send_email_task("Subj", [ADDRESS], "no_such.html", {}, "html")
+
+    assert caught.value.__cause__ is cause
+    assert "no_such.html" in caplog.text

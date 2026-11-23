@@ -1,4 +1,5 @@
 import math
+import ssl
 from typing import Any
 
 from sqlalchemy import event
@@ -54,9 +55,16 @@ def connect_or_operational_error(
     timeout), which SQLAlchemy lets through unwrapped. Past this point it could
     not be told from a failed SMTP or HTTP call, so nothing else may turn an
     OSError or a TimeoutError into a database outage.
+
+    It opens the connection itself, which ends the event: a listener that edits
+    `cparams` (a rotated password) must be registered before this one, with
+    `insert=True`, or it never runs.
     """
     try:
         return dialect.connect(*cargs, **cparams)
+    except ssl.SSLCertVerificationError:
+        # An OSError too, but a misconfiguration: no later try succeeds.
+        raise
     except OSError as error:
         dbapi: Any = dialect.loaded_dbapi
         raise dbapi.OperationalError(type(error).__name__) from error

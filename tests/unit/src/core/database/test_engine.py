@@ -1,3 +1,4 @@
+import ssl
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -63,6 +64,21 @@ def test_an_unreachable_server_is_named_by_type_only(error: OSError) -> None:
 
     assert str(caught.value) == type(error).__name__
     assert caught.value.__cause__ is error
+
+
+def test_a_certificate_that_does_not_verify_keeps_its_own_class() -> None:
+    """An OSError as well, but a 503 would say "try later" to a misconfiguration."""
+    error = ssl.SSLCertVerificationError(1, "certificate verify failed")
+
+    with pytest.raises(ssl.SSLCertVerificationError) as caught:
+        connect(error)
+
+    assert caught.value is error
+
+
+def test_a_failed_handshake_is_an_unreachable_server() -> None:
+    with pytest.raises(AsyncAdapt_asyncpg_dbapi.OperationalError):
+        connect(ssl.SSLError(1, "unexpected eof"))
 
 
 def test_a_refused_login_keeps_its_own_class() -> None:
