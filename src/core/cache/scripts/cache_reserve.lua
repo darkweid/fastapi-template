@@ -9,6 +9,8 @@
 -- that stores nothing must not fill a Redis that evicts nothing. A counter due to
 -- expire sooner is extended to it, so this reader gets as long as the first; one
 -- with more time left is only read. A full Redis refuses the SET, never the EXPIRE.
+-- Every SET comes before any EXPIRE: past its first write a script is no longer
+-- refused, so an EXPIRE ahead of a SET would let it through on a full Redis.
 local now = redis.call('TIME')
 local generation = now[1] .. string.format('%06d', tonumber(now[2]))
 local versions = {}
@@ -17,9 +19,12 @@ for index = 1, #KEYS do
     if not version then
         version = generation
         redis.call('SET', KEYS[index], version, 'EX', ARGV[1])
-    elseif redis.call('TTL', KEYS[index]) < tonumber(ARGV[1]) then
-        redis.call('EXPIRE', KEYS[index], ARGV[1])
     end
     versions[index] = version
+end
+for index = 1, #KEYS do
+    if redis.call('TTL', KEYS[index]) < tonumber(ARGV[1]) then
+        redis.call('EXPIRE', KEYS[index], ARGV[1])
+    end
 end
 return versions

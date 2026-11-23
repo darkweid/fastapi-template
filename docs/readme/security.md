@@ -336,8 +336,8 @@ an invalidation is returned to its caller and never stored. A miss therefore cos
 three round trips: read, reserve, write. When the reservation fails, the value is
 computed and not stored; nor is a value that took longer than
 `RESERVATION_TTL_SECONDS` (five minutes) to compute, once the counters its
-reservation started have expired. `get_or_set`, `@cached` and `@cached_route` do this; other
-code calls `reserve` before it reads and `set_reserved` after.
+reservation started have expired. `get_or_set`, `@cached` and `@cached_route` do
+this; other code calls `reserve` before it reads and `set_reserved` after.
 
 **Fail-open, and what it costs:** a lost connection, a timeout or an `OOM` refusal
 from a full Redis is swallowed — so a Redis outage degrades the API instead of
@@ -345,8 +345,9 @@ breaking it. An unreachable Redis turns reads into misses and drops writes and
 counter deletions; a full one refuses only the writes, so hits keep serving and
 invalidation keeps working. The outage is reported once per cooldown, and the
 recovery only at a stored value, since under `OOM` a read proves nothing and a
-reservation of existing counters reads and extends them at most, and only after a minute without a failure, so a Redis at the edge of `maxmemory`
-that refuses a write more often than once a minute stays one incident. Everything
+reservation of existing counters reads and extends them at most, and only after a
+minute without a failure, so a Redis at the edge of `maxmemory` that refuses a write
+more often than once a minute stays one incident. Everything
 else Redis can raise (a
 malformed command, a broken script) propagates, because that is a bug and hiding
 it would also burn the degradation reporter's cooldown and mute the report of a

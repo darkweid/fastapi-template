@@ -441,6 +441,8 @@ async def test_a_purge_can_read_through_its_index(
     async with integration_engine.connect() as connection:
         await connection.execute(text("SET LOCAL enable_seqscan = off"))
         await connection.execute(text("SET LOCAL enable_bitmapscan = off"))
+        # A merge join of the outer DELETE would bring a Sort of its own.
+        await connection.execute(text("SET LOCAL enable_mergejoin = off"))
         plan = "\n".join(
             await connection.scalars(text(f"EXPLAIN {statement}".replace(":", "\\:")))
         )

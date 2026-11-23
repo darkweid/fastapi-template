@@ -445,6 +445,24 @@ async def test_a_reservation_extends_a_counter_about_to_expire(
         assert await redis_backend.ttl(counter) >= RESERVATION_TTL_SECONDS - 1
 
 
+async def test_a_full_redis_starts_no_counter_beside_an_expiring_one(
+    redis_backend: Redis,
+) -> None:
+    """A script is refused for memory only until its first write: an EXPIRE ahead of
+    the SET would let the SET through."""
+    cache = _cache(redis_backend)
+    await cache.reserve(RACE_KEY)
+    kept, *dropped = RACE_COUNTERS
+    await redis_backend.expire(kept, SHRUNK_TTL_SECONDS)
+    await redis_backend.delete(*dropped)
+
+    async with _out_of_memory(redis_backend):
+        assert await cache.reserve(RACE_KEY) is None
+
+    assert await redis_backend.exists(*dropped) == 0
+    assert await redis_backend.ttl(kept) <= SHRUNK_TTL_SECONDS
+
+
 async def test_a_reservation_leaves_a_longer_lived_counter_alone(
     redis_backend: Redis,
 ) -> None:

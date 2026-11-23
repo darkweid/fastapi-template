@@ -458,9 +458,10 @@ class InMemoryRedis:
                 self._refuse_write_when_full()
                 version = generation
                 self._write(counter, version, ttl_seconds=int(args[0]))
-            elif self._expires[counter] - _now() < int(args[0]):
-                self._expire(counter, int(args[0]))
             versions.append(version)
+        for counter in counters:
+            if self._expires[counter] - _now() < int(args[0]):
+                self._expire(counter, int(args[0]))
         return versions
 
     def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
