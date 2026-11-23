@@ -62,6 +62,49 @@ async def test_update_password_user_not_found(
     uow.commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    ("password_under_lock", "error"),
+    [(NEW_PASSWORD, InvalidCredentialsError), (None, InstanceNotFoundException)],
+    ids=["password-changed", "account-deleted"],
+)
+async def test_update_password_decides_on_the_locked_row(
+    password_under_lock: str | None,
+    error: type[Exception],
+    fake_session: FakeAsyncSession,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    cache: InMemoryCache,
+) -> None:
+    """The first read is unlocked, so a reset or a deletion may commit before
+    the lock: the change must not overwrite the one or crash on the other."""
+    user = build_user(password=CURRENT_PASSWORD)
+    locked = (
+        build_user(user_id=user.id, password=password_under_lock)
+        if password_under_lock
+        else None
+    )
+    users_repo = FakeUsersRepository(user=user, updated_user=user)
+    users_repo.get_single.side_effect = [user, locked]
+    uow = build_uow(fake_session, users_repo)
+    invalidate = AsyncMock()
+    monkeypatch.setattr(
+        "src.user.usecases.update_password.invalidate_all_sessions", invalidate
+    )
+    use_case = UpdateUserPasswordUseCase(uow=uow, redis_client=fake_redis, cache=cache)
+
+    with pytest.raises(error):
+        await use_case.execute(
+            data=change_password_data(), user_id=user.id, actor=Actor.user(user.id)
+        )
+
+    users_repo.get_single.assert_awaited_with(
+        fake_session, for_update=True, populate_existing=True, id=user.id
+    )
+    users_repo.update.assert_not_awaited()
+    invalidate.assert_not_awaited()
+    uow.commit.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_update_password_rejects_wrong_current_password(
     fake_session: FakeAsyncSession,

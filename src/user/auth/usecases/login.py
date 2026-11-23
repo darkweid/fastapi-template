@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import Depends
 from redis.asyncio import Redis
@@ -9,6 +9,7 @@ from src.core.auth.errors import InvalidCredentialsError
 from src.core.auth.session_issuance import LoginThrottle, issue_session_pair
 from src.core.cache.interface import Cache
 from src.core.cache.runtime import get_cache
+from src.core.database.detached import detached_read
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.redis.dependencies import get_redis_client
@@ -18,6 +19,7 @@ from src.core.utils.security import (
     hash_password,
     mask_email,
     needs_password_rehash,
+    password_still_matches,
     verify_password,
 )
 from src.event_log.actor import Actor
@@ -98,39 +100,43 @@ class LoginUserUseCase:
         # counter key cannot be split across spellings of one address.
         await self.throttle.ensure_under_limit(data.email, self.redis_client)
 
-        async with self.uow as uow:
-            user = await uow.users.get_single(uow.session, email=data.email)
-            if not user:
-                logger.debug(
-                    "[LoginUser] User with email '%s' not found.",
-                    mask_email(data.email),
-                )
-                await verify_password(data.password, DUMMY_PASSWORD_HASH)
-                await self.throttle.record_failure(data.email, self.redis_client)
-                # Nothing else is pending, so this commit carries only the
-                # failed attempt; the error still reaches the caller.
-                await uow.publish(
-                    Actor.anonymous(ip=ip),
-                    UserSignInFailed(email=data.email, reason="unknown_email"),
-                )
-                await uow.commit()
-                raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
+        # Argon2 runs before any transaction: it waits for a bounded executor,
+        # and a pooled connection held through that wait starves the API.
+        async with detached_read(self.uow.session) as read:
+            candidate = await self.uow.users.get_single(
+                self.uow.session, email=data.email
+            )
+            read.detach(candidate)
 
-            correct_password = await verify_password(data.password, user.password_hash)
-            if not correct_password:
-                logger.debug(
-                    "[LoginUser] Incorrect password for user '%s'",
-                    mask_email(data.email),
+        verified_hash = candidate.password_hash if candidate else DUMMY_PASSWORD_HASH
+        password_matches = await verify_password(data.password, verified_hash)
+        if candidate is None or not password_matches:
+            async with self.uow as uow:
+                await self._reject_credentials(
+                    uow,
+                    data.email,
+                    ip,
+                    reason="unknown_email" if candidate is None else "wrong_password",
                 )
-                await self.throttle.record_failure(data.email, self.redis_client)
-                # Anonymous, not the account owner: the password did not
-                # match, so nothing here proves who made the attempt.
-                await uow.publish(
-                    Actor.anonymous(ip=ip),
-                    UserSignInFailed(email=data.email, reason="wrong_password"),
+
+        new_hash = await self._rehash_if_needed(candidate, data.password)
+
+        async with self.uow as uow:
+            # Held until the session is in Redis and the commit is done: a
+            # password change takes the same lock before it wipes sessions, so
+            # it either sees this session or has already replaced the hash.
+            user = await uow.users.get_single(
+                uow.session,
+                for_update=True,
+                populate_existing=True,
+                id=candidate.id,
+            )
+            if user is None or not await password_still_matches(
+                data.password, verified_hash, user.password_hash
+            ):
+                await self._reject_credentials(
+                    uow, data.email, ip, reason="wrong_password"
                 )
-                await uow.commit()
-                raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
 
             violation = account_access_violation(user)
             if violation is not None:
@@ -150,7 +156,11 @@ class LoginUserUseCase:
                 # completed the UoW, so nothing may touch it again.
                 ensure_can_authenticate(user)
 
-            await self._rehash_password_if_needed(uow, user, data.password)
+            # A row rehashed or changed meanwhile keeps its own newer hash.
+            if new_hash is not None and user.password_hash == verified_hash:
+                await uow.users.update(
+                    uow.session, {"password_hash": new_hash}, id=user.id
+                )
             await self.cache.invalidate(user_cache_keys.namespace(user.id))
             uow.add_after_commit_hook(
                 partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
@@ -176,20 +186,37 @@ class LoginUserUseCase:
             await uow.commit()
             return tokens
 
-    async def _rehash_password_if_needed(
+    async def _reject_credentials(
         self,
         uow: ApplicationUnitOfWork,
-        user: User,
-        raw_password: str,
-    ) -> None:
-        if not needs_password_rehash(user.password_hash):
-            return
-        new_hash = await hash_password(raw_password)
-        await uow.users.update(
-            uow.session,
-            {"password_hash": new_hash},
-            id=user.id,
+        email: str,
+        ip: str | None,
+        *,
+        reason: str,
+    ) -> NoReturn:
+        logger.debug(
+            "[LoginUser] Credentials for '%s' rejected (%s).",
+            mask_email(email),
+            reason,
         )
+        await self.throttle.record_failure(email, self.redis_client)
+        # Anonymous even for an existing account: nothing here proves who made
+        # the attempt. Nothing else is pending, so this commit carries only the
+        # failed attempt.
+        await uow.publish(
+            Actor.anonymous(ip=ip), UserSignInFailed(email=email, reason=reason)
+        )
+        await uow.commit()
+        raise InvalidCredentialsError(INVALID_CREDENTIALS_MESSAGE)
+
+    async def _rehash_if_needed(self, user: User, raw_password: str) -> str | None:
+        # An account that fails admission is not rehashed: the extra Argon2
+        # call would tell a correct password from a wrong one by timing.
+        if account_access_violation(user) is not None:
+            return None
+        if not needs_password_rehash(user.password_hash):
+            return None
+        return await hash_password(raw_password)
 
 
 def get_login_user_use_case(

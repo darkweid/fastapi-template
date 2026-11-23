@@ -59,73 +59,75 @@ class ResetPasswordConfirmUseCase:
         data: ResetPasswordModel,
         ip: str | None = None,
     ) -> SuccessResponse:
+        try:
+            normalized_email = await decode_one_time_token(
+                data.token,
+                realm=USER_AUTH_REALM,
+                purpose=RESET_PASSWORD_PURPOSE,
+                redis_client=self.redis_client,
+                expected_mode="reset_password_token",
+            )
+        except UnauthorizedException:
+            logger.info("[ResetPasswordConfirm] Token JTI is inactive or invalid.")
+            return SuccessResponse(success=False)
+
+        except jwt.ExpiredSignatureError:
+            logger.info("[ResetPasswordConfirm] Token has expired.")
+            return SuccessResponse(success=False)
+
+        except jwt.InvalidTokenError:
+            logger.info("[ResetPasswordConfirm] Token is invalid.")
+            return SuccessResponse(success=False)
+
+        new_password_hash = await hash_password(data.password)
         async with self.uow as uow:
-            try:
-                normalized_email = await decode_one_time_token(
-                    data.token,
-                    realm=USER_AUTH_REALM,
-                    purpose=RESET_PASSWORD_PURPOSE,
-                    redis_client=self.redis_client,
-                    expected_mode="reset_password_token",
-                )
-
-                new_password_hash = await hash_password(data.password)
-                user = await uow.users.update(
-                    uow.session,
-                    {"password_hash": new_password_hash},
-                    email=normalized_email,
-                )
-                if not user:
-                    logger.info(
-                        "[ResetPasswordConfirm] User with email %s not found.",
-                        mask_email(normalized_email),
-                    )
-                    return SuccessResponse(success=False)
-
-                await uow.flush()
-                await invalidate_all_sessions(
-                    str(user.id), self.redis_client, keys=USER_AUTH_REALM.keys
-                )
-                # A successful reset proves mailbox ownership: clear the
-                # login-failure throttle so an attacker who filled the window
-                # with wrong passwords cannot keep the real owner locked out.
-                await self.redis_client.delete(
-                    USER_AUTH_REALM.keys.login_failures(normalized_email)
-                )
-                await self.cache.invalidate(user_cache_keys.namespace(user.id))
-                uow.add_after_commit_hook(
-                    partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
-                )
-                # Attributed to the account: the spent token proved the caller
-                # reads its mailbox. Whether that caller is the owner is what
-                # the preceding `user.password_reset_requested` row helps answer.
-                await uow.publish(
-                    Actor.user(user.id, ip=ip),
-                    UserPasswordReset(object_id=user.id),
-                )
-                await uow.commit()
-                logger.debug(
-                    "[ResetPasswordConfirm] All user %s sessions invalidated.",
-                    mask_email(normalized_email),
-                )
+            user = await uow.users.update(
+                uow.session,
+                {"password_hash": new_password_hash},
+                email=normalized_email,
+            )
+            if not user:
                 logger.info(
-                    "[ResetPasswordConfirm] Successfully changed password for user "
-                    "with email %s.",
+                    "[ResetPasswordConfirm] User with email %s not found.",
                     mask_email(normalized_email),
                 )
-                return SuccessResponse(success=True)
-
-            except UnauthorizedException:
-                logger.info("[ResetPasswordConfirm] Token JTI is inactive or invalid.")
                 return SuccessResponse(success=False)
 
-            except jwt.ExpiredSignatureError:
-                logger.info("[ResetPasswordConfirm] Token has expired.")
-                return SuccessResponse(success=False)
-
-            except jwt.InvalidTokenError:
-                logger.info("[ResetPasswordConfirm] Token is invalid.")
-                return SuccessResponse(success=False)
+            # The flushed UPDATE takes the row lock, and the wipe comes after
+            # it: a sign-in holding that lock has its session in the index by
+            # then, and a later one finds the new hash.
+            await uow.flush()
+            await invalidate_all_sessions(
+                str(user.id), self.redis_client, keys=USER_AUTH_REALM.keys
+            )
+            # A successful reset proves mailbox ownership: clear the
+            # login-failure throttle so an attacker who filled the window
+            # with wrong passwords cannot keep the real owner locked out.
+            await self.redis_client.delete(
+                USER_AUTH_REALM.keys.login_failures(normalized_email)
+            )
+            await self.cache.invalidate(user_cache_keys.namespace(user.id))
+            uow.add_after_commit_hook(
+                partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+            )
+            # Attributed to the account: the spent token proved the caller
+            # reads its mailbox. Whether that caller is the owner is what
+            # the preceding `user.password_reset_requested` row helps answer.
+            await uow.publish(
+                Actor.user(user.id, ip=ip),
+                UserPasswordReset(object_id=user.id),
+            )
+            await uow.commit()
+            logger.debug(
+                "[ResetPasswordConfirm] All user %s sessions invalidated.",
+                mask_email(normalized_email),
+            )
+            logger.info(
+                "[ResetPasswordConfirm] Successfully changed password for user "
+                "with email %s.",
+                mask_email(normalized_email),
+            )
+            return SuccessResponse(success=True)
 
 
 def get_reset_password_confirm_use_case(

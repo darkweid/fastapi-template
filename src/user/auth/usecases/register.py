@@ -43,10 +43,10 @@ class RegisterUseCase:
     async def execute(
         self, data: CreateUserModel, ip: str | None = None
     ) -> UserProfileViewModel:
+        user_data = data.model_dump()
+        raw_password = user_data.pop("password")
+        user_data["password_hash"] = await hash_password(raw_password)
         async with self.uow as uow:
-            user_data = data.model_dump()
-            raw_password = user_data.pop("password")
-            user_data["password_hash"] = await hash_password(raw_password)
             user = await uow.users.create(
                 session=uow.session,
                 data=user_data,
