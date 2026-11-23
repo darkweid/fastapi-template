@@ -524,12 +524,15 @@ async def test_invalidate_session_removes_only_target_session(
 
 async def test_a_session_whose_invalidation_failed_is_still_there_to_end(
     fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The call that answers True is the only one that records a reuse, so one
     that raises must leave the keys for the next."""
     await fake_redis.set(refresh_jti_key("1", "s1"), "x", ex=60)
     await fake_redis.zadd(AUTH_KEYS.sessions("1"), {"s1": FROZEN_NOW + 60})
     fake_redis.fail_next_commands()
+    # Fails a ZREM sent on its own after the DEL, outside the transaction.
+    monkeypatch.setattr(fake_redis, "zrem", AsyncMock(side_effect=RedisConnectionError))
 
     with pytest.raises(RedisConnectionError):
         await token_helpers.invalidate_session("1", "s1", fake_redis, keys=AUTH_KEYS)

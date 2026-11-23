@@ -31,7 +31,7 @@ A consumed token presented again in any other case **ends its session immediatel
 
 A late network retry of a token the client itself already rotated on also counts as reuse and ends the session, even inside the window: the pair it would answer is gone.
 
-The call that ends the session raises `RefreshTokenReuseError`, and the realm's `on_refresh_reuse` callback runs before the 401 goes out. The user realm's appends `user.refresh_reuse_detected` (the account, the session id, the caller's address) to the event log on a session of its own. A failure there, or no answer within 5 seconds, is reported and the answer stays 401. A replay of a session that has already ended and an `INVALID` token record nothing.
+The call that ends the session raises `RefreshTokenReuseError`, and the realm's `on_refresh_reuse` callback runs before the 401 goes out. The user realm's appends `user.refresh_reuse_detected` (the account, the session id, the caller's address) to the event log on a session of its own. A failure there, or no answer within 5 seconds (plus up to 2 to drop a database connection that does not respond), is reported and the answer stays 401. A replay of a session that has already ended and an `INVALID` token record nothing.
 
 The window has a cost: a thief who replays inside it gets the same pair as the owner. The theft is caught only if both go on refreshing, when one of the two presents a token the other already rotated; a thief who stops after the replay keeps the access token until it expires - hence the hard cap on the window.
 
