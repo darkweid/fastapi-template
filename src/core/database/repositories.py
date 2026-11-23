@@ -332,6 +332,12 @@ class BaseRepository(Generic[T]):
         Filters that match several rows raise MultipleResultsFound and change
         nothing: with no ORDER BY, picking the first would write to whichever
         row the planner returned.
+
+        The row is read locked and fresh, so the filters hold at the moment of
+        the write; None means they matched nothing once any concurrent writer
+        was done. A caller that decides on the row's values still reads it
+        locked first. The re-read unloads relationships loaded on the instance
+        before: read it again with `eager` to use them afterwards.
         """
         if commit:
             self._ensure_commit_allowed(session)
@@ -354,9 +360,8 @@ class BaseRepository(Generic[T]):
                 f"Unknown fields for {self.model.__name__}: {sorted(unknown_fields)}"
             )
         try:
-            query = select(self.model).filter_by(**filters)
-            result = await session.execute(query)
-            instance = result.scalar_one_or_none()
+            result = await session.execute(self._locked_select(filters))
+            instance: T | None = result.scalar_one_or_none()
             if instance:
                 for key, value in data.items():
                     setattr(instance, key, value)
@@ -391,9 +396,8 @@ class BaseRepository(Generic[T]):
         self._ensure_filters_present(filters)
         filters = self._scope_filters(filters)
         try:
-            query = select(self.model).filter_by(**filters)
-            result = await session.execute(query)
-            instance = result.scalar_one_or_none()
+            result = await session.execute(self._locked_select(filters))
+            instance: T | None = result.scalar_one_or_none()
             if instance:
                 await session.delete(instance)
                 if commit:
@@ -411,6 +415,16 @@ class BaseRepository(Generic[T]):
             if commit:
                 await session.rollback()
             raise
+
+    def _locked_select(self, filters: dict[str, Any]) -> Select[Any]:
+        # The flush writes by primary key alone, so only the lock keeps the
+        # filters true until then. `populate_existing`: an instance the session
+        # already holds would otherwise keep values older than the lock, and
+        # assigning one equal to them emits no UPDATE.
+        query: Select[Any] = self._apply_for_update(
+            select(self.model).filter_by(**filters)
+        )
+        return query.execution_options(populate_existing=True)
 
     @staticmethod
     def _ensure_filters_present(filters: dict[str, Any]) -> None:
@@ -474,8 +488,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         # write when it was the caller's only condition.
         self._ensure_filters_present(filters)
         try:
-            query = select(self.model).filter_by(**filters)
-            result = await session.execute(query)
+            result = await session.execute(self._locked_select(filters))
             instance: T | None = result.scalar_one_or_none()
             if instance:
                 # cast, not plain attribute access: T is bound to the declarative

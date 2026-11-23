@@ -26,7 +26,11 @@ from tests.fakes.email import MockMailer
 from tests.fakes.redis import InMemoryRedis
 from tests.fakes.s3 import InMemoryS3Client
 from tests.helpers.overrides import DependencyOverrides
-from tests.helpers.providers import ProvideAsyncValue, ProvideValue
+from tests.helpers.providers import (
+    ProvideAsyncValue,
+    ProvideFreshUnitOfWork,
+    ProvideValue,
+)
 
 
 @pytest.fixture(scope="session")
@@ -115,7 +119,7 @@ def app_with_fakes(
     dependency_overrides.set(get_s3_adapter, ProvideAsyncValue(fake_s3))
     dependency_overrides.set(get_email_service, ProvideValue(email_service))
     dependency_overrides.set(get_session, ProvideAsyncValue(fake_session))
-    dependency_overrides.set(get_unit_of_work, ProvideAsyncValue(fake_uow))
+    dependency_overrides.set(get_unit_of_work, ProvideFreshUnitOfWork(fake_uow))
     dependency_overrides.set(get_settings, ProvideValue(settings))
     dependency_overrides.set(get_cache, ProvideAsyncValue(cache))
     return app

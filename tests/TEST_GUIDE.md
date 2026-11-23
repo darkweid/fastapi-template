@@ -110,14 +110,17 @@ Core fixtures live in `tests/conftest.py`.
 - `email_dispatcher` - AsyncMock dispatcher behind `email_service`
 - `cache` (autouse) - in-memory cache installed for every test
 - `fake_session` - fake async DB session
-- `fake_uow` - fake UnitOfWork
-- `app_with_fakes` - app with overridden dependencies
+- `fake_uow` - fake UnitOfWork; like the real one it serves one transaction, and any use
+  after its commit or rollback raises (bind the repository mock before the call)
+- `app_with_fakes` - app with overridden dependencies; every request gets `fake_uow.fresh()`,
+  a new unit over the same session, repositories and `published` list
 - `async_client_with_fakes` - client bound to `app_with_fakes`
 
 Also available:
 - `tests/fakes/` - in-memory/fake implementations
 - `tests/factories/` - test data factories
-- `tests/helpers/` - helpers for overrides, request building, limiter utilities
+- `tests/helpers/` - helpers for overrides, request building, limiter utilities, forced interleavings
+  (`races.py`) and statement counting (`sql.py`)
 
 Current application test layout:
 - `tests/unit/src/core/...`

@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
 from src.core.database.uow.application import ApplicationUnitOfWork, get_uow
 from src.core.database.uow.sqlalchemy import SQLAlchemyUnitOfWork
+from src.event_log.actor import Actor
+from src.event_log.enums import ObjectType
+from src.event_log.events import DomainEvent
 from tests.fakes.db import FakeAsyncSession
+
+
+class UnjournaledEvent(DomainEvent):
+    """Touches neither the session nor a repository when published."""
+
+    code = "test.unjournaled"
+    object_type = ObjectType.NOTE
+    journaled = False
 
 
 @pytest.mark.asyncio
@@ -259,3 +271,23 @@ async def test_sqlalchemy_uow_refuses_to_reenter_after_completion() -> None:
 
     assert session.in_transaction() is False
     assert "uow_active" not in session.info
+
+
+@pytest.mark.parametrize("finish", ["commit", "rollback"])
+async def test_a_completed_uow_refuses_session_repositories_and_publish(
+    finish: str,
+) -> None:
+    """A read on a completed unit's session autobegins a transaction nothing
+    ends, holding a pooled connection until the response."""
+    uow = ApplicationUnitOfWork(FakeAsyncSession())
+    cached_repository = uow.users
+    assert cached_repository is not None
+    async with uow:
+        await getattr(uow, finish)()
+
+    with pytest.raises(RuntimeError, match="already been completed"):
+        _ = uow.session
+    with pytest.raises(RuntimeError, match="already been completed"):
+        _ = uow.users
+    with pytest.raises(RuntimeError, match="already been completed"):
+        await uow.publish(Actor.system(), UnjournaledEvent(object_id=uuid4()))

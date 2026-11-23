@@ -33,10 +33,12 @@ class DeleteNoteUseCase:
 
     async def execute(self, note_id: UUID, current_user: User, actor: Actor) -> None:
         async with self.uow as uow:
-            note = await uow.notes.get_single(uow.session, id=note_id)
+            note = await uow.notes.get_single(
+                uow.session, for_update=True, populate_existing=True, id=note_id
+            )
             if note is None:
                 raise InstanceNotFoundException("Note not found.")
-            ensure_note_manage_access(note, current_user.id, current_user.role)
+            ensure_note_manage_access(note.owner_id, current_user.id, current_user.role)
 
             deleted_note = await uow.notes.delete(uow.session, id=note_id)
             if deleted_note is None:

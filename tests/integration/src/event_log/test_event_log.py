@@ -6,13 +6,14 @@ sort are all properties of the database, not of the Python around it.
 """
 
 from datetime import timedelta
+import random
 from typing import Any
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, insert, select, text
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from uuid6 import uuid7
 
 from src.core.database.query import ListQuery
@@ -25,9 +26,11 @@ from src.event_log.events import DomainEvent, PublishedEvent
 from src.event_log.models import EventLog
 from src.event_log.repositories import EventLogRepository
 from src.event_log.schemas import EventLogViewModel
+from src.event_log.services import EventLogService
 from src.user.enums import UserRole
 from src.user.models import User
 from src.user.repositories import UserRepository
+from tests.helpers.sql import count_statements
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -181,3 +184,47 @@ async def test_page_query_needs_no_sort_node(db_session: AsyncSession) -> None:
     plan = explained[0]["Plan"]
 
     assert not _contains_sort_node(plan)
+
+
+async def test_101_events_are_each_reached_once(
+    integration_engine: AsyncEngine, db_session: AsyncSession
+) -> None:
+    marker = f"test.pages_{uuid4().hex[:8]}"
+    started_at = get_utc_now() - timedelta(days=1)
+    # Three rows share every instant, so only the id tiebreak separates them.
+    rows = [
+        {
+            "id": uuid4(),
+            "actor_type": ActorType.SYSTEM,
+            "event_type": marker,
+            "payload": {},
+            "created_at": started_at + timedelta(minutes=index // 3),
+        }
+        for index in range(101)
+    ]
+    expected = [
+        row["id"]
+        for row in sorted(
+            rows, key=lambda row: (row["created_at"], row["id"]), reverse=True
+        )
+    ]
+    foreign = {**rows[0], "id": uuid4(), "event_type": f"{marker}_other"}
+    await db_session.execute(insert(EventLog), random.sample([*rows, foreign], 102))
+
+    service = EventLogService(EventLogRepository(), db_session)
+    with count_statements(integration_engine) as one_row:
+        await service.get_paginated_list(
+            PaginationParams(page=1, size=1), event_type=marker
+        )
+    with count_statements(integration_engine) as full_page:
+        first = await service.get_paginated_list(
+            PaginationParams(page=1, size=100), event_type=marker
+        )
+    second = await service.get_paginated_list(
+        PaginationParams(page=2, size=100), event_type=marker
+    )
+
+    assert (len(first.items), len(second.items)) == (100, 1)
+    assert [item.id for item in [*first.items, *second.items]] == expected
+    assert first.total == second.total == 101
+    assert len(full_page) == len(one_row)

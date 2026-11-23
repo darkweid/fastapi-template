@@ -117,8 +117,9 @@ async def verify_email(
 @router.post(
     "/login",
     response_model=TokenModel,
-    # Loose on purpose: CGNAT and offices put many users behind one IP, and the
-    # per-email soft throttle in the usecase does the precise anti-stuffing work.
+    # Five a minute per IP, shared by everyone behind one office or CGNAT
+    # address. The per-email soft throttle in the usecase catches stuffing
+    # spread over many addresses.
     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 async def login_user(

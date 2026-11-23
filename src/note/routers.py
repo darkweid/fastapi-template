@@ -60,7 +60,7 @@ async def get_note(
     Returns a single note by its identifier.
     """
     note = await note_service.get_single_or_404(id=note_id)
-    ensure_note_view_access(note, current_user.id, current_user.role)
+    ensure_note_view_access(note.owner_id, current_user.id, current_user.role)
     return NoteViewModel.model_validate(note)
 
 

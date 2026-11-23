@@ -5,7 +5,7 @@ completion, or to a lock wait PostgreSQL itself reports.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -13,7 +13,7 @@ from uuid import uuid4
 from argon2 import PasswordHasher
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, text
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src.core.auth.errors import InvalidCredentialsError
@@ -28,29 +28,13 @@ from src.user.auth.usecases import login, reset_password_confirm
 from src.user.models import User
 from src.user.usecases import update_password
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.races import WAIT_SECONDS, pause, wait_for_lock_wait
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 OLD = "CurrentPass1!"
 NEW = "StrongPass1!"
 RESET = "ResetPass1!"
-WAIT_SECONDS = 10
-
-
-class Pause:
-    """Wraps a coroutine function: signals arrival, then waits for release."""
-
-    def __init__(self, target: Callable[..., Awaitable[Any]], *, after: bool) -> None:
-        self._target = target
-        self._after = after
-        self.reached = asyncio.Event()
-        self.release = asyncio.Event()
-
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        result = await self._target(*args, **kwargs) if self._after else None
-        self.reached.set()
-        await asyncio.wait_for(self.release.wait(), WAIT_SECONDS)
-        return result if self._after else await self._target(*args, **kwargs)
 
 
 class Actors:
@@ -94,22 +78,6 @@ class Actors:
         key = USER_AUTH_REALM.keys.sessions(str(self.user.id))
         return list(await self.redis.zrange(key, 0, -1))
 
-    async def wait_for_lock_wait(self) -> None:
-        """Returns once some backend waits on a row lock over `users`."""
-        async with asyncio.timeout(WAIT_SECONDS), self.engine.connect() as connection:
-            while True:
-                waiting = await connection.scalar(
-                    text(
-                        "SELECT count(*) FROM pg_stat_activity "
-                        "WHERE datname = current_database() "
-                        "AND wait_event_type = 'Lock' AND query ILIKE '%users%'"
-                    )
-                )
-                await connection.rollback()
-                if waiting:
-                    return
-                await asyncio.sleep(0.01)
-
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def actors(
@@ -145,14 +113,6 @@ async def actors(
         )
         await session.execute(delete(User).where(User.id == user.id))
         await session.commit()
-
-
-def pause(
-    monkeypatch: pytest.MonkeyPatch, module: Any, name: str, *, after: bool
-) -> Pause:
-    paused = Pause(getattr(module, name), after=after)
-    monkeypatch.setattr(module, name, paused)
-    return paused
 
 
 async def test_sign_in_verified_before_a_change_gets_no_session(
@@ -200,7 +160,7 @@ async def test_a_session_issued_under_the_lock_is_wiped(
     await asyncio.wait_for(paused.reached.wait(), WAIT_SECONDS)
 
     writer = asyncio.create_task(getattr(actors, flow)())
-    await actors.wait_for_lock_wait()
+    await wait_for_lock_wait(actors.engine, "users")
     paused.release.set()
 
     assert (await sign_in).access_token
@@ -235,7 +195,7 @@ async def test_a_change_waiting_on_a_reset_decides_on_the_new_row(
     await asyncio.wait_for(paused.reached.wait(), WAIT_SECONDS)
 
     change = asyncio.create_task(actors.change())
-    await actors.wait_for_lock_wait()
+    await wait_for_lock_wait(actors.engine, "users")
     paused.release.set()
 
     assert (await reset).success

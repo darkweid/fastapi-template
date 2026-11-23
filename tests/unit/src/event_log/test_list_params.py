@@ -49,3 +49,9 @@ def test_search_is_not_a_parameter_of_this_resource() -> None:
     """No column is searchable here, so the parameter would only ever 400."""
     with pytest.raises(ValidationError):
         EventLogListParams(search="whatever")
+
+
+def test_a_nul_in_the_event_type_is_refused() -> None:
+    """Bound into the query it fails in the driver, and the list answers 500."""
+    with pytest.raises(ValidationError):
+        EventLogListParams(event_type="note\x00")

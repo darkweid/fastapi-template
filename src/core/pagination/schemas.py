@@ -8,7 +8,7 @@ from pydantic import BeforeValidator, Field, field_validator
 
 from src.core.database.filters import FilterCondition
 from src.core.database.query import ListQuery, SortOrder
-from src.core.schemas import Base
+from src.core.schemas import Base, NulFreeStr
 
 T = TypeVar("T")
 SchemaT = TypeVar("SchemaT", bound=Base)
@@ -110,13 +110,14 @@ class SortableListQueryParams(PaginationParams):
 
 
 class ListQueryParams(SortableListQueryParams):
-    """`SortableListQueryParams` plus substring search.
+    """`SortableListQueryParams` plus free-text search.
 
-    - search: case-insensitive substring, matched against the fields the
-      resource allows searching by
+    - search: every word must be a case-insensitive substring of some field
+      the resource allows searching by, in any order; `ё` reads as `е`, and
+      only the first `MAX_SEARCH_WORDS` distinct words count
     """
 
-    search: str | None = Field(default=None, max_length=100)
+    search: NulFreeStr | None = Field(default=None, max_length=100)
 
     @property
     def search_term(self) -> str | None:

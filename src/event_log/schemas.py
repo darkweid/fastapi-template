@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import Field, IPvAnyAddress, field_validator
 
 from src.core.pagination import SortableListQueryParams
-from src.core.schemas import Base
+from src.core.schemas import Base, NulFreeStr
 from src.event_log.enums import ActorType, ObjectType
 
 
@@ -33,7 +33,7 @@ class EventLogListParams(SortableListQueryParams):
     object_type: ObjectType | None = None
     object_id: UUID | None = None
     # `event_logs.event_type` is a String(64).
-    event_type: str | None = Field(default=None, max_length=64)
+    event_type: NulFreeStr | None = Field(default=None, max_length=64)
 
     @field_validator(
         "actor_type",

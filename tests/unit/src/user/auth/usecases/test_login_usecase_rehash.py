@@ -49,6 +49,7 @@ async def test_login_rehashes_password_when_needed(
 ) -> None:
     user = build_user()
     uow = build_uow(user, fake_session)
+    users = uow.users
 
     needs_rehash_mock = Mock(return_value=True)
     hash_mock = AsyncMock(return_value="new-hash")
@@ -76,8 +77,8 @@ async def test_login_rehashes_password_when_needed(
     needs_rehash_mock.assert_called_once_with(user.password_hash)
     verify_mock.assert_awaited_once_with("plain-pass", user.password_hash)
     hash_mock.assert_awaited_once_with("plain-pass")
-    uow.users.update.assert_awaited_once_with(
-        uow.session,
+    users.update.assert_awaited_once_with(
+        fake_session,
         {"password_hash": "new-hash"},
         id=user.id,
     )
@@ -97,6 +98,7 @@ async def test_login_does_not_rehash_when_not_needed(
 ) -> None:
     user = build_user()
     uow = build_uow(user, fake_session)
+    users = uow.users
 
     needs_rehash_mock = Mock(return_value=False)
     verify_mock = AsyncMock(return_value=True)
@@ -119,7 +121,7 @@ async def test_login_does_not_rehash_when_not_needed(
     assert result.refresh_token == "refresh"
     needs_rehash_mock.assert_called_once_with(user.password_hash)
     verify_mock.assert_awaited_once_with("plain-pass", user.password_hash)
-    uow.users.update.assert_not_awaited()
+    users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
     # Login invalidates unconditionally, even on the no-rehash path where the row
@@ -138,6 +140,7 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
     cache: InMemoryCache,
 ) -> None:
     uow = build_uow(None, fake_session)
+    users = uow.users
     verify_mock = AsyncMock(return_value=False)
     debug_mock = Mock()
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
@@ -151,7 +154,7 @@ async def test_login_returns_unified_error_for_missing_user_and_uses_dummy_hash(
         )
 
     verify_mock.assert_awaited_once_with("plain-pass", DUMMY_PASSWORD_HASH)
-    uow.users.update.assert_not_awaited()
+    users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     # The rejection commits on its own: the audit row is the only thing this
     # transaction carries, and it has to survive the error that follows it.
@@ -173,6 +176,7 @@ async def test_login_returns_unified_error_for_wrong_password(
 ) -> None:
     user = build_user()
     uow = build_uow(user, fake_session)
+    users = uow.users
     verify_mock = AsyncMock(return_value=False)
     debug_mock = Mock()
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
@@ -186,7 +190,7 @@ async def test_login_returns_unified_error_for_wrong_password(
         )
 
     verify_mock.assert_awaited_once_with("wrong-pass", user.password_hash)
-    uow.users.update.assert_not_awaited()
+    users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
     logged_actor, logged_event = uow.published[0]
@@ -215,6 +219,7 @@ async def test_login_returns_unified_error_for_account_state_failures(
     cache: InMemoryCache,
 ) -> None:
     uow = build_uow(user, fake_session)
+    users = uow.users
     verify_mock = AsyncMock(return_value=True)
     debug_mock = Mock()
     monkeypatch.setattr(login_usecase, "verify_password", verify_mock)
@@ -228,7 +233,7 @@ async def test_login_returns_unified_error_for_account_state_failures(
         )
 
     verify_mock.assert_awaited_once_with("plain-pass", user.password_hash)
-    uow.users.update.assert_not_awaited()
+    users.update.assert_not_awaited()
     uow.flush.assert_not_awaited()
     uow.commit.assert_awaited_once()
     logged_actor, logged_event = uow.published[0]
@@ -288,8 +293,9 @@ async def test_a_password_changed_before_the_lock_refuses_the_sign_in(
     user = build_user()
     changed = build_user(user_id=user.id, password="other")
     uow = build_uow(user, fake_session)
+    users = uow.users
     get_single = AsyncMock(side_effect=[user, changed if locked == "changed" else None])
-    uow.users.get_single = get_single
+    users.get_single = get_single
     issue = AsyncMock()
     monkeypatch.setattr(login_usecase, "issue_session_pair", issue)
 
@@ -320,14 +326,15 @@ async def test_a_concurrent_rehash_neither_refuses_nor_is_overwritten(
     user = build_user()
     rehashed = build_user(user_id=user.id)
     uow = build_uow(user, fake_session)
-    uow.users.get_single = AsyncMock(side_effect=[user, rehashed])
+    users = uow.users
+    users.get_single = AsyncMock(side_effect=[user, rehashed])
     monkeypatch.setattr(login_usecase, "needs_password_rehash", Mock(return_value=True))
 
     await LoginUserUseCase(uow=uow, redis_client=fake_redis, cache=cache).execute(
         LoginUserModel(email="user@example.com", password="password")
     )
 
-    uow.users.update.assert_not_awaited()
+    users.update.assert_not_awaited()
     assert uow.published_codes == ["user.signed_in"]
 
 

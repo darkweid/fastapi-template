@@ -706,6 +706,7 @@ async def test_verify_email_usecase_cannot_reuse_successful_token(
 
     assert first_result == SuccessResponse(success=True)
 
+    use_case = VerifyEmailUseCase(uow=uow.fresh(), redis_client=fake_redis, cache=cache)
     second_result = await use_case.execute(token)
 
     assert second_result == SuccessResponse(success=False)

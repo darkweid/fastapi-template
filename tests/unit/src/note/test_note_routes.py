@@ -53,7 +53,7 @@ class FakeNoteService:
         self.get_single_or_404 = AsyncMock()
         if not_found:
             self.get_single_or_404.side_effect = InstanceNotFoundException(
-                "Note not found"
+                "Note not found."
             )
         else:
             self.get_single_or_404.return_value = note

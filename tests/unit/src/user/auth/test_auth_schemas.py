@@ -82,3 +82,50 @@ def test_user_new_password_rejects_password_longer_than_128_characters() -> None
 def test_user_new_password_rejects_non_ascii_characters() -> None:
     with pytest.raises(ValidationError):
         UserNewPassword(current_password="OldPass1!", password="Strong1!пароль")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("first_name", "John\n"),
+        ("last_name", "Doe\n"),
+        ("username", "john.doe\n"),
+        ("phone_number", "+12025550179\n"),
+        ("password", "Str0ng!Passw0rd\n"),
+    ],
+)
+def test_create_user_rejects_a_trailing_newline(field: str, value: str) -> None:
+    """`$` also matches before a final newline, which then reaches the column."""
+    kwargs = {"first_name": "John", "last_name": "Doe", **VALID_USER_KWARGS}
+
+    with pytest.raises(ValidationError) as error:
+        CreateUserModel(**{**kwargs, field: value})
+
+    assert [item["loc"] for item in error.value.errors()] == [(field,)]
+
+
+@pytest.mark.parametrize(
+    "username", ["abc", "a" * 61, "with space", "john.doe\n", "nul\x00name"]
+)
+def test_username_rules_are_the_same_at_registration_and_update(
+    username: str,
+) -> None:
+    kwargs = {"first_name": "John", "last_name": "Doe", **VALID_USER_KWARGS}
+
+    with pytest.raises(ValidationError) as created:
+        CreateUserModel(**{**kwargs, "username": username})
+    with pytest.raises(ValidationError) as updated:
+        UserProfileUpdateModel(username=username)
+
+    for error in (created, updated):
+        assert [item["loc"] for item in error.value.errors()] == [("username",)]
+
+
+def test_a_registered_username_of_any_length_can_be_kept_on_update() -> None:
+    assert UserProfileUpdateModel(username="a" * 60).username == "a" * 60
+
+
+@pytest.mark.parametrize("field", ["first_name", "last_name"])
+def test_profile_update_rejects_a_trailing_newline(field: str) -> None:
+    with pytest.raises(ValidationError):
+        UserProfileUpdateModel(**{field: "John\n"})

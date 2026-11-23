@@ -125,15 +125,14 @@ async def update_user_password(
     ],
 ) -> SuccessResponse:
     """
-    Updates the user password. Requires the current password and signs out every
-    active session, including this one.
-
-    The auth cookies are expired along with the server-side sessions: leaving the
-    browser holding a refresh cookie that no longer resolves would show up as a
-    silent, unexplainable logout on its next refresh.
+    Updates the user password. Requires the current password, which the new one
+    must differ from. Signs out every active session, including this one, and
+    clears the auth cookies: sign in again afterwards.
     """
     result = await use_case.execute(
         data=user_form_data, user_id=current_user.id, actor=actor
     )
+    # Every session is gone server-side: a refresh cookie left in the browser
+    # would only turn its next refresh into a silent logout.
     responder.clear(response, transport)
     return result

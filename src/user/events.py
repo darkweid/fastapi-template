@@ -7,6 +7,11 @@ class UserRegistered(DomainEvent):
     object_type = ObjectType.USER
 
 
+class UnverifiedUserDeleted(DomainEvent):
+    code = "user.unverified_deleted"
+    object_type = ObjectType.USER
+
+
 class UserEmailVerified(DomainEvent):
     code = "user.email_verified"
     object_type = ObjectType.USER

@@ -33,6 +33,7 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork):
         Returns the occurrence, whose `id` the journal row and every
         subscriber share.
         """
+        self._ensure_not_completed()
         published = PublishedEvent(
             id=uuid6.uuid7(), actor=actor, event=event, occurred_at=get_utc_now()
         )
@@ -45,6 +46,7 @@ class ApplicationUnitOfWork(SQLAlchemyUnitOfWork):
     def _get_repository(
         self, repository_type: type[RepositoryInstance]
     ) -> RepositoryInstance:
+        self._ensure_not_completed()
         # Repositories are stateless; one instance per type per UoW is enough.
         if repository_type not in self._repositories:
             self._repositories[repository_type] = repository_type()

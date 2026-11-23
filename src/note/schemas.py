@@ -4,20 +4,21 @@ from uuid import UUID
 
 from pydantic import Field, field_validator
 
-from src.core.schemas import Base, PatchField
+from src.core.schemas import Base, NulFreeStr, PatchField, TrimmedStr
 
 # `notes.content` is `Text`: the schema is the only ceiling it has.
 NOTE_CONTENT_MAX_LENGTH = 10_000
-NoteContent = Annotated[str, Field(max_length=NOTE_CONTENT_MAX_LENGTH)]
+NoteContent = Annotated[NulFreeStr, Field(max_length=NOTE_CONTENT_MAX_LENGTH)]
+NoteTitle = Annotated[TrimmedStr, Field(max_length=255)]
 
 
 class NoteCreateModel(Base):
-    title: str = Field(..., min_length=1, max_length=255)
+    title: NoteTitle
     content: NoteContent = ""
 
 
 class NoteUpdateModel(Base):
-    title: PatchField[Annotated[str, Field(min_length=1, max_length=255)]] = None
+    title: PatchField[NoteTitle] = None
     content: PatchField[NoteContent] = None
 
     @field_validator("title", "content")

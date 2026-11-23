@@ -42,8 +42,8 @@ class ReadinessService:
         Raises:
             ServiceUnavailableException: PostgreSQL is unreachable, or the
                 request pool cannot hand out a connection within the probe
-                timeout (HTTP 503). Not logged here: the handler logs every
-                503 once, and a polling probe must not log an outage twice.
+                timeout (HTTP 503). `check_postgres` logs the cause and the
+                handler logs the 503, so nothing is logged here.
         """
         if not await self.check_postgres():
             raise ServiceUnavailableException(
