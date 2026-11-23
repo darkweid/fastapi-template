@@ -9,8 +9,10 @@ import jwt
 import pytest
 from redis.asyncio import Redis
 
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.session_issuance import issue_session_pair
+from src.core.auth.token_helpers import invalidate_session
 import src.core.auth.tokens as tokens
 from src.core.auth.tokens import rotate_session_tokens
 from src.core.errors.exceptions import UnauthorizedException
@@ -278,3 +280,42 @@ async def test_concurrent_rotations_of_one_token_register_exactly_one_pair(
         await real_redis.get(KEYS.refresh(subject_id, old["session_id"]))
         == _claims(cast(TokenModel, results[0]).refresh_token)["jti"]
     )
+
+
+async def test_one_of_several_reuses_names_the_session_it_ended(
+    real_redis: Redis,
+    redis_client_factory: Callable[[], Redis],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each named reuse becomes one audit row, so a burst of replays of one
+    stolen token must name it once."""
+    monkeypatch.setattr(config.jwt, "REFRESH_TOKEN_REUSE_GRACE_SECONDS", 0)
+    old = await _login(real_redis, str(uuid4()))
+    await rotate_session_tokens(old, real_redis, realm=USER_AUTH_REALM)
+
+    results = await asyncio.gather(
+        *(
+            rotate_session_tokens(old, redis_client_factory(), realm=USER_AUTH_REALM)
+            for _ in range(8)
+        ),
+        return_exceptions=True,
+    )
+
+    assert all(isinstance(result, UnauthorizedException) for result in results)
+    named = [r for r in results if isinstance(r, RefreshTokenReuseError)]
+    assert [error.session_id for error in named] == [old["session_id"]]
+
+
+async def test_one_session_is_ended_once_and_leaves_the_index(
+    redis_backend: Redis,
+) -> None:
+    subject_id = str(uuid4())
+    ended = (await _login(redis_backend, subject_id))["session_id"]
+    kept = (await _login(redis_backend, subject_id))["session_id"]
+
+    assert await invalidate_session(subject_id, ended, redis_backend, keys=KEYS)
+    assert not await invalidate_session(subject_id, ended, redis_backend, keys=KEYS)
+
+    assert await redis_backend.exists(*_session_keys(subject_id, ended)) == 0
+    assert await redis_backend.exists(KEYS.refresh(subject_id, kept)) == 1
+    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == [kept]

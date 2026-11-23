@@ -117,8 +117,9 @@ async def verify_email(
 @router.post(
     "/login",
     response_model=TokenModel,
-    # Loose on purpose: CGNAT and offices put many users behind one IP, and the
-    # per-email soft throttle in the usecase does the precise anti-stuffing work.
+    # Five a minute per IP, shared by everyone behind one office or CGNAT
+    # address. The per-email soft throttle in the usecase catches stuffing
+    # spread over many addresses.
     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 async def login_user(
@@ -166,6 +167,7 @@ async def login_user(
     ],
 )
 async def get_access_by_refresh(
+    request: Request,
     response: Response,
     user_and_payload: Annotated[
         tuple[User, JWTPayload], Depends(get_access_by_refresh_token)
@@ -183,7 +185,9 @@ async def get_access_by_refresh(
     Native clients send the refresh token in the Authorization header.
     """
     current_user, old_payload = user_and_payload
-    tokens = await use_case.execute(current_user, old_payload)
+    tokens = await use_case.execute(
+        current_user, old_payload, ip=get_client_ip(request)
+    )
     return responder.apply(tokens, response, transport)
 
 

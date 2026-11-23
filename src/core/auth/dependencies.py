@@ -25,14 +25,17 @@ from src.core.auth.credentials import (
     read_refresh_credentials,
     verify_jti,
 )
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.realm import AuthRealm
+from src.core.auth.reuse import RefreshReuseCallback, report_refresh_reuse
 from src.core.database.base import Base
 from src.core.database.detached import detached_read
 from src.core.database.repositories import BaseRepository
 from src.core.database.session import get_session
 from src.core.errors.exceptions import UnauthorizedException
 from src.core.redis.dependencies import get_redis_client
+from src.core.request_ip import get_client_ip
 from src.main.config import Config, get_settings
 
 # Bound to the ORM base: every principal a realm authenticates (User, and any
@@ -99,6 +102,7 @@ def build_realm_auth(
     principal_type: type[PrincipalT],
     repository_factory: Callable[[], BaseRepository[PrincipalT]],
     admission: Callable[[PrincipalT], None],
+    on_refresh_reuse: RefreshReuseCallback | None = None,
 ) -> RealmAuth[PrincipalT]:
     """Build every request-scoped auth dependency of one realm.
 
@@ -108,6 +112,10 @@ def build_realm_auth(
 
     `principal_type` is not read at runtime: it pins PrincipalT so that a
     caller's aliases type as the concrete entity rather than as Any.
+
+    `on_refresh_reuse` is awaited whenever one of these dependencies ended a
+    session over a reused refresh token, before the 401 goes out. Rotation
+    detects a reuse of its own, so `RefreshAccessUseCase` takes it too.
     """
     access_header = APIKeyHeader(
         name="Authorization", scheme_name=f"{realm.name}-access-token"
@@ -127,6 +135,15 @@ def build_realm_auth(
         auto_error=False,
     )
     credentials_error = "Could not validate credentials"
+
+    async def verify_token(
+        request: Request, token: str, redis_client: Redis
+    ) -> JWTPayload:
+        try:
+            return await verify_jti(token, redis_client, realm)
+        except RefreshTokenReuseError as error:
+            await report_refresh_reuse(on_refresh_reuse, error, get_client_ip(request))
+            raise
 
     def cookie_responder(
         settings: Annotated[Config, Depends(get_settings)],
@@ -167,12 +184,13 @@ def build_realm_auth(
         responder.verify_csrf(credentials.token, request.headers.get(CSRF_HEADER_NAME))
 
     async def authenticate(
+        request: Request,
         token: Annotated[str, Security(access_header)],
         session: Annotated[AsyncSession, Depends(get_session)],
         redis_client: Annotated[Redis, Depends(get_redis_client)],
     ) -> Authenticated[PrincipalT]:
         """Resolve the access token to a principal, WITHOUT the admission gate."""
-        payload = await verify_jti(token, redis_client, realm)
+        payload = await verify_token(request, token, redis_client)
         try:
             subject_id = payload["sub"]
             mode = payload["mode"]
@@ -231,13 +249,14 @@ def build_realm_auth(
         return await decode_logout_identity(token, redis_client, realm)
 
     async def access_by_refresh(
+        request: Request,
         credentials: Annotated[RefreshCredentials, Depends(refresh_credentials)],
         _csrf: Annotated[None, Depends(verify_csrf)],
         session: Annotated[AsyncSession, Depends(get_session)],
         redis_client: Annotated[Redis, Depends(get_redis_client)],
     ) -> tuple[PrincipalT, JWTPayload]:
         """Resolve the principal and payload from a valid refresh token."""
-        payload = await verify_jti(credentials.token, redis_client, realm)
+        payload = await verify_token(request, credentials.token, redis_client)
         try:
             subject_id = payload["sub"]
             mode = payload["mode"]
@@ -264,7 +283,9 @@ def build_realm_auth(
             raise UnauthorizedException("Authentication token not found")
 
         redis_client = await get_redis_client(request)
-        payload = await verify_jti(credentials.token, redis_client, realm)
+        payload = await verify_token(request, credentials.token, redis_client)
+        if payload.get("mode") != "refresh_token":
+            raise UnauthorizedException(credentials_error)
         try:
             return payload["sub"]
         except KeyError:
@@ -276,14 +297,16 @@ def build_realm_auth(
         The token is only decoded and checked against the session registry, not
         resolved to a principal: the endpoint's own auth dependency does that
         afterwards, and a limiter that queried the database would hand an
-        unauthenticated caller a way to make one.
+        unauthenticated caller a way to make one. The exception is a reused
+        refresh token presented here: recording the reuse may reach the
+        database, at most once per live session.
         """
         token = request.headers.get("Authorization")
         if not token:
             raise UnauthorizedException("Authentication token not found")
 
         redis_client = await get_redis_client(request)
-        payload = await verify_jti(token, redis_client, realm)
+        payload = await verify_token(request, token, redis_client)
         if payload.get("mode") != "access_token":
             raise UnauthorizedException(credentials_error)
         try:

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 import pytest
 
 from scripts.app.create_admin import _AdminCredentialsModel, ensure_admin, main
+from src.core.errors.exceptions import InstanceNotFoundException
 from src.core.utils.security import is_password_hash
 from src.user.enums import UserRole
 from src.user.models import User
@@ -100,6 +101,29 @@ async def test_ensure_admin_promotes_existing_user_without_touching_password(
     # hash was never touched.
     assert existing.password_hash == original_hash
     uow.commit.assert_awaited_once()
+
+
+async def test_ensure_admin_reports_an_account_deleted_before_the_promotion(
+    fake_session: FakeAsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A success line here would leave the operator with no admin at all."""
+    users_repo = FakeUsersRepository(user=build_user(email="admin@example.com"))
+    users_repo.update.return_value = None
+    uow = build_uow(fake_session, users_repo)
+
+    with pytest.raises(InstanceNotFoundException):
+        await ensure_admin(
+            uow,
+            email="admin@example.com",
+            password=STRONG_PASSWORD,
+            first_name="Admin",
+            last_name="User",
+            username="admin",
+            phone_number="+10000000000",
+        )
+
+    uow.commit.assert_not_awaited()
+    assert "ensured admin role" not in caplog.text
 
 
 @pytest.mark.asyncio

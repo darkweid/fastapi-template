@@ -7,6 +7,11 @@ class UserRegistered(DomainEvent):
     object_type = ObjectType.USER
 
 
+class UnverifiedUserDeleted(DomainEvent):
+    code = "user.unverified_deleted"
+    object_type = ObjectType.USER
+
+
 class UserEmailVerified(DomainEvent):
     code = "user.email_verified"
     object_type = ObjectType.USER
@@ -37,6 +42,16 @@ class UserSignedOut(DomainEvent):
     object_type = ObjectType.USER
 
     all_sessions: bool
+
+
+class UserRefreshReuseDetected(DomainEvent):
+    """A rotated-out refresh token of the account came back, so either the
+    owner or a thief holds a copy the other already used. Its session ended."""
+
+    code = "user.refresh_reuse_detected"
+    object_type = ObjectType.USER
+
+    session_id: str
 
 
 class UserPasswordChanged(DomainEvent):

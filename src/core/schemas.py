@@ -141,3 +141,10 @@ TrimmedText = Annotated[
 description. Tab, line feed and carriage return pass; every other control
 character is refused for the reasons `TrimmedStr` gives. Limits compose the
 same way."""
+
+
+NulFreeStr = Annotated[str, StringConstraints(pattern=r"^[^\x00]*$")]
+"""Text kept exactly as sent, blank included, that PostgreSQL can hold: a NUL
+fails its text input with a 500. For free text with layout of its own (a note
+body) and for filter values; a name or a title is `TrimmedStr`. Limits compose
+as with `TrimmedStr`."""

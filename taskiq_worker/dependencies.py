@@ -1,7 +1,9 @@
 from collections.abc import AsyncGenerator
+from typing import Annotated
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+from taskiq import Context, TaskiqDepends
 
 from src.core.database.session import tasks_async_session
 from src.core.redis.core import create_redis_client
@@ -12,6 +14,12 @@ async def get_tasks_session() -> AsyncGenerator[AsyncSession]:
     """Per-task-run DB session on the worker's isolated engine pool."""
     async with tasks_async_session() as session:
         yield session
+
+
+def is_retry(context: Annotated[Context, TaskiqDepends()]) -> bool:
+    """True when SmartRetryMiddleware re-sent this message after a failed run. A
+    redelivery after a worker crash is not one: it carries the same labels."""
+    return int(context.message.labels.get("_retries", 0)) > 0
 
 
 _tasks_redis_client: Redis | None = None

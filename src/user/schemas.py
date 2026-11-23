@@ -1,17 +1,24 @@
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import EmailStr, Field, field_validator
+from pydantic import AfterValidator, EmailStr, Field, field_validator
 
 from src.core.schemas import Base, PatchField
-from src.core.validations import FULL_NAME_PATTERN
+from src.core.validations import validate_full_name, validate_username
 from src.user.enums import UserRole
+
+PersonName = Annotated[
+    str, Field(min_length=2, max_length=30), AfterValidator(validate_full_name)
+]
+# The validator holds the real shape; the length publishes the ceiling and
+# refuses an oversized value before any regex runs.
+Username = Annotated[str, Field(max_length=60), AfterValidator(validate_username)]
 
 
 class UserProfileUpdateModel(Base):
-    first_name: PatchField[Annotated[str, Field(min_length=2, max_length=30)]] = None
-    last_name: PatchField[Annotated[str, Field(min_length=2, max_length=30)]] = None
-    username: PatchField[Annotated[str, Field(min_length=3, max_length=50)]] = None
+    first_name: PatchField[PersonName] = None
+    last_name: PatchField[PersonName] = None
+    username: PatchField[Username] = None
 
     @field_validator("first_name", "last_name", "username")
     @classmethod
@@ -21,16 +28,6 @@ class UserProfileUpdateModel(Base):
         # explicit null - and all three columns are non-nullable.
         if value is None:
             raise ValueError("Field cannot be null")
-        return value
-
-    @field_validator("first_name", "last_name")
-    @classmethod
-    def validate_name(cls, value: str) -> str:
-        if not FULL_NAME_PATTERN.match(value):
-            raise ValueError(
-                "Name must contain latin letters, with single spaces, "
-                "hyphens or apostrophes between parts"
-            )
         return value
 
 

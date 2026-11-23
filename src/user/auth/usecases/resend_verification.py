@@ -14,7 +14,7 @@ from src.user.auth.services.email_notifier import (
     EmailNotifier,
     get_verification_notifier,
 )
-from src.user.policies import verification_pending
+from src.user.policies import account_blocked, verification_pending
 
 logger = get_logger(__name__)
 
@@ -23,11 +23,11 @@ class SendVerificationUseCase:
     """
     Resend the verification email.
 
-    Answers success whether or not anything was sent: an unknown address and an
-    already verified one must look identical from outside, or the endpoint
-    confirms who has an account. The notifier's throttle key is released when
-    the transaction fails to commit, so a failed attempt does not lock the
-    address out of a retry.
+    Answers success whether or not anything was sent: an unknown address, an
+    already verified one and a blocked account must look identical from outside,
+    or the endpoint confirms who has an account. The notifier's throttle key is
+    released when the transaction fails to commit, so a failed attempt does not
+    lock the address out of a retry.
     """
 
     def __init__(
@@ -47,6 +47,12 @@ class SendVerificationUseCase:
                     mask_email(data.email),
                 )
                 return SuccessResponse(success=True)
+            if account_blocked(user):
+                logger.debug(
+                    "[ResendVerification] User with email '%s' is blocked.",
+                    mask_email(data.email),
+                )
+                return SuccessResponse(success=True)
             if not verification_pending(user):
                 logger.debug(
                     "[ResendVerification] User with email '%s' already verified.",
@@ -58,7 +64,7 @@ class SendVerificationUseCase:
                 "resend_verification", user.email
             )
             try:
-                await self.notifier.send(
+                slot = await self.notifier.send(
                     uow=uow,
                     user=user,
                     throttle_key=throttle_key,
@@ -76,7 +82,8 @@ class SendVerificationUseCase:
                 # The rollback discards the outbox row, but the throttle key in
                 # Redis survives it: release it so a retry is not locked out
                 # for the full TTL with no email queued.
-                await self.notifier.release_throttle(throttle_key)
+                if slot:
+                    await self.notifier.release_throttle(slot)
                 raise
             return SuccessResponse(success=True)
 

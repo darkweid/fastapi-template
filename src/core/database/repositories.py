@@ -332,6 +332,12 @@ class BaseRepository(Generic[T]):
         Filters that match several rows raise MultipleResultsFound and change
         nothing: with no ORDER BY, picking the first would write to whichever
         row the planner returned.
+
+        The row is read locked and fresh, so the filters hold at the moment of
+        the write; None means they matched nothing once any concurrent writer
+        was done. A caller that decides on the row's values still reads it
+        locked first. The re-read unloads relationships loaded on the instance
+        before: read it again with `eager` to use them afterwards.
         """
         if commit:
             self._ensure_commit_allowed(session)
@@ -354,9 +360,8 @@ class BaseRepository(Generic[T]):
                 f"Unknown fields for {self.model.__name__}: {sorted(unknown_fields)}"
             )
         try:
-            query = select(self.model).filter_by(**filters)
-            result = await session.execute(query)
-            instance = result.scalar_one_or_none()
+            result = await session.execute(self._locked_select(filters, key_share=True))
+            instance: T | None = result.scalar_one_or_none()
             if instance:
                 for key, value in data.items():
                     setattr(instance, key, value)
@@ -391,9 +396,8 @@ class BaseRepository(Generic[T]):
         self._ensure_filters_present(filters)
         filters = self._scope_filters(filters)
         try:
-            query = select(self.model).filter_by(**filters)
-            result = await session.execute(query)
-            instance = result.scalar_one_or_none()
+            result = await session.execute(self._locked_select(filters))
+            instance: T | None = result.scalar_one_or_none()
             if instance:
                 await session.delete(instance)
                 if commit:
@@ -412,12 +416,27 @@ class BaseRepository(Generic[T]):
                 await session.rollback()
             raise
 
+    def _locked_select(
+        self, filters: dict[str, Any], *, key_share: bool = False
+    ) -> Select[Any]:
+        # The flush writes by primary key alone, so only the lock keeps the
+        # filters true until then. `populate_existing`: an instance the session
+        # already holds would otherwise keep values older than the lock, and
+        # assigning one equal to them emits no UPDATE.
+        # `key_share` takes FOR NO KEY UPDATE, the lock an UPDATE takes itself:
+        # FOR UPDATE also waits for every transaction that inserted a child row,
+        # so two that did and then write the parent would deadlock.
+        query: Select[Any] = self._apply_for_update(
+            select(self.model).filter_by(**filters), key_share=key_share
+        )
+        return query.execution_options(populate_existing=True)
+
     @staticmethod
     def _ensure_filters_present(filters: dict[str, Any]) -> None:
         if not filters:
             raise ValueError("At least one filter must be provided for update/delete")
 
-    def _apply_for_update(self, query: Any) -> Any:
+    def _apply_for_update(self, query: Any, *, key_share: bool = False) -> Any:
         """Limit row locking to the current model table to avoid outer-join issues."""
         # cast, not plain attribute access: SQLAlchemy's declarative stubs type
         # __table__ narrowly enough that direct access loses .primary_key.columns.
@@ -426,8 +445,8 @@ class BaseRepository(Generic[T]):
             cast("ColumnElement[Any]", column) for column in table.primary_key.columns
         )
         if pk_columns:
-            return query.with_for_update(of=pk_columns)
-        return query.with_for_update(of=(table,))
+            return query.with_for_update(of=pk_columns, key_share=key_share)
+        return query.with_for_update(of=(table,), key_share=key_share)
 
     def _apply_default_ordering(
         self,
@@ -474,8 +493,7 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
         # write when it was the caller's only condition.
         self._ensure_filters_present(filters)
         try:
-            query = select(self.model).filter_by(**filters)
-            result = await session.execute(query)
+            result = await session.execute(self._locked_select(filters, key_share=True))
             instance: T | None = result.scalar_one_or_none()
             if instance:
                 # cast, not plain attribute access: T is bound to the declarative

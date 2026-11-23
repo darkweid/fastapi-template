@@ -77,7 +77,7 @@ class BaseService(Generic[ModelType, CreateSchema, RepositoryType, ResponseSchem
         )
         if obj is None:
             raise InstanceNotFoundException(
-                f"{self.repository.model.__name__} not found"
+                f"{self.repository.model.__name__} not found."
             )
         return cast(ModelType, obj)
 

@@ -10,6 +10,7 @@ from src.core.auth.dependencies import Authenticated, build_realm_auth
 from src.core.request_ip import get_client_ip
 from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM
+from src.user.auth.refresh_reuse import record_refresh_reuse
 from src.user.models import User
 from src.user.policies import ensure_can_use_session
 from src.user.repositories import UserRepository
@@ -19,6 +20,7 @@ USER_AUTH = build_realm_auth(
     principal_type=User,
     repository_factory=UserRepository,
     admission=ensure_can_use_session,
+    on_refresh_reuse=record_refresh_reuse,
 )
 
 AuthenticatedUser = Authenticated[User]

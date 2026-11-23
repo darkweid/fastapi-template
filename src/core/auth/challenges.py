@@ -10,6 +10,20 @@ from src.core.errors.exceptions import UnauthorizedException
 INVALID_CHALLENGE_MESSAGE = "Invalid or expired token."
 
 
+async def delete_if_value(key: str, value: str, redis_client: Redis) -> bool:
+    """Delete the key only while it holds `value`; False when it does not."""
+    verdict = await cast(
+        Awaitable[str],
+        redis_client.eval(
+            CONSUME_CHALLENGE_SCRIPT,
+            1,  # Number of keys
+            key,
+            value,
+        ),
+    )
+    return verdict == "OK"
+
+
 class ActiveChallengeRegistry:
     """Exactly one live challenge per realm, purpose and identifier, taken once.
 
@@ -34,10 +48,18 @@ class ActiveChallengeRegistry:
         value: str,
         ttl_seconds: int,
         redis_client: Redis,
-    ) -> None:
-        await redis_client.set(
-            self._realm.keys.one_time(purpose, identifier), value, ex=ttl_seconds
+        *,
+        only_if_absent: bool = False,
+    ) -> bool:
+        """False only with `only_if_absent`, when another challenge is live: it
+        stays, and `value` is not stored."""
+        stored = await redis_client.set(
+            self._realm.keys.one_time(purpose, identifier),
+            value,
+            ex=ttl_seconds,
+            nx=only_if_absent,
         )
+        return bool(stored)
 
     async def consume(
         self,
@@ -57,16 +79,9 @@ class ActiveChallengeRegistry:
         if not value:
             raise UnauthorizedException(INVALID_CHALLENGE_MESSAGE)
 
-        verdict = await cast(
-            Awaitable[str],
-            redis_client.eval(
-                CONSUME_CHALLENGE_SCRIPT,
-                1,  # Number of keys
-                self._realm.keys.one_time(purpose, identifier),
-                value,
-            ),
-        )
-        if verdict != "OK":
+        if not await delete_if_value(
+            self._realm.keys.one_time(purpose, identifier), value, redis_client
+        ):
             raise UnauthorizedException(INVALID_CHALLENGE_MESSAGE)
 
     async def invalidate(
@@ -74,7 +89,16 @@ class ActiveChallengeRegistry:
     ) -> None:
         """Retire the challenge whatever its value, without claiming it.
 
-        For a caller abandoning a challenge rather than acting on it - an email
-        that never left the outbox.
+        For a caller ending whatever is live - a deleted account, a changed
+        password. One abandoning the challenge it stored itself calls `retire`.
         """
         await redis_client.delete(self._realm.keys.one_time(purpose, identifier))
+
+    async def retire(
+        self, purpose: str, identifier: str, value: str, redis_client: Redis
+    ) -> None:
+        """Retire the challenge only while it is still `value`: a newer one
+        issued meanwhile stays live."""
+        await delete_if_value(
+            self._realm.keys.one_time(purpose, identifier), value, redis_client
+        )

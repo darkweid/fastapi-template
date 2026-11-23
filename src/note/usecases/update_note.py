@@ -38,10 +38,12 @@ class UpdateNoteUseCase:
     ) -> NoteViewModel:
         update_data = data.model_dump(exclude_unset=True)
         async with self.uow as uow:
-            note = await uow.notes.get_single(uow.session, id=note_id)
+            note = await uow.notes.get_single(
+                uow.session, for_update=True, populate_existing=True, id=note_id
+            )
             if note is None:
                 raise InstanceNotFoundException("Note not found.")
-            ensure_note_manage_access(note, current_user.id, current_user.role)
+            ensure_note_manage_access(note.owner_id, current_user.id, current_user.role)
             # Read off the loaded note before `update()` overwrites it in place.
             changes = changed_fields(note, update_data)
 

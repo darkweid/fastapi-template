@@ -36,6 +36,12 @@ def account_access_violation(user: AccountLike) -> AccountAccessViolation | None
     return None
 
 
+def account_blocked(user: AccountLike) -> bool:
+    """A blocked account gets no mailed link, and one it already holds is
+    refused like an invalid token: neither may confirm that the account exists."""
+    return account_access_violation(user) is AccountAccessViolation.BLOCKED
+
+
 def ensure_can_authenticate(user: AccountLike) -> None:
     """Login gate: collapse every violation into InvalidCredentialsError.
 

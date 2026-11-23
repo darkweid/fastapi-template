@@ -88,3 +88,47 @@ async def test_concurrent_consumes_let_exactly_one_through(
         for result in results
         if result is not None
     )
+
+
+async def test_storing_only_if_absent_keeps_the_live_challenge(
+    redis_backend: Redis,
+) -> None:
+    """A retried mail task must not end the link of a newer send, nor shorten it."""
+    identifier, live = await _issued(redis_backend)
+    key = USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, identifier)
+
+    stored = await REGISTRY.store(
+        VERIFICATION_PURPOSE, identifier, "late", 1, redis_backend, only_if_absent=True
+    )
+
+    assert stored is False
+    assert await redis_backend.get(key) == live
+    assert await redis_backend.ttl(key) > 1
+
+
+async def test_storing_only_if_absent_stores_when_nothing_is_live(
+    redis_backend: Redis,
+) -> None:
+    identifier = f"{uuid4().hex}@example.com"
+
+    assert await REGISTRY.store(
+        VERIFICATION_PURPOSE,
+        identifier,
+        "value",
+        TTL_SECONDS,
+        redis_backend,
+        only_if_absent=True,
+    )
+    await REGISTRY.consume(VERIFICATION_PURPOSE, identifier, "value", redis_backend)
+
+
+async def test_retiring_ends_only_the_named_challenge(redis_backend: Redis) -> None:
+    """A failed send cleans up after itself, not after the send that replaced it."""
+    identifier, value = await _issued(redis_backend)
+    key = USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, identifier)
+
+    await REGISTRY.retire(VERIFICATION_PURPOSE, identifier, "older", redis_backend)
+    assert await redis_backend.get(key) == value
+
+    await REGISTRY.retire(VERIFICATION_PURPOSE, identifier, value, redis_backend)
+    assert await redis_backend.exists(key) == 0

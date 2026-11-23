@@ -17,6 +17,7 @@ from pydantic import EmailStr, ValidationError
 from loggers import get_logger
 from src.core.database.session import tasks_async_session
 from src.core.database.uow import ApplicationUnitOfWork
+from src.core.errors.exceptions import InstanceNotFoundException
 from src.core.schemas import (
     Base,
     EmailNormalizationMixin,
@@ -72,6 +73,9 @@ async def ensure_admin(
     Email and password are validated with the same rules as self-registration,
     before any repository call: an address that login would reject must not
     become an account nobody can sign into.
+
+    Raises InstanceNotFoundException when the account is deleted between the
+    read and the promotion; running again creates it.
     """
     credentials = _AdminCredentialsModel(email=email, password=password)
     normalized_email = credentials.email
@@ -82,11 +86,15 @@ async def ensure_admin(
     async with uow:
         existing_user = await uow.users.get_single(uow.session, email=normalized_email)
         if existing_user:
-            await uow.users.update(
+            promoted = await uow.users.update(
                 uow.session,
                 {"role": UserRole.ADMIN, "is_active": True, "is_verified": True},
                 id=existing_user.id,
             )
+            if not promoted:
+                raise InstanceNotFoundException(
+                    f"{mask_email(normalized_email)} was deleted during the run."
+                )
             await uow.commit()
             logger.info(
                 "[Create Admin] %s already exists, ensured admin role.",

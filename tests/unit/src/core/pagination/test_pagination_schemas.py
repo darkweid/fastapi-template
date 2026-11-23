@@ -246,3 +246,9 @@ def test_list_query_params_reject_an_impossible_bare_date() -> None:
 
     assert client.get("/items", params={"date_to": "2026-09-24"}).status_code == 200
     assert client.get("/items", params={"date_to": "2026-02-30"}).status_code == 422
+
+
+def test_a_nul_in_the_search_is_refused() -> None:
+    """Bound into the query it fails in the driver, and the list answers 500."""
+    with pytest.raises(ValidationError):
+        ListQueryParams(search="a\x00b")

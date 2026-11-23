@@ -59,3 +59,9 @@ def test_policies_module_stays_pure() -> None:
             name in line
             for name in ("fastapi", "redis", "sqlalchemy", "src.core.database")
         ), line
+
+
+def test_only_an_inactive_account_is_blocked() -> None:
+    """An unverified account still needs its mailed links."""
+    assert policies.account_blocked(StubAccount(is_active=False))
+    assert not policies.account_blocked(StubAccount(is_verified=False))

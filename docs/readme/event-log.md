@@ -83,6 +83,13 @@ Where a *rejection itself* is the interesting event - a failed sign-in - record
 it and commit before raising, as `LoginUserUseCase` does; nothing else is
 pending in that transaction, so the commit carries only the audit row.
 
+A reused refresh token is found where no use case runs - the rate limiter's
+identifier, the auth dependency - so the user realm records
+`user.refresh_reuse_detected` from its `on_refresh_reuse` callback
+(`src/user/auth/refresh_reuse.py`), in a session and unit of
+work of its own. The session has ended by then, so a failure to record is
+reported to Sentry and never replaces the 401.
+
 The success row of a flow that hands out credentials goes last: `LoginUserUseCase`
 issues the session pair and clears the throttle before it records and commits,
 so a Redis outage cannot leave a durable `user.signed_in` behind an error the

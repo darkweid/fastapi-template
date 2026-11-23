@@ -187,11 +187,20 @@ class FakeUnitOfWork:
         self._completed = False
         self._after_commit_hooks: list[Any] = []
         self.commit = AsyncMock(side_effect=self._commit)
-        self.rollback = AsyncMock(side_effect=self._mark_rolled_back)
+        self.rollback = AsyncMock(side_effect=self._rollback)
         self.flush = AsyncMock(side_effect=self._flush)
         self.refresh = AsyncMock(side_effect=self._refresh)
 
+    def fresh(self) -> FakeUnitOfWork:
+        """A new unit over the same session, repositories and `published`
+        list: what the next request gets from `get_unit_of_work`."""
+        unit = FakeUnitOfWork(session=self._session)
+        unit._repositories = self._repositories
+        unit.published = self.published
+        return unit
+
     async def publish(self, actor: Any, event: Any) -> None:
+        self._ensure_not_completed()
         self.published.append((actor, event))
 
     @property
@@ -199,13 +208,16 @@ class FakeUnitOfWork:
         return [event.code for _, event in self.published]
 
     async def __aenter__(self) -> FakeUnitOfWork:
-        # Same refusal as SQLAlchemyUnitOfWork, so route tests running on this
-        # fake catch a handler that enters a unit of work after a raw read.
+        # Same refusals as SQLAlchemyUnitOfWork, so route tests running on this
+        # fake catch a handler that enters a completed unit of work, or any
+        # unit of work after a raw read.
+        self._ensure_not_completed()
         if self._session.in_transaction():
             raise RuntimeError(
                 "UnitOfWork entered while the session is already in a transaction."
             )
-        self._session.set_in_transaction(True)
+        await self._session.begin()
+        self._session.info["uow_active"] = True
         return self
 
     async def __aexit__(
@@ -215,17 +227,15 @@ class FakeUnitOfWork:
         exc_tb: object | None,
     ) -> None:
         try:
-            if exc_type is not None and not self._completed:
+            if not self._completed:
                 await self.rollback()
         finally:
-            # The real unit of work rolls back a clean exit without commit(),
-            # so every exit leaves the session idle.
-            self._session.set_in_transaction(False)
-        return None
+            self._session.info.pop("uow_active", None)
 
     async def _commit(self) -> None:
+        self._ensure_not_completed()
+        await self._session.commit()
         self._completed = True
-        self._session.set_in_transaction(False)
         hooks, self._after_commit_hooks = self._after_commit_hooks, []
         for hook in hooks:
             try:
@@ -237,9 +247,10 @@ class FakeUnitOfWork:
         self._ensure_not_completed()
         self._after_commit_hooks.append(hook)
 
-    def _mark_rolled_back(self) -> None:
+    async def _rollback(self) -> None:
+        self._ensure_not_completed()
+        await self._session.rollback()
         self._completed = True
-        self._session.set_in_transaction(False)
         self._after_commit_hooks = []
 
     def _ensure_not_completed(self) -> None:
@@ -269,9 +280,11 @@ class FakeUnitOfWork:
 
     @property
     def session(self) -> FakeAsyncSession:
+        self._ensure_not_completed()
         return self._session
 
     def __getattr__(self, name: str) -> Any:
         if name in self._repositories:
+            self._ensure_not_completed()
             return self._repositories[name]
         raise AttributeError(name)

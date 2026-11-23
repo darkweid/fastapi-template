@@ -21,7 +21,7 @@ class SQLAlchemyUnitOfWork:
     session that is already in a transaction raises. Commit is strictly
     explicit: leaving the context without calling commit() rolls the
     transaction back, whether the block raised or returned normally. Any later
-    `uow.*` call raises RuntimeError.
+    `uow.*` call, `session` and the repositories included, raises RuntimeError.
     """
 
     def __init__(self, session: AsyncSession):
@@ -134,4 +134,5 @@ class SQLAlchemyUnitOfWork:
 
     @property
     def session(self) -> AsyncSession:
+        self._ensure_not_completed()
         return self._session

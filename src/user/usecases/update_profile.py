@@ -47,7 +47,9 @@ class UpdateUserProfileUseCase:
     ) -> UserProfileViewModel:
         update_data = data.model_dump(exclude_unset=True)
         async with self.uow as uow:
-            stored_user = await uow.users.get_single(uow.session, id=user_id)
+            stored_user = await uow.users.get_single(
+                uow.session, for_update=True, populate_existing=True, id=user_id
+            )
             if not stored_user:
                 raise InstanceNotFoundException("User not found.")
             # Read off the loaded row before `update()` overwrites it in place.

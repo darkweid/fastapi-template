@@ -67,6 +67,11 @@ async def outbox_sweeper(
                 _report_failed_message(message)
                 failed += 1
                 continue
+            # Published inside the transaction on purpose: the row locks keep
+            # another sweep from publishing the same rows, and a commit that
+            # fails afterwards only republishes ids the worker deduplicates.
+            # The wait is bounded by the batch size and by the first
+            # unreachable-broker error, which ends the sweep.
             try:
                 await task.kicker().with_task_id(str(message.id)).kiq(
                     *message.args, **message.kwargs

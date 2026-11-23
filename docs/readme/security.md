@@ -31,6 +31,8 @@ A consumed token presented again in any other case **ends its session immediatel
 
 A late network retry of a token the client itself already rotated on also counts as reuse and ends the session, even inside the window: the pair it would answer is gone.
 
+The call that ends the session raises `RefreshTokenReuseError`, and the realm's `on_refresh_reuse` callback runs before the 401 goes out. The user realm's appends `user.refresh_reuse_detected` (the account, the session id, the caller's address) to the event log on a session of its own. A failure there, or no answer within 5 seconds (plus up to 2 to drop a database connection that does not respond), is reported and the answer stays 401. A replay of a session that has already ended and an `INVALID` token record nothing.
+
 The window has a cost: a thief who replays inside it gets the same pair as the owner. The theft is caught only if both go on refreshing, when one of the two presents a token the other already rotated; a thief who stops after the replay keeps the access token until it expires - hence the hard cap on the window.
 
 **Why it matters:** Without reuse detection, a stolen refresh token grants indefinite access. Rotation-chain tracking turns a silent compromise into a detectable event.
@@ -43,6 +45,7 @@ The window has a cost: a thief who replays inside it gets the same pair as the o
 - Parameters: 64 MB memory, 3 iterations, 2 threads.
 - Hashing and verification run off the event loop on a dedicated bounded executor (4 workers), capping concurrent Argon2 memory under request bursts.
 - `needs_password_rehash()` detects outdated hash parameters; `LoginUserUseCase._rehash_if_needed()` upgrades the hash on a successful sign-in. Hashing runs outside the transaction, and the new hash is written only over the one that was verified.
+- A self-service password change retires a reset link that is live at that moment. It does not stop a reset mail still queued, whose link is issued later, or a confirm already past its link check.
 
 **Why it matters:** Argon2's memory-hardness makes GPU/ASIC brute-force impractical. Auto-rehash ensures that strengthening parameters takes effect without requiring users to reset passwords.
 
@@ -52,7 +55,8 @@ The window has a cost: a thief who replays inside it gets the same pair as the o
 
 All authentication endpoints return **identical responses** regardless of whether a user exists:
 - Login: verifies the password against a pre-computed dummy hash (`DUMMY_PASSWORD_HASH`) when the user is not found, producing constant execution time.
-- Password reset and resend verification: return `success=True` even if the email is not registered.
+- Password reset and resend verification: return `success=True` even if the email is not registered or the account is blocked. A blocked account is refused before the throttle claim: nothing is claimed, sent or recorded.
+- Confirming either link for a blocked account answers like an invalid token. The password reset decides on the locked row, after hashing the new password, and leaves the sessions and the login-failure counter alone.
 
 **Why it matters:** Timing and response differences let attackers enumerate valid accounts. Dummy-hash verification eliminates the timing side-channel; uniform responses eliminate the content side-channel.
 
@@ -401,7 +405,9 @@ another" once a shared cache sits on the request path.
 
 - Tasks receive only email addresses, not full user objects or tokens — tokens are created inside the task.
 - The worker's Redis client (`get_tasks_redis_client`) is one per worker process, shared across task runs and closed at worker shutdown (`close_tasks_redis_client`).
-- Failed tasks clean up throttle keys and invalidate tokens before re-raising.
+- A failed run takes back only what it holds: it retires its own challenge and releases the throttle slot it owns, both by compare-and-delete, then re-raises. That covers a challenge whose store failed, since Redis may have applied it and lost the reply. A newer send to the same address keeps its slot and its link.
+- A retry that finds a challenge live sends nothing: a newer send reached the same mailbox. If the failed run could not retire its own challenge (Redis unreachable), the retry stops at that one too and the user asks for a new link. The retry cannot tell the two apart, so a skip is logged as a warning.
+- Registration claims the same per-address window as a resend. A busy window skips the email and the registration still succeeds.
 - `SmartRetryMiddleware` retries tasks opted in via `retry_on_error=True` (the email tasks) up to 3 times, about 60 s apart with jitter: each retry is written to a Redis schedule source (`ListRedisScheduleSource`, `taskiq_worker/broker.py`) and fired by the scheduler process, so delayed retries need the scheduler running; idempotence-free tasks stay out.
 - Redis Streams delivery is at-least-once: a worker XACKs a message only after the task finishes, so a worker crash between sending the email and acking can redeliver the task and duplicate the send — an accepted trade-off, not a defect.
 - `infra/redis.conf` enables AOF (`appendfsync everysec`) alongside the RDB snapshots, since this Redis now also holds the task stream: an RDB-only setup can lose queued jobs written since the last snapshot on a crash.

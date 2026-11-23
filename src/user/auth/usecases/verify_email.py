@@ -19,7 +19,7 @@ from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM, VERIFICATION_PURPOSE
 from src.user.cache_keys import user_cache_keys
 from src.user.events import UserEmailVerified
-from src.user.policies import verification_pending
+from src.user.policies import account_blocked, verification_pending
 
 logger = get_logger(__name__)
 
@@ -28,12 +28,12 @@ class VerifyEmailUseCase:
     """
     Verify an email address with a single-use token.
 
-    An invalid, expired or superseded token, and an email naming no user,
-    answer success=False instead of raising - the endpoint must not confirm who
-    has an account. A second click on an already used link lands there too:
-    decoding consumes the challenge, so the link no longer decodes. The
-    already-verified branch covers the other case - a token still live for an
-    account that got verified some other way - and answers success for it.
+    An invalid, expired or superseded token, an email naming no user and a
+    blocked account answer success=False instead of raising - the endpoint must
+    not confirm who has an account. A second click on an already used link lands
+    there too: decoding consumes the challenge, so the link no longer decodes.
+    The already-verified branch covers the other case - a token still live for
+    an account that got verified some other way - and answers success for it.
 
     The token is spent before the transaction runs, which is what stops two
     concurrent clicks from both proceeding; a failed commit therefore burns the
@@ -41,8 +41,8 @@ class VerifyEmailUseCase:
 
     Side effects:
     - Appends `user.email_verified` to the event log when the flag is set.
-      The already-verified and unknown-email branches write nothing: neither
-      changed any state.
+      The already-verified, unknown-email and blocked branches write nothing:
+      none changed any state.
     """
 
     def __init__(
@@ -56,64 +56,68 @@ class VerifyEmailUseCase:
         self.cache = cache
 
     async def execute(self, token: str, ip: str | None = None) -> SuccessResponse:
+        try:
+            normalized_email = await decode_one_time_token(
+                token,
+                realm=USER_AUTH_REALM,
+                purpose=VERIFICATION_PURPOSE,
+                redis_client=self.redis_client,
+                expected_mode="verification_token",
+            )
+        except UnauthorizedException:
+            logger.info("[VerifyEmail] Token JTI is inactive or invalid.")
+            return SuccessResponse(success=False)
+
+        except jwt.ExpiredSignatureError:
+            logger.info("[VerifyEmail] Token has expired.")
+            return SuccessResponse(success=False)
+
+        except jwt.InvalidTokenError:
+            logger.info("[VerifyEmail] Token is invalid.")
+            return SuccessResponse(success=False)
+
         async with self.uow as uow:
-            try:
-                normalized_email = await decode_one_time_token(
-                    token,
-                    realm=USER_AUTH_REALM,
-                    purpose=VERIFICATION_PURPOSE,
-                    redis_client=self.redis_client,
-                    expected_mode="verification_token",
+            user = await uow.users.get_single(
+                uow.session,
+                for_update=True,
+                populate_existing=True,
+                email=normalized_email,
+            )
+            if not user or account_blocked(user):
+                logger.debug(
+                    "[VerifyEmail] User with email '%s' not found or blocked.",
+                    mask_email(normalized_email),
                 )
-
-                user = await uow.users.get_single(uow.session, email=normalized_email)
-                if not user:
-                    logger.debug(
-                        "[VerifyEmail] User with email '%s' not found.",
-                        mask_email(normalized_email),
-                    )
-                    return SuccessResponse(success=False)
-                if not verification_pending(user):
-                    logger.debug(
-                        "[VerifyEmail] User with email '%s' already verified.",
-                        mask_email(normalized_email),
-                    )
-                    return SuccessResponse(success=True)
-
-                await uow.users.update(
-                    uow.session,
-                    {"is_verified": True},
-                    email=normalized_email,
-                )
-                await self.cache.invalidate(user_cache_keys.namespace(user.id))
-                uow.add_after_commit_hook(
-                    partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
-                )
-                # Attributed to the account: consuming the token proved the
-                # caller reads that mailbox, which is all verification claims.
-                await uow.publish(
-                    Actor.user(user.id, ip=ip),
-                    UserEmailVerified(object_id=user.id),
-                )
-                await uow.commit()
-
-                logger.info(
-                    "[VerifyEmail] User with email '%s' verified successfully.",
+                return SuccessResponse(success=False)
+            if not verification_pending(user):
+                logger.debug(
+                    "[VerifyEmail] User with email '%s' already verified.",
                     mask_email(normalized_email),
                 )
                 return SuccessResponse(success=True)
 
-            except UnauthorizedException:
-                logger.info("[VerifyEmail] Token JTI is inactive or invalid.")
+            verified_user = await uow.users.update(
+                uow.session, {"is_verified": True}, id=user.id
+            )
+            if not verified_user:
                 return SuccessResponse(success=False)
+            await self.cache.invalidate(user_cache_keys.namespace(user.id))
+            uow.add_after_commit_hook(
+                partial(self.cache.invalidate, user_cache_keys.namespace(user.id))
+            )
+            # Attributed to the account: consuming the token proved the
+            # caller reads that mailbox, which is all verification claims.
+            await uow.publish(
+                Actor.user(user.id, ip=ip),
+                UserEmailVerified(object_id=user.id),
+            )
+            await uow.commit()
 
-            except jwt.ExpiredSignatureError:
-                logger.info("[VerifyEmail] Token has expired.")
-                return SuccessResponse(success=False)
-
-            except jwt.InvalidTokenError:
-                logger.info("[VerifyEmail] Token is invalid.")
-                return SuccessResponse(success=False)
+            logger.info(
+                "[VerifyEmail] User with email '%s' verified successfully.",
+                mask_email(normalized_email),
+            )
+            return SuccessResponse(success=True)
 
 
 def get_verify_email_use_case(

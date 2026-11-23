@@ -1,11 +1,13 @@
 from contextlib import suppress
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
+from uuid import uuid4
 
 from fastapi import Depends
 from redis.asyncio import Redis
 from taskiq.decor import AsyncTaskiqDecoratedTask
 
 from loggers import get_logger
+from src.core.auth.challenges import delete_if_value
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.outbox.dependencies import get_task_dispatcher
@@ -19,6 +21,14 @@ from src.user.auth.tasks import (
 from src.user.models import User
 
 logger = get_logger(__name__)
+
+
+class ThrottleSlot(NamedTuple):
+    """One claimed send window. `owner` is what makes a release safe: the slot
+    may have expired and been claimed by another send since."""
+
+    key: str
+    owner: str
 
 
 class EmailNotifier:
@@ -49,30 +59,29 @@ class EmailNotifier:
         self.log_label = log_label
         self.throttle_ttl_sec = throttle_ttl_sec
 
-    async def _claim_throttle_slot(self, key: str | None) -> None:
+    async def _claim_throttle_slot(self, key: str) -> ThrottleSlot:
         """Take the throttle slot, or refuse the send.
 
         SET NX in one round trip: reading the key and then writing it lets two
         concurrent resends both find it absent and both send.
         """
-        if not key or not self.redis_client:
-            return
+        slot = ThrottleSlot(key, uuid4().hex)
         claimed = await self.redis_client.set(
-            key, "1", ex=self.throttle_ttl_sec, nx=True
+            slot.key, slot.owner, ex=self.throttle_ttl_sec, nx=True
         )
         if not claimed:
             raise InstanceProcessingException(self.throttle_message)
+        return slot
 
-    async def release_throttle(self, throttle_key: str) -> None:
+    async def release_throttle(self, slot: ThrottleSlot) -> None:
         """Best-effort throttle release for flows that failed after setting it.
 
         The throttle key outlives a rolled-back transaction (Redis is not part
         of it), so a failed flow must drop the key or the user stays locked out
         for the full TTL without any email queued.
         """
-        if throttle_key and self.redis_client is not None:
-            with suppress(Exception):
-                await self.redis_client.delete(throttle_key)
+        with suppress(Exception):
+            await delete_if_value(slot.key, slot.owner, self.redis_client)
 
     async def send(
         self,
@@ -80,27 +89,35 @@ class EmailNotifier:
         uow: ApplicationUnitOfWork,
         user: User,
         throttle_key: str | None = None,
-    ) -> None:
-        await self._claim_throttle_slot(throttle_key)
+    ) -> ThrottleSlot | None:
+        """Queue the email and answer the throttle slot it claimed.
+
+        A busy slot raises InstanceProcessingException and queues nothing. The
+        caller releases the slot when anything after this fails, the commit
+        included. Without a key nothing is claimed.
+        """
+        slot = await self._claim_throttle_slot(throttle_key) if throttle_key else None
         try:
             await self.dispatcher.enqueue_transactional(
                 uow,
                 self.task,
                 user.email,
                 user.full_name,
-                throttle_key=throttle_key,
+                throttle_key=slot.key if slot else None,
+                throttle_owner=slot.owner if slot else None,
             )
         except Exception:
             # The outbox insert failed with the transaction still open: release
             # the throttle so the user can retry immediately.
-            if throttle_key:
-                await self.release_throttle(throttle_key)
+            if slot:
+                await self.release_throttle(slot)
             logger.exception(
                 "Failed to enqueue %s email for %s",
                 self.log_label,
                 mask_email(user.email),
             )
             raise
+        return slot
 
 
 def get_verification_notifier(

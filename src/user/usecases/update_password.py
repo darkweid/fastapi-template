@@ -6,6 +6,7 @@ from fastapi import Depends
 from redis.asyncio import Redis
 
 from loggers import get_logger
+from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.auth.errors import InvalidCredentialsError
 from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.cache.interface import Cache
@@ -26,7 +27,7 @@ from src.core.utils.security import (
     verify_password,
 )
 from src.event_log.actor import Actor
-from src.user.auth.realm import USER_AUTH_REALM
+from src.user.auth.realm import RESET_PASSWORD_PURPOSE, USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
 from src.user.cache_keys import user_cache_keys
 from src.user.events import UserPasswordChanged
@@ -47,6 +48,10 @@ class UpdateUserPasswordUseCase:
     - Deletes every session key of the user before the commit rather than
       after: with Redis unavailable the change then fails as a whole, instead
       of leaving a new password alongside sessions holding the old one.
+    - Retires the reset link live at that moment the same way: whoever could
+      read that mailbox must not undo the change with it. A reset mail still
+      queued issues its link later, and a confirm already past its link check
+      runs on; neither is stopped here.
     - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
     """
 
@@ -110,6 +115,9 @@ class UpdateUserPasswordUseCase:
             await uow.flush()
             await invalidate_all_sessions(
                 str(updated_user.id), self.redis_client, keys=USER_AUTH_REALM.keys
+            )
+            await ActiveChallengeRegistry(USER_AUTH_REALM).invalidate(
+                RESET_PASSWORD_PURPOSE, locked_user.email, self.redis_client
             )
             await self.cache.invalidate(user_cache_keys.namespace(updated_user.id))
             uow.add_after_commit_hook(

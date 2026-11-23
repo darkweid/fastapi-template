@@ -6,6 +6,7 @@ from redis.asyncio import Redis
 from src.core.auth.usecases.refresh_access import RefreshAccessUseCase
 from src.core.redis.dependencies import get_redis_client
 from src.user.auth.realm import USER_AUTH_REALM
+from src.user.auth.refresh_reuse import record_refresh_reuse
 from src.user.models import User
 from src.user.policies import ensure_can_use_session
 
@@ -17,4 +18,5 @@ def get_refresh_access_use_case(
         redis_client,
         realm=USER_AUTH_REALM,
         admission=ensure_can_use_session,
+        on_refresh_reuse=record_refresh_reuse,
     )

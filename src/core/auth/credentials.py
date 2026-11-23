@@ -14,7 +14,7 @@ from fastapi import Request
 import jwt
 from redis.asyncio import Redis
 
-from src.core.auth.errors import TokenExpiredError
+from src.core.auth.errors import RefreshTokenReuseError, TokenExpiredError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.realm import AuthRealm
 from src.core.auth.token_helpers import (
@@ -73,7 +73,8 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
     rotated inside the grace window whose successor refresh token has not been
     rotated yet: it passes, and rotation answers it with that pair. Expiry raises TokenExpiredError, whose
     own error code lets a client tell "refresh and retry" apart from "this
-    token is not ours"; everything else answers the generic 401.
+    token is not ours"; everything else answers the generic 401, a reuse that
+    ended a session included, which raises RefreshTokenReuseError.
 
     The `Bearer ` prefix is optional - callers hand over whatever the transport
     gave them, header or cookie.
@@ -120,10 +121,13 @@ async def verify_jti(token: str, redis_client: Redis, realm: AuthRealm) -> JWTPa
             refresh_key = realm.keys.refresh(subject_id, session_id)
             if not await redis_client.exists(refresh_key):
                 raise UnauthorizedException("Token invalidated or expired")
-            await invalidate_session(
+            if not await invalidate_session(
                 subject_id, session_id, redis_client, keys=realm.keys
+            ):
+                raise UnauthorizedException("Token invalidated or expired")
+            raise RefreshTokenReuseError(
+                REUSE_DETECTED_MESSAGE, subject_id=subject_id, session_id=session_id
             )
-            raise UnauthorizedException(REUSE_DETECTED_MESSAGE)
 
     active_key = realm.keys.session_key(mode, subject_id, session_id)
     stored_jti = await redis_client.get(active_key)

@@ -8,6 +8,7 @@ import jwt
 import pytest
 
 from src.core.auth.credentials import verify_jti
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.session_issuance import issue_session_pair
 import src.core.auth.token_helpers as token_helpers
@@ -213,7 +214,7 @@ async def test_a_replay_after_a_wipe_does_not_bring_the_session_back(
     payload, _ = await _rotate_once(fake_redis, monkeypatch, grace=30)
     await token_helpers.invalidate_all_sessions("user-id", fake_redis, keys=AUTH_KEYS)
 
-    with pytest.raises(UnauthorizedException, match="Token reuse detected"):
+    with pytest.raises(UnauthorizedException, match="invalidated or expired"):
         await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
 
     assert await fake_redis.exists(AUTH_KEYS.refresh("user-id", "old-session")) == 0
@@ -438,3 +439,36 @@ async def test_a_wipe_racing_a_rotation_leaves_no_live_session(
             await _assert_dead(result.refresh_token, fake_redis)
     assert await fake_redis.exists(AUTH_KEYS.refresh("user-id", "session-1")) == 0
     assert await fake_redis.exists(AUTH_KEYS.access("user-id", "session-1")) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_reuse_names_the_session_it_ended_only_once(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The realm records what this error names; every later replay of the same
+    token would otherwise add a row for a session that is already gone."""
+    payload, _ = await _rotate_once(fake_redis, monkeypatch, grace=0)
+
+    with pytest.raises(RefreshTokenReuseError) as caught:
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+    with pytest.raises(UnauthorizedException) as again:
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+
+    assert (caught.value.subject_id, caught.value.session_id) == (
+        "user-id",
+        "old-session",
+    )
+    assert not isinstance(again.value, RefreshTokenReuseError)
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_verdict_is_not_a_reuse(fake_redis: InMemoryRedis) -> None:
+    payload = _base_payload()
+    await fake_redis.set(
+        AUTH_KEYS.refresh(str(payload["sub"]), str(payload["session_id"])), "other"
+    )
+
+    with pytest.raises(UnauthorizedException) as caught:
+        await rotate_session_tokens(payload, fake_redis, realm=USER_AUTH_REALM)
+
+    assert not isinstance(caught.value, RefreshTokenReuseError)
