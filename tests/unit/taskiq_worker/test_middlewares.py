@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 import sentry_sdk
+from sqlalchemy.exc import DBAPIError
 from taskiq import TaskiqMessage, TaskiqResult
 
 from taskiq_worker.middlewares import SentryMiddleware
@@ -47,3 +48,29 @@ def test_on_error_reports_exception_with_task_context(
     assert captured["exception"] is exception
     assert captured["tag"] == "send_verification_email"
     assert captured["context"] == {"task_id": "task-1"}
+
+
+def test_on_error_reports_no_text_of_a_driver_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """asyncpg quotes the bound value it refused in its own message."""
+    captured: list[BaseException] = []
+    monkeypatch.setattr(sentry_sdk, "capture_exception", captured.append)
+    exception = DBAPIError("SELECT 1", None, ValueError("'secret@example.com'"))
+
+    SentryMiddleware().on_error(
+        TaskiqMessage(
+            task_id="task-1",
+            task_name="cleanup",
+            labels={},
+            labels_types={},
+            args=[],
+            kwargs={},
+        ),
+        TaskiqResult(is_err=True, return_value=None, execution_time=0.01),
+        exception,
+    )
+
+    [reported] = captured
+    assert str(reported) == "DBAPIError driver=ValueError"
+    assert reported.__cause__ is None

@@ -3,6 +3,8 @@ from typing import Any
 import sentry_sdk
 from taskiq import TaskiqMessage, TaskiqMiddleware, TaskiqResult
 
+from src.core.errors.describe import reportable
+
 
 class SentryMiddleware(TaskiqMiddleware):
     """Report task failures to Sentry.
@@ -22,4 +24,4 @@ class SentryMiddleware(TaskiqMiddleware):
         with sentry_sdk.new_scope() as scope:
             scope.set_tag("taskiq.task_name", message.task_name)
             scope.set_context("taskiq", {"task_id": message.task_id})
-            sentry_sdk.capture_exception(exception)
+            sentry_sdk.capture_exception(reportable(exception))

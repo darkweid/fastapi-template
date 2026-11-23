@@ -12,6 +12,7 @@ from src.core.cache.redis_cache import RedisCache
 from src.core.cache.runtime import reset_cache, set_cache
 from src.core.cache.serializer import JsonSerializer
 import src.core.email_service.tasks  # noqa: F401
+from src.core.errors.log_scrubbing import install_log_scrubbing
 from src.core.http.client import close_http_clients
 import src.core.outbox.tasks  # noqa: F401
 from src.core.redis.lifecycle import verify_redis_client
@@ -27,7 +28,13 @@ from taskiq_worker.dependencies import (
     get_cache_redis_singleton,
 )
 
+# taskiq logs every exception a task raises under the first name, and the value a
+# task's argument was refused for under the second.
+TASKIQ_LOGGERS = ("taskiq.receiver.receiver", "taskiq.receiver.params_parser")
+
 init_sentry()
+for taskiq_logger in TASKIQ_LOGGERS:
+    install_log_scrubbing(taskiq_logger)
 register_event_subscribers()
 
 

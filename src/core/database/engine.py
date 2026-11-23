@@ -1,6 +1,10 @@
 import math
+import ssl
 from typing import Any
 
+from sqlalchemy import event
+from sqlalchemy.engine import Dialect
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.main.config import config
@@ -38,6 +42,34 @@ def session_timeouts(
     return {"server_settings": settings}
 
 
+def connect_or_operational_error(
+    dialect: Dialect,
+    _connection_record: Any,
+    cargs: list[Any],
+    cparams: dict[str, Any],
+) -> DBAPIConnection:
+    """
+    `do_connect` listener: a server that cannot be reached is an OperationalError.
+
+    asyncpg raises a bare OSError there (refused, unresolved host, connect
+    timeout), which SQLAlchemy lets through unwrapped. Past this point it could
+    not be told from a failed SMTP or HTTP call, so nothing else may turn an
+    OSError or a TimeoutError into a database outage.
+
+    It opens the connection itself, which ends the event: a listener that edits
+    `cparams` (a rotated password) must be registered before this one, with
+    `insert=True`, or it never runs.
+    """
+    try:
+        return dialect.connect(*cargs, **cparams)
+    except ssl.SSLCertVerificationError:
+        # An OSError too, but a misconfiguration: no later try succeeds.
+        raise
+    except OSError as error:
+        dbapi: Any = dialect.loaded_dbapi
+        raise dbapi.OperationalError(type(error).__name__) from error
+
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=config.postgres.DB_ECHO,
@@ -61,7 +93,9 @@ engine = create_async_engine(
 # Isolated pool for background-task workers. Defaults sum to 20 to match
 # --max-async-tasks 20 on the worker command (infra/docker-compose.yml):
 # even if every concurrent task grabs a session, nobody hits pool_timeout.
-# Migrations build their own engine (migrations/env.py) with no limits at all.
+# Migrations build their own engine (migrations/env.py) with no limits at all and
+# without the listener below: a command has no 503 to answer, and its operator
+# is served better by the original error.
 tasks_engine = create_async_engine(
     DATABASE_URL,
     echo=config.postgres.DB_ECHO,
@@ -77,3 +111,8 @@ tasks_engine = create_async_engine(
         ),
     ),
 )
+
+for application_engine in (engine, tasks_engine):
+    event.listen(
+        application_engine.sync_engine, "do_connect", connect_or_operational_error
+    )

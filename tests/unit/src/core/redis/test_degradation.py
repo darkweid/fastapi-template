@@ -2,6 +2,7 @@ from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
+from redis.exceptions import OutOfMemoryError
 
 from src.core.redis.degradation import RedisDegradationReporter
 
@@ -56,9 +57,12 @@ def test_recovery_reports_downtime_once(capture: MagicMock) -> None:
     reporter.report_recovered()
 
     assert capture.call_count == 2
-    message = capture.call_args.args[0]
-    assert "Redis recovered after 2 failure(s)" in message
-    assert "the first 65000ms ago, the last 60000ms ago" in message
+    assert capture.call_args.args[0] == "[Cache] Redis recovered"
+    assert capture.call_args.kwargs["contexts"]["redis_degradation"] == {
+        "failure_count": 2,
+        "first_failure_ms_ago": 65_000,
+        "last_failure_ms_ago": 60_000,
+    }
 
 
 def test_recovery_resets_the_cooldown(capture: MagicMock) -> None:
@@ -120,8 +124,21 @@ def test_degradation_report_names_the_cause(capture: MagicMock) -> None:
     # on-call engineer after the network instead of maxmemory.
     reporter = RedisDegradationReporter("Cache", clock=_clock([0]))
 
-    reporter.report_degraded(RuntimeError("OOM command not allowed"))
+    reporter.report_degraded(OutOfMemoryError("OOM command not allowed"))
 
-    message = capture.call_args.args[0]
-    assert "unavailable" not in message
-    assert "RuntimeError: OOM command not allowed" in message
+    assert "unavailable" not in capture.call_args.args[0]
+    assert capture.call_args.kwargs["tags"] == {
+        "redis.component": "Cache",
+        "redis.error": "OutOfMemoryError",
+    }
+
+
+def test_degradation_messages_are_constant_per_component(capture: MagicMock) -> None:
+    """State in the message splits one incident into many Sentry issues, and an
+    error's text can quote part of the Redis password."""
+    for error in (ConnectionError("redis://:hunter2@host"), TimeoutError("slow")):
+        RedisDegradationReporter("Cache", clock=_clock([0])).report_degraded(error)
+
+    messages = {call.args[0] for call in capture.call_args_list}
+    assert messages == {"[Cache] Redis is degraded"}
+    assert "hunter2" not in str(capture.call_args_list)

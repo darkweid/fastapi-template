@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
+from sentry_sdk.types import Event, Hint
+from sqlalchemy.exc import DBAPIError
 
 from src.main.config import config
 import src.main.sentry as sentry_module
@@ -115,12 +117,17 @@ def test_init_sentry_passes_the_privacy_options(
     )
 
     kwargs = init_mock.call_args.kwargs
-    assert kwargs["disabled_integrations"] == [disabled]
-    assert kwargs["before_send"] is before_send
+    [always, requested] = kwargs["disabled_integrations"]
+    assert isinstance(always, AioHttpIntegration)
+    assert requested is disabled
+    event: Event = {"message": "text"}
+    hint: Hint = {}
+    assert kwargs["before_send"](event, hint) is before_send.return_value
+    before_send.assert_called_once_with(event, hint)
     assert kwargs["before_send_transaction"] is before_send_transaction
 
 
-def test_init_sentry_disables_nothing_by_default(
+def test_init_sentry_disables_only_the_aiohttp_integration_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     init_mock = MagicMock()
@@ -133,6 +140,65 @@ def test_init_sentry_disables_nothing_by_default(
     sentry_module.init_sentry()
 
     kwargs = init_mock.call_args.kwargs
-    assert kwargs["disabled_integrations"] == []
-    assert kwargs["before_send"] is None
+    [disabled] = kwargs["disabled_integrations"]
+    assert isinstance(disabled, AioHttpIntegration)
+    event: Event = {"message": "text"}
+    assert kwargs["before_send"](event, {}) is event
     assert kwargs["before_send_transaction"] is None
+
+
+ECHOING = DBAPIError("SELECT 1", None, ValueError("secret@example.com"))
+
+
+def echoing_hint() -> Hint:
+    return {"exc_info": (DBAPIError, ECHOING, None)}
+
+
+def echoing_event() -> Event:
+    return {
+        "exception": {"values": [{"type": "DBAPIError", "value": str(ECHOING)}]},
+        "extra": {"scope": "kept"},
+    }
+
+
+def test_what_the_callers_hook_returns_is_scrubbed() -> None:
+    """The hook may put the text of the error back."""
+
+    def rewrite(_: Event, __: Hint) -> Event:
+        return echoing_event()
+
+    sent = sentry_module._scrubbing(rewrite)({}, echoing_hint())
+
+    assert sent is not None
+    assert "secret@example.com" not in str(sent)
+    assert sent["extra"] == {"scope": "kept"}
+
+
+def test_the_callers_hook_still_drops_an_event() -> None:
+    def drop(_: Event, __: Hint) -> None:
+        return None
+
+    assert sentry_module._scrubbing(drop)(echoing_event(), echoing_hint()) is None
+
+
+def test_the_callers_hook_is_given_the_original_error() -> None:
+    """A hook that drops events by exception class goes on doing it."""
+    hook = MagicMock(return_value=None)
+    hint = echoing_hint()
+
+    sentry_module._scrubbing(hook)(echoing_event(), hint)
+
+    assert hook.call_args.args[1]["exc_info"][1] is ECHOING
+
+
+def test_an_event_with_no_exception_part_of_its_own_gets_the_stand_in() -> None:
+    sent = sentry_module._scrubbing(None)({}, echoing_hint())
+
+    assert sent is not None
+    assert sent["exception"]["values"] == [
+        {
+            "type": "ScrubbedError",
+            "module": "src.core.errors.scrubbed",
+            "value": "DBAPIError driver=ValueError",
+        }
+    ]

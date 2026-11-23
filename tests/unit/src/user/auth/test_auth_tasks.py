@@ -1,9 +1,13 @@
+import traceback
 from typing import Any
 from unittest.mock import AsyncMock
 
+from aiosmtplib import SMTPRecipientRefused, SMTPRecipientsRefused
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from src.core.errors.scrubbed import ScrubbedError
+from src.user.auth import tasks as auth_tasks
 from src.user.auth.realm import (
     RESET_PASSWORD_PURPOSE,
     USER_AUTH_REALM,
@@ -15,6 +19,7 @@ from src.user.auth.tasks import (
 )
 from tests.fakes.email import MockMailer
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.logs import capture_logger
 from tests.helpers.providers import ProvideValue
 
 
@@ -310,7 +315,7 @@ async def test_a_challenge_stored_with_a_lost_reply_is_taken_back(
 
     with monkeypatch.context() as lossy:
         lossy.setattr(fake_redis, "set", lose_reply)
-        with pytest.raises(RedisConnectionError):
+        with pytest.raises(ScrubbedError, match="^ConnectionError$"):
             await task(EMAIL, "John Doe", retry=retry, redis_client=fake_redis)
     key = USER_AUTH_REALM.keys.one_time(purpose, EMAIL)
     assert await fake_redis.exists(key) == 0
@@ -329,9 +334,32 @@ async def test_a_failed_store_takes_back_no_challenge_but_its_own(
         fake_redis, "set", AsyncMock(side_effect=RedisConnectionError("down"))
     )
 
-    with pytest.raises(RedisConnectionError):
+    with pytest.raises(ScrubbedError, match="^ConnectionError$"):
         await send_verification_email_task(
             EMAIL, "John Doe", retry=True, redis_client=fake_redis
         )
 
     assert await fake_redis.get(key) == "newer-jti"
+
+
+async def test_a_refused_recipient_stays_out_of_the_log_and_the_raised_error(
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mailer = MockMailer()
+    refused = SMTPRecipientsRefused([SMTPRecipientRefused(550, "unknown", EMAIL)])
+    monkeypatch.setattr(mailer, "send_template", AsyncMock(side_effect=refused))
+    monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mailer))
+
+    with (
+        capture_logger(caplog, auth_tasks.logger),
+        pytest.raises(ScrubbedError) as caught,
+    ):
+        await send_verification_email_task(
+            EMAIL, "John Doe", retry=False, redis_client=fake_redis
+        )
+
+    for text in (caplog.text, "".join(traceback.format_exception(caught.value))):
+        assert "SMTPRecipientsRefused" in text
+        assert EMAIL not in text

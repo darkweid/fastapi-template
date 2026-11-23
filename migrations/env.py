@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 import models  # noqa
 
 from src.core.database.base import Base
+from src.core.errors.describe import describe_error
 from src.main.config import config as app_config
 
 config: Config = context.config
@@ -22,7 +23,7 @@ def _get_postgres_dsn() -> str:
         dsn = app_config.postgres.dsn_async
         return dsn
     except Exception as e:
-        logger.error(f"An error occurred while getting DSN: {e}")
+        logger.error(f"An error occurred while getting DSN: {describe_error(e)}")
         raise
 
 

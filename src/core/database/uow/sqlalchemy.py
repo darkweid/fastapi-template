@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
+from src.core.errors.describe import scrub
 
 RepositoryInstance = TypeVar("RepositoryInstance", bound=BaseRepository[Any])
 
@@ -124,8 +125,8 @@ class SQLAlchemyUnitOfWork:
             # request. This is the one sanctioned exception swallow.
             try:
                 await hook()
-            except Exception:
-                logger.exception("After-commit hook failed")
+            except Exception as error:
+                logger.error("After-commit hook failed", exc_info=scrub(error))
 
     @property
     def completed(self) -> bool:

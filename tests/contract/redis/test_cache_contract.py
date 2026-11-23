@@ -283,7 +283,7 @@ async def test_cache_fails_open_when_redis_is_out_of_memory(
         await real_redis.config_set("maxmemory", original)
 
     sentry_capture.assert_called_once()
-    assert "OutOfMemoryError" in sentry_capture.call_args.args[0]
+    assert sentry_capture.call_args.kwargs["tags"]["redis.error"] == "OutOfMemoryError"
     assert sentry_capture.call_args.kwargs["level"] == "error"
 
 
@@ -317,7 +317,7 @@ async def test_a_sustained_out_of_memory_is_reported_once(
         assert await cache.get(key) is None
 
     sentry_capture.assert_called_once()
-    assert "OutOfMemoryError" in sentry_capture.call_args.args[0]
+    assert sentry_capture.call_args.kwargs["tags"]["redis.error"] == "OutOfMemoryError"
 
 
 async def test_a_value_misses_after_its_counter_is_evicted_and_a_sibling_writes(

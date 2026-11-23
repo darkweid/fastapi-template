@@ -65,7 +65,9 @@ the token is a credential, and a GET would copy it into access logs, proxy
 caches and the `Referer` header.
 
 `scripts/ops/check_env.py` (run by the deploy workflow) rejects a `PUBLIC_BASE_URL`
-pointing at localhost, so the example value cannot reach a deploy unnoticed.
+pointing at localhost, so the example value cannot reach a deploy unnoticed. It also
+rejects `TESTING=true`, `EMAIL_USE_TLS` and `EMAIL_STARTTLS` with the same value, and
+`S3_VERIFY_SSL=false` while S3 is enabled.
 
 Upgrading an existing fork: the email tasks no longer take `base_url` and the
 path as arguments, so any message already sitting in the outbox or the broker

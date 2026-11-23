@@ -5,6 +5,7 @@ from fastapi import Request, Response
 import redis.asyncio as aredis
 
 from loggers import get_logger
+from src.core.errors.describe import describe_error
 from src.core.errors.exceptions import TooManyRequestsException
 from src.core.limiter.script import lua_script
 from src.core.request_ip import get_client_ip
@@ -83,8 +84,10 @@ class FastAPILimiter:
         try:
             cls.lua_sha = await redis_client.script_load(cls.lua_script)
         except Exception as e:
-            logger.error(f"Failed to load Lua script: {e}")
-            raise RuntimeError(f"Failed to load Lua script: {e}") from e
+            logger.error(f"Failed to load Lua script: {describe_error(e)}")
+            raise RuntimeError(
+                f"Failed to load Lua script: {describe_error(e)}"
+            ) from None
 
         logger.info("Rate limiter started successfully.")
 

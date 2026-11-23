@@ -29,4 +29,4 @@ class Note(Base, UUID7IDMixin, TimestampMixin, SoftDeleteMixin):
     )
 
     def __repr__(self) -> str:
-        return f"<Note(id={self.id}, owner_id={self.owner_id}, title={self.title!r})>"
+        return f"<Note(id={self.id}, owner_id={self.owner_id})>"

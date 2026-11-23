@@ -60,10 +60,14 @@ class RedisDegradationReporter:
                 return
             self._last_report_ms = now_ms
 
+        # The message is constant per component, so each is one Sentry issue.
         sentry_sdk.capture_message(
-            f"[{self._component}] Redis is degraded. "
-            f"Error: {type(error).__name__}: {error}",
+            f"[{self._component}] Redis is degraded",
             level="error",
+            tags={
+                "redis.component": self._component,
+                "redis.error": type(error).__name__,
+            },
         )
 
     def report_recovered(self) -> None:
@@ -81,11 +85,17 @@ class RedisDegradationReporter:
             self._failure_count = 0
             self._last_report_ms = None
 
-        # Reported a quiet window after the last failure, so the message places
+        # Reported a quiet window after the last failure, so the event places
         # the incident relative to itself instead of to its own timestamp.
         sentry_sdk.capture_message(
-            f"[{self._component}] Redis recovered after {failure_count} failure(s): "
-            f"the first {now_ms - degraded_since_ms}ms ago, "
-            f"the last {now_ms - last_failure_ms}ms ago.",
+            f"[{self._component}] Redis recovered",
             level="info",
+            tags={"redis.component": self._component},
+            contexts={
+                "redis_degradation": {
+                    "failure_count": failure_count,
+                    "first_failure_ms_ago": now_ms - degraded_since_ms,
+                    "last_failure_ms_ago": now_ms - last_failure_ms,
+                }
+            },
         )

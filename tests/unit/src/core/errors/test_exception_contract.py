@@ -1,5 +1,6 @@
 import pytest
 
+from src.core.auth.errors import RefreshTokenReuseError
 from src.core.errors import exceptions as exc
 from src.core.errors.codes import ErrorCode
 
@@ -47,3 +48,21 @@ def test_sentry_capture_flag() -> None:
     assert exc.InfrastructureException.capture_to_sentry is True
     assert exc.ServiceUnavailableException.capture_to_sentry is False
     assert exc.CoreException.capture_to_sentry is False
+
+
+@pytest.mark.parametrize(
+    ("exception_class", "level"),
+    [
+        (exc.FilteringError, "debug"),
+        (exc.UnauthorizedException, "debug"),
+        (exc.AccessForbiddenException, "info"),
+        (exc.ServiceUnavailableException, "error"),
+        (RefreshTokenReuseError, "warning"),
+    ],
+)
+def test_a_user_mistake_is_not_logged_as_a_fault(
+    exception_class: type[exc.CoreException], level: str
+) -> None:
+    """A bad query or an expired token is the caller's doing; a replayed refresh
+    token is a security event and stays a warning."""
+    assert exception_class.log_level == level

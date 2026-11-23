@@ -58,7 +58,4 @@ class User(Base, UUID7IDMixin, TimestampMixin, SoftDeleteMixin):
         return f"{self.first_name} {self.last_name}"
 
     def __repr__(self) -> str:
-        return (
-            f"<User(id={self.id}, first_name={self.first_name!r}, "
-            f"email={self.email!r})>"
-        )
+        return f"<User(id={self.id})>"

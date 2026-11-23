@@ -1,9 +1,14 @@
 import sentry_sdk
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import (
+    DBAPIError,
+    SQLAlchemyError,
+    TimeoutError as PoolTimeoutError,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
+from src.core.errors.describe import is_database_outage, scrub
 from src.event_log.events import PublishedEvent
 from src.event_log.models import EventLog
 
@@ -21,7 +26,8 @@ class EventLogRepository(BaseRepository[EventLog]):
     default_order_by = "created_at"
 
     async def record(self, session: AsyncSession, published: PublishedEvent) -> None:
-        """Append one row, and never let that failure become the caller's.
+        """Append one row, and never let that failure become the caller's, short
+        of an unreachable database.
 
         Called by `ApplicationUnitOfWork.publish`, never by a use case: the
         journal is one reader of an event, and nothing else may hang on
@@ -53,9 +59,20 @@ class EventLogRepository(BaseRepository[EventLog]):
                     )
                 )
         except SQLAlchemyError as error:
+            # A lost connection or an unreachable database takes the caller's transaction with it: there
+            # is no action left to protect, and going on would end in a
+            # PendingRollbackError that hides the cause. 57P04 (the database was
+            # dropped) is no outage, yet its connection is gone too.
+            if isinstance(error, (DBAPIError, PoolTimeoutError)) and (
+                getattr(error, "connection_invalidated", False)
+                or is_database_outage(error)
+            ):
+                raise
             # Swallowed on purpose: an audit row is never worth failing the
             # action it describes. The SAVEPOINT is what keeps that possible -
             # its rollback undoes the failed INSERT and leaves the caller's own
             # work intact. Sentry is what keeps the failure visible.
-            logger.error("[EventLog] Failed to record %s", event.code, exc_info=error)
-            sentry_sdk.capture_exception(error)
+            # A driver error quotes the row, so only a scrubbed copy leaves.
+            failure = scrub(error)
+            logger.error("[EventLog] Failed to record %s", event.code, exc_info=failure)
+            sentry_sdk.capture_exception(failure)

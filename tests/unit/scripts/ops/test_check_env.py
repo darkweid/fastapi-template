@@ -844,3 +844,46 @@ def test_backup_endpoint_must_be_a_bare_host(value: str) -> None:
         ".env.backup: PGBACKREST_REPO1_S3_ENDPOINT must be a host without scheme "
         "or path (nbg1.your-objectstorage.com)"
     ]
+
+
+def test_the_test_mode_is_reported() -> None:
+    """TESTING swaps the broker for an in-memory one and turns Sentry off."""
+    actual = {**_deployable_env(), "TESTING": "true"}
+
+    assert collect_problems(EXAMPLE, actual) == [
+        "TESTING=true is not allowed outside local development"
+    ]
+
+
+@pytest.mark.parametrize("value", ["true", "off"])
+def test_one_way_of_securing_the_mail_connection_is_required(value: str) -> None:
+    """Both off mails in the clear; both on is a handshake no server accepts."""
+    actual = {**_deployable_env(), "EMAIL_USE_TLS": value, "EMAIL_STARTTLS": value}
+
+    assert collect_problems(EXAMPLE, actual) == [
+        "Exactly one of EMAIL_USE_TLS and EMAIL_STARTTLS must be true"
+    ]
+
+
+@pytest.mark.parametrize(("tls", "starttls"), [("true", "false"), ("False", "True")])
+def test_either_way_of_securing_the_mail_connection_is_allowed(
+    tls: str, starttls: str
+) -> None:
+    actual = {**_deployable_env(), "EMAIL_USE_TLS": tls, "EMAIL_STARTTLS": starttls}
+
+    assert collect_problems(EXAMPLE, actual) == []
+
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_unverified_s3_certificates_are_reported_while_s3_is_enabled(
+    enabled: str,
+) -> None:
+    actual = {**_deployable_env(), "S3_ENABLED": enabled, "S3_VERIFY_SSL": "false"}
+
+    problems = collect_problems(EXAMPLE, actual)
+
+    assert problems == (
+        ["S3_VERIFY_SSL=false is not allowed outside local development"]
+        if enabled == "true"
+        else []
+    )

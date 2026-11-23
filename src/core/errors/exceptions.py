@@ -65,13 +65,13 @@ class PayloadTooLargeException(CoreException):
 
 class FilteringError(CoreException):
     error_code = ErrorCode.INVALID_QUERY
-    log_level = "warning"
+    log_level = "debug"
 
 
 class UnauthorizedException(CoreException):
     status_code = 401
     error_code = ErrorCode.UNAUTHORIZED
-    log_level = "warning"
+    log_level = "debug"
 
     def __init__(
         self,
@@ -93,7 +93,6 @@ class UnauthorizedException(CoreException):
 class AccessForbiddenException(CoreException):
     status_code = 403
     error_code = ErrorCode.FORBIDDEN
-    log_level = "warning"
 
 
 class TooManyRequestsException(CoreException):

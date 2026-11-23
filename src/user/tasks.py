@@ -14,6 +14,7 @@ from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.cache.interface import Cache
 from src.core.cache.runtime import get_cache
 from src.core.database.uow import ApplicationUnitOfWork
+from src.core.errors.describe import describe_error
 from src.core.errors.scrubbed import scrubbed
 from src.core.utils.datetime_utils import get_utc_now
 from src.event_log.actor import Actor
@@ -83,7 +84,7 @@ async def cleanup_unverified_users(
             # forever; a swallowed exception is the allowed manual-capture case.
             # A driver error quotes the row it failed on, emails included.
             failure = scrubbed(
-                f"Unverified user cleanup batch failed: {type(error).__name__}", error
+                f"Unverified user cleanup batch failed: {describe_error(error)}", error
             )
             logger.error("Unverified user cleanup batch failed", exc_info=failure)
             sentry_sdk.capture_exception(failure)

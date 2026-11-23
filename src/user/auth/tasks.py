@@ -13,7 +13,8 @@ from src.core.email_service.schemas import (
     MailTemplateVerificationBody,
 )
 from src.core.email_service.service import EmailService
-from src.core.email_service.tasks import get_mailer
+from src.core.email_service.tasks import DELIVERY_ECHOING_ERRORS, get_mailer
+from src.core.errors.describe import reportable
 from src.core.utils.security import mask_email
 from src.core.utils.urls import build_public_url
 from src.main.config import config
@@ -87,7 +88,7 @@ async def _deliver_tokenized_email(
             purpose,
             mask_email(email),
         )
-    except Exception:
+    except Exception as error:
         if jti:
             with suppress(Exception):
                 await ActiveChallengeRegistry(USER_AUTH_REALM).retire(
@@ -96,10 +97,19 @@ async def _deliver_tokenized_email(
         if throttle_key and throttle_owner:
             with suppress(Exception):
                 await delete_if_value(throttle_key, throttle_owner, redis_client)
-        logger.exception(
-            "Failed to process %s email task for %s", purpose, mask_email(email)
+        # An SMTP error quotes the address and a Redis one its command, and taskiq
+        # logs whatever leaves the task, so a stand-in is raised, unchained; an error
+        # that echoes nothing is raised as it is.
+        failure = reportable(error, DELIVERY_ECHOING_ERRORS)
+        logger.error(
+            "Failed to process %s email task for %s",
+            purpose,
+            mask_email(email),
+            exc_info=failure,
         )
-        raise
+        if failure is error:
+            raise
+        raise failure from None
 
 
 @broker.task(task_name="send_verification_email", retry_on_error=True)

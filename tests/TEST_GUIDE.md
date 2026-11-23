@@ -119,7 +119,7 @@ Core fixtures live in `tests/conftest.py`.
 Also available:
 - `tests/fakes/` - in-memory/fake implementations
 - `tests/factories/` - test data factories
-- `tests/helpers/` - helpers for overrides, request building, limiter utilities, forced interleavings
+- `tests/helpers/` - helpers for overrides, request building, limiter utilities, log capture (`capture_logger`, since project loggers do not propagate to `caplog`), forced interleavings
   (`races.py`) and statement counting (`sql.py`)
 
 Current application test layout:

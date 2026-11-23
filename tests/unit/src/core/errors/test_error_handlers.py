@@ -5,6 +5,7 @@ from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 import pytest
+from redis.exceptions import RedisError
 import sentry_sdk
 
 import src.core.auth.errors  # noqa: F401 - register domain subclasses for the walk; every new domain errors module must be imported here the same way
@@ -89,6 +90,19 @@ def test_format_log_message_masks_sensitive_data() -> None:
     assert "note='safe'" in message
 
 
+@pytest.mark.parametrize(
+    "key",
+    ["refresh_token", "new_password", "client_secret", "X_API_KEY", "Authorization"],
+)
+def test_format_log_message_masks_a_secret_by_part_of_its_name(key: str) -> None:
+    message = handlers.format_log_message(
+        make_request(), "unauthorized", "refused", {key: "hunter2"}
+    )
+
+    assert f"{key}=***" in message
+    assert "hunter2" not in message
+
+
 def test_format_log_message_does_not_read_inbound_request_id_header() -> None:
     # A client-supplied X-Request-ID header must never be echoed into the
     # log message text; the id used comes from the contextvar via the
@@ -154,6 +168,23 @@ async def test_generic_handler_captures_sentry_only_when_declared(
 
     await handle_core_exception(make_request(), exc.ServiceUnavailableException("down"))
     assert len(captured) == 1
+
+
+async def test_generic_handler_reports_no_text_of_a_driver_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[BaseException] = []
+    monkeypatch.setattr(sentry_sdk, "capture_exception", captured.append)
+    error = exc.InfrastructureException("Broker is unavailable")
+    error.__cause__ = RedisError("unknown command 'SET secret@example.com'")
+
+    await handle_core_exception(make_request(), error)
+
+    [reported] = captured
+    assert str(reported) == (
+        "InfrastructureException: Broker is unavailable (from RedisError)"
+    )
+    assert reported.__cause__ is None
 
 
 async def test_request_validation_handler_shapes_errors_list() -> None:

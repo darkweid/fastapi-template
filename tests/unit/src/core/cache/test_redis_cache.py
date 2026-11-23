@@ -6,11 +6,12 @@ the enabled switch, decode-and-drop) is asserted for both implementations in
 test_cache_contract.py.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import redis.exceptions as redis_exc
 
+from src.core.cache import redis_cache
 from src.core.cache.interface import CacheKey
 from src.core.cache.keys import tag_version_key, value_key, version_key
 from src.core.cache.redis_cache import RedisCache
@@ -20,6 +21,7 @@ from src.core.redis.degradation import (
     RedisDegradationReporter,
 )
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.logs import capture_logger
 
 KEY = CacheKey(namespace="user:1", suffix="summary")
 TAGGED_KEY = CacheKey(namespace="user:1", suffix="summary", tags=("users", "roles"))
@@ -339,5 +341,26 @@ async def test_fake_out_of_memory_refuses_only_the_write(
     await cache.invalidate(KEY.namespace)
 
     assert sentry_capture.call_count == 1
-    assert "OutOfMemoryError" in sentry_capture.call_args.args[0]
+    assert sentry_capture.call_args.kwargs["tags"]["redis.error"] == "OutOfMemoryError"
     assert await cache.get(KEY) is None
+
+
+async def test_a_failed_operation_logs_no_command(
+    cache: RedisCache,
+    fake_redis: InMemoryRedis,
+    sentry_capture: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    refused = redis_exc.ConnectionError("redis://:hunter2@cache:6379")
+    for command in ("get", "mget", "set", "delete", "evalsha", "eval"):
+        monkeypatch.setattr(
+            fake_redis, command, AsyncMock(side_effect=refused), raising=False
+        )
+
+    with capture_logger(caplog, redis_cache.logger):
+        await cache.get(KEY)
+        await cache.invalidate(KEY.namespace)
+
+    assert caplog.text.count("ConnectionError") == 2
+    assert "hunter2" not in caplog.text

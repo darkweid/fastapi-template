@@ -5,6 +5,7 @@ import sentry_sdk
 
 from loggers import get_logger
 from src.core.auth.errors import RefreshTokenReuseError
+from src.core.errors.describe import describe_error
 from src.core.errors.scrubbed import scrubbed
 
 logger = get_logger(__name__)
@@ -34,7 +35,7 @@ async def report_refresh_reuse(
     except Exception as exc:
         # A driver error quotes the row it failed on.
         failure = scrubbed(
-            f"Refresh token reuse was not recorded: {type(exc).__name__}", exc
+            f"Refresh token reuse was not recorded: {describe_error(exc)}", exc
         )
         logger.error("Refresh token reuse was not recorded", exc_info=failure)
         sentry_sdk.capture_exception(failure)

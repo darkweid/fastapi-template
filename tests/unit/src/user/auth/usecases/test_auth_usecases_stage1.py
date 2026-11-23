@@ -24,6 +24,7 @@ from src.user.auth.schemas import (
     SendResetPasswordRequestModel,
 )
 from src.user.auth.services.email_notifier import ThrottleSlot
+from src.user.auth.usecases import register as register_module
 from src.user.auth.usecases.register import RegisterUseCase
 from src.user.auth.usecases.resend_verification import SendVerificationUseCase
 from src.user.auth.usecases.reset_password_confirm import ResetPasswordConfirmUseCase
@@ -39,6 +40,7 @@ from tests.factories.token_factory import (
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession, FakeUnitOfWork
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.logs import capture_logger
 
 
 class FakeUsersRepository:
@@ -969,3 +971,19 @@ async def test_verify_email_spends_the_token_with_no_transaction_open(
     )
 
     assert in_transaction == [False]
+
+
+async def test_register_logs_the_id_and_no_personal_data(
+    fake_session: FakeAsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    user = build_user()
+    uow = build_uow(fake_session, FakeUsersRepository(user=user))
+
+    with capture_logger(caplog, register_module.logger):
+        await RegisterUseCase(uow=uow, notifier=FakeEmailNotifier()).execute(
+            data=registration()
+        )
+
+    assert f"User {user.id} registered" in caplog.text
+    for value in ("john_doe", "john@example.com", "+1234567890"):
+        assert value not in caplog.text

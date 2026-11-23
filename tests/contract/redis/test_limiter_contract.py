@@ -117,7 +117,7 @@ async def test_a_sustained_out_of_memory_is_reported_once(
         await limiter_redis.config_set("maxmemory", original)
 
     capture.assert_called_once()
-    assert "OutOfMemoryError" in capture.call_args.args[0]
+    assert capture.call_args.kwargs["tags"]["redis.error"] == "OutOfMemoryError"
 
 
 async def test_a_refused_call_never_answers_zero(limiter_redis: Redis) -> None:
