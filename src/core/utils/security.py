@@ -60,6 +60,21 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+async def password_still_matches(
+    plain_password: str, verified_hash: str, stored_hash: str
+) -> bool:
+    """
+    Whether a password verified against `verified_hash` also matches the hash
+    the row holds now, read under its lock.
+
+    Equal hashes cost nothing. A different one is verified rather than refused:
+    a concurrent sign-in may have rehashed the same password.
+    """
+    if stored_hash == verified_hash:
+        return True
+    return await verify_password(plain_password, stored_hash)
+
+
 def generate_otp(length: int = 5) -> str:
     """Digits only, drawn from `secrets` - short enough to retype, so the
     throttle in front of every OTP flow is what makes it safe, not its entropy."""

@@ -76,6 +76,9 @@ async def ensure_admin(
     credentials = _AdminCredentialsModel(email=email, password=password)
     normalized_email = credentials.email
 
+    # Hashed even when the account turns out to exist: this keeps Argon2 out of
+    # the transaction.
+    password_hash = await hash_password(password)
     async with uow:
         existing_user = await uow.users.get_single(uow.session, email=normalized_email)
         if existing_user:
@@ -91,7 +94,6 @@ async def ensure_admin(
             )
             return
 
-        password_hash = await hash_password(password)
         await uow.users.create(
             uow.session,
             {

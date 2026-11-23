@@ -42,7 +42,7 @@ The window has a cost: a thief who replays inside it gets the same pair as the o
 - Algorithm: **Argon2** (OWASP-recommended, memory-hard), via `argon2-cffi` directly.
 - Parameters: 64 MB memory, 3 iterations, 2 threads.
 - Hashing and verification run off the event loop on a dedicated bounded executor (4 workers), capping concurrent Argon2 memory under request bursts.
-- `needs_password_rehash()` detects outdated hash parameters; `_rehash_password_if_needed()` in the login flow transparently upgrades hashes on successful authentication.
+- `needs_password_rehash()` detects outdated hash parameters; `LoginUserUseCase._rehash_if_needed()` upgrades the hash on a successful sign-in. Hashing runs outside the transaction, and the new hash is written only over the one that was verified.
 
 **Why it matters:** Argon2's memory-hardness makes GPU/ASIC brute-force impractical. Auto-rehash ensures that strengthening parameters takes effect without requiring users to reset passwords.
 

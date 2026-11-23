@@ -10,6 +10,7 @@ from src.core.auth.errors import InvalidCredentialsError
 from src.core.auth.token_helpers import invalidate_all_sessions
 from src.core.cache.interface import Cache
 from src.core.cache.runtime import get_cache
+from src.core.database.detached import detached_read
 from src.core.database.session import get_unit_of_work
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.exceptions import (
@@ -18,7 +19,12 @@ from src.core.errors.exceptions import (
 )
 from src.core.redis.dependencies import get_redis_client
 from src.core.schemas import SuccessResponse
-from src.core.utils.security import hash_password, mask_email, verify_password
+from src.core.utils.security import (
+    hash_password,
+    mask_email,
+    password_still_matches,
+    verify_password,
+)
 from src.event_log.actor import Actor
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import UserNewPassword
@@ -57,27 +63,46 @@ class UpdateUserPasswordUseCase:
     async def execute(
         self, data: UserNewPassword, user_id: UUID, actor: Actor
     ) -> SuccessResponse:
-        async with self.uow as uow:
-            user = await uow.users.get_single(uow.session, id=user_id)
-            if not user:
-                logger.info("[UpdateUserPassword] User not found.")
-                raise InstanceNotFoundException("User not found.")
+        async with detached_read(self.uow.session) as read:
+            user = await self.uow.users.get_single(self.uow.session, id=user_id)
+            read.detach(user)
+        if not user:
+            logger.info("[UpdateUserPassword] User not found.")
+            raise InstanceNotFoundException("User not found.")
 
-            if not await verify_password(data.current_password, user.password_hash):
+        if not await verify_password(data.current_password, user.password_hash):
+            logger.debug(
+                "[UpdateUserPassword] Wrong current password for %s.",
+                mask_email(user.email),
+            )
+            raise InvalidCredentialsError("Current password is incorrect.")
+
+        if data.password == data.current_password:
+            # Not a no-op: going through with it would still sign every
+            # session out, so a mistyped form would look like a hijack.
+            raise InstanceProcessingException(
+                "New password must differ from the current one."
+            )
+
+        new_password_hash = await hash_password(data.password)
+        async with self.uow as uow:
+            locked_user = await uow.users.get_single(
+                uow.session, for_update=True, populate_existing=True, id=user_id
+            )
+            if not locked_user:
+                logger.info("[UpdateUserPassword] User deleted during the change.")
+                raise InstanceNotFoundException("User not found.")
+            # A reset that committed since the check above must not be undone
+            # by someone who only knows the password it replaced.
+            if not await password_still_matches(
+                data.current_password, user.password_hash, locked_user.password_hash
+            ):
                 logger.debug(
-                    "[UpdateUserPassword] Wrong current password for %s.",
-                    mask_email(user.email),
+                    "[UpdateUserPassword] Password of %s changed concurrently.",
+                    mask_email(locked_user.email),
                 )
                 raise InvalidCredentialsError("Current password is incorrect.")
 
-            if data.password == data.current_password:
-                # Not a no-op: going through with it would still sign every
-                # session out, so a mistyped form would look like a hijack.
-                raise InstanceProcessingException(
-                    "New password must differ from the current one."
-                )
-
-            new_password_hash = await hash_password(data.password)
             update_data = {"password_hash": new_password_hash}
             updated_user = await uow.users.update(uow.session, update_data, id=user_id)
             if not updated_user:
