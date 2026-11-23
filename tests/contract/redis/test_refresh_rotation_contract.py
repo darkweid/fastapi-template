@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 from src.core.auth.errors import RefreshTokenReuseError
 from src.core.auth.jwt_payload_schema import JWTPayload
 from src.core.auth.session_issuance import issue_session_pair
+from src.core.auth.token_helpers import invalidate_session
 import src.core.auth.tokens as tokens
 from src.core.auth.tokens import rotate_session_tokens
 from src.core.errors.exceptions import UnauthorizedException
@@ -303,3 +304,18 @@ async def test_one_of_several_reuses_names_the_session_it_ended(
     assert all(isinstance(result, UnauthorizedException) for result in results)
     named = [r for r in results if isinstance(r, RefreshTokenReuseError)]
     assert [error.session_id for error in named] == [old["session_id"]]
+
+
+async def test_one_session_is_ended_once_and_leaves_the_index(
+    redis_backend: Redis,
+) -> None:
+    subject_id = str(uuid4())
+    ended = (await _login(redis_backend, subject_id))["session_id"]
+    kept = (await _login(redis_backend, subject_id))["session_id"]
+
+    assert await invalidate_session(subject_id, ended, redis_backend, keys=KEYS)
+    assert not await invalidate_session(subject_id, ended, redis_backend, keys=KEYS)
+
+    assert await redis_backend.exists(*_session_keys(subject_id, ended)) == 0
+    assert await redis_backend.exists(KEYS.refresh(subject_id, kept)) == 1
+    assert await redis_backend.zrange(KEYS.sessions(subject_id), 0, -1) == [kept]

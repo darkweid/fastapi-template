@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import jwt
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from src.core.auth.credentials import verify_jti
 from src.core.auth.jwt_payload_schema import JWTPayload
@@ -519,6 +520,23 @@ async def test_invalidate_session_removes_only_target_session(
     assert await fake_redis.exists(access_jti_key("1", "s2")) == 1
     assert await fake_redis.exists(refresh_jti_key("1", "s2")) == 1
     assert await fake_redis.zrange(AUTH_KEYS.sessions("1"), 0, -1) == ["s2"]
+
+
+async def test_a_session_whose_invalidation_failed_is_still_there_to_end(
+    fake_redis: InMemoryRedis,
+) -> None:
+    """The call that answers True is the only one that records a reuse, so one
+    that raises must leave the keys for the next."""
+    await fake_redis.set(refresh_jti_key("1", "s1"), "x", ex=60)
+    await fake_redis.zadd(AUTH_KEYS.sessions("1"), {"s1": FROZEN_NOW + 60})
+    fake_redis.fail_next_commands()
+
+    with pytest.raises(RedisConnectionError):
+        await token_helpers.invalidate_session("1", "s1", fake_redis, keys=AUTH_KEYS)
+
+    assert await fake_redis.exists(refresh_jti_key("1", "s1")) == 1
+    assert await fake_redis.zrange(AUTH_KEYS.sessions("1"), 0, -1) == ["s1"]
+    assert await token_helpers.invalidate_session("1", "s1", fake_redis, keys=AUTH_KEYS)
 
 
 @pytest.mark.asyncio

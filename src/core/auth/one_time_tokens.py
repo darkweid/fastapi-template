@@ -1,3 +1,4 @@
+from contextlib import suppress
 from typing import Any, NamedTuple
 
 from redis.asyncio import Redis
@@ -38,6 +39,10 @@ async def issue_one_time_token(
 
     With `only_if_absent` a live challenge is kept and ChallengeAlreadyLiveError
     raised: a repeated attempt must not retire what a newer request issued.
+
+    A store that fails is taken back by its jti before the error leaves: Redis
+    may have applied it and lost the reply. With Redis still unreachable the
+    challenge stays live until its TTL, behind a token nobody holds.
     """
     token, jti = await issue_token(
         sub=identifier,
@@ -49,14 +54,21 @@ async def issue_one_time_token(
         extra_data={**(extra_data or {}), IDENTIFIER_CLAIM: identifier},
     )
 
-    if not await ActiveChallengeRegistry(realm).store(
-        purpose,
-        identifier,
-        jti,
-        ttl_minutes * 60,
-        redis_client,
-        only_if_absent=only_if_absent,
-    ):
+    registry = ActiveChallengeRegistry(realm)
+    try:
+        stored = await registry.store(
+            purpose,
+            identifier,
+            jti,
+            ttl_minutes * 60,
+            redis_client,
+            only_if_absent=only_if_absent,
+        )
+    except Exception:
+        with suppress(Exception):
+            await registry.retire(purpose, identifier, jti, redis_client)
+        raise
+    if not stored:
         raise ChallengeAlreadyLiveError("A newer token is already live.")
     return IssuedOneTimeToken(token, jti)
 

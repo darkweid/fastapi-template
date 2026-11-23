@@ -27,10 +27,11 @@ from src.note.schemas import NoteUpdateModel
 from src.note.usecases.delete_note import DeleteNoteUseCase
 from src.note.usecases.update_note import UpdateNoteUseCase
 from src.user.models import User
+from src.user.repositories import UserRepository
 from src.user.schemas import UserProfileUpdateModel
 from src.user.usecases.update_profile import UpdateUserProfileUseCase
 from tests.factories.user_factory import build_user
-from tests.helpers.races import wait_for_lock_wait
+from tests.helpers.races import WAIT_SECONDS, wait_for_lock_wait
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -102,7 +103,7 @@ async def race(integration_engine: AsyncEngine) -> AsyncGenerator[Race]:
     async with AsyncSession(integration_engine) as session:
         ids = [note.id, owner.id]
         await session.execute(delete(EventLog).where(EventLog.object_id.in_(ids)))
-        await session.execute(delete(Note).where(Note.id == note.id))
+        await session.execute(delete(Note).where(Note.owner_id == owner.id))
         await session.execute(delete(User).where(User.id.in_([owner.id, heir.id])))
         await session.commit()
 
@@ -227,3 +228,35 @@ async def test_a_repository_delete_deletes_nothing_its_filters_no_longer_match(
     stored = await race.stored(Note)
     assert stored is not None
     assert stored.is_deleted is False
+
+
+@pytest.mark.parametrize("write", ["update", "soft-delete"])
+async def test_transactions_that_inserted_children_can_both_write_the_parent(
+    race: Race, write: str
+) -> None:
+    """Each insert holds KEY SHARE on the owner. A lock stronger than the write
+    needs waits for the other transaction's, and the two deadlock."""
+    users = UserRepository()
+    both_inserted = asyncio.Barrier(2)
+
+    async def transaction(name: str) -> User | None:
+        async with race.sessions() as session, session.begin():
+            session.add(Note(title=name, content="", owner_id=race.owner.id))
+            await session.flush()
+            await both_inserted.wait()
+            if write == "update":
+                return await users.update(
+                    session, {"first_name": name}, id=race.owner.id
+                )
+            return await users.delete(session, id=race.owner.id)
+
+    async with asyncio.timeout(WAIT_SECONDS):
+        results = await asyncio.gather(transaction("first"), transaction("second"))
+
+    # The second soft delete waits, then finds no active row.
+    assert results.count(None) == (0 if write == "update" else 1)
+    async with race.sessions() as session:
+        titles = await session.scalars(
+            select(Note.title).where(Note.owner_id == race.owner.id)
+        )
+        assert sorted(titles) == ["Old", "first", "second"]

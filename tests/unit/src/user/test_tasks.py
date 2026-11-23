@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from src.core.auth.challenges import ActiveChallengeRegistry
 from src.core.cache.memory_cache import InMemoryCache
@@ -177,6 +178,23 @@ async def test_cleanup_ends_when_the_ids_cannot_be_read(
     assert await run() == "Deleted 0 unverified users."
 
     users.lock_unverified_ids.assert_awaited_once()
+    run.captured.assert_called_once()
+
+
+async def test_a_redis_outage_ends_the_cleanup_and_is_reported_once(
+    monkeypatch: pytest.MonkeyPatch, fake_redis: InMemoryRedis, cache: InMemoryCache
+) -> None:
+    """Every further batch would fail the same way, one Sentry event each."""
+    users = FakeUsersRepository(_ids(1), _ids(1))
+    run = CleanupRun(monkeypatch, users, fake_redis, cache)
+    monkeypatch.setattr(
+        fake_redis, "delete", AsyncMock(side_effect=RedisConnectionError("down"))
+    )
+
+    assert await run() == "Deleted 0 unverified users."
+
+    users.lock_unverified_ids.assert_awaited_once()
+    run.units[0].rollback.assert_awaited_once()
     run.captured.assert_called_once()
 
 

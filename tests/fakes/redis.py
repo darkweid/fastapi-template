@@ -50,6 +50,38 @@ async def _round_trip() -> None:
     await asyncio.sleep(0)
 
 
+class InMemoryTransaction:
+    """MULTI/EXEC: queues commands, then applies all of them or none."""
+
+    def __init__(self, redis: InMemoryRedis) -> None:
+        self._redis = redis
+        self._commands: list[Callable[[], Any]] = []
+
+    async def __aenter__(self) -> InMemoryTransaction:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        self._commands = []
+
+    def delete(self, *keys: str | bytes) -> InMemoryTransaction:
+        self._commands.append(
+            lambda: sum(self._redis._drop(_normalize_key(key)) for key in keys)
+        )
+        return self
+
+    def zrem(self, key: str | bytes, *members: str | bytes) -> InMemoryTransaction:
+        self._commands.append(lambda: self._redis._zrem(key, *members))
+        return self
+
+    async def execute(self) -> list[Any]:
+        await _round_trip()
+        if self._redis._failures > 0:
+            self._redis._failures -= 1
+            raise self._redis._failure_error
+        commands, self._commands = self._commands, []
+        return [command() for command in commands]
+
+
 class InMemoryRedis:
     def __init__(self) -> None:
         # Wall clock behind TIME/time(): tests pin it to a fixed value so the
@@ -214,6 +246,9 @@ class InMemoryRedis:
         return added
 
     async def zrem(self, key: str | bytes, *members: str | bytes) -> int:
+        return self._zrem(key, *members)
+
+    def _zrem(self, key: str | bytes, *members: str | bytes) -> int:
         key_norm = _normalize_key(key)
         self._purge_expired(key_norm)
         target = self._zsets.get(key_norm)
@@ -229,6 +264,11 @@ class InMemoryRedis:
             self._zsets.pop(key_norm, None)
             self._expires.pop(key_norm, None)
         return removed
+
+    def pipeline(self, transaction: bool = True) -> InMemoryTransaction:
+        if not transaction:
+            raise NotImplementedError("Only MULTI/EXEC is supported in fake Redis.")
+        return InMemoryTransaction(self)
 
     async def zrange(self, key: str | bytes, start: int, end: int) -> list[str]:
         key_norm = _normalize_key(key)

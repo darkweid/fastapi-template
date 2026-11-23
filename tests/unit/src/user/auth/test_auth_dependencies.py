@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
@@ -44,7 +45,7 @@ from src.user.auth.dependencies import (
 )
 from src.user.auth.errors import UserBlockedError, UserNotVerifiedError
 from src.user.auth.realm import USER_AUTH_REALM
-from src.user.auth.usecases.record_refresh_reuse import record_refresh_reuse
+from src.user.auth.refresh_reuse import record_refresh_reuse
 from src.user.auth.usecases.refresh_access import get_refresh_access_use_case
 from src.user.models import User
 from src.user.repositories import UserRepository
@@ -56,6 +57,7 @@ from tests.factories.token_factory import (
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeAsyncSession, FakeSessionFactory, FakeUnitOfWork
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.races import WAIT_SECONDS
 from tests.helpers.requests import build_request
 
 # Pinned wall clock for grace-window math; the fake's key expiry runs on
@@ -682,6 +684,28 @@ async def test_a_failed_reuse_record_keeps_the_401_and_is_reported_without_its_r
     assert "RuntimeError" in str(reported) and "a@example.com" not in str(reported)
 
 
+async def test_a_hanging_reuse_record_is_cut_off_and_reported(
+    fake_redis: InMemoryRedis, limiter_redis: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, token = await _rotated_refresh_token(
+        fake_redis, marker="used", live_refresh_jti="successor"
+    )
+    capture = Mock()
+    monkeypatch.setattr("src.core.auth.reuse.sentry_sdk.capture_exception", capture)
+    monkeypatch.setattr("src.core.auth.reuse.REUSE_CALLBACK_TIMEOUT_SECONDS", 0)
+
+    async def hang(*_: object) -> None:
+        await asyncio.Event().wait()
+
+    async with asyncio.timeout(WAIT_SECONDS):
+        with pytest.raises(RefreshTokenReuseError):
+            await _realm_auth(on_refresh_reuse=hang).principal_id_from_refresh_token(
+                build_request(headers={"Authorization": token})
+            )
+
+    assert "TimeoutError" in str(capture.call_args.args[0])
+
+
 async def test_rotation_reports_its_own_reuse(
     fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -713,7 +737,7 @@ async def test_the_user_realm_records_reuse_from_its_limiter(
     fake_redis: InMemoryRedis, limiter_redis: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sessions = FakeSessionFactory()
-    recorder = "src.user.auth.usecases.record_refresh_reuse"
+    recorder = "src.user.auth.refresh_reuse"
     uow = FakeUnitOfWork()
     monkeypatch.setattr(f"{recorder}.async_session", sessions)
     monkeypatch.setattr(f"{recorder}.ApplicationUnitOfWork", Mock(return_value=uow))

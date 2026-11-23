@@ -20,13 +20,10 @@ from src.core.auth.errors import RefreshTokenReuseError
 from src.core.cache.memory_cache import InMemoryCache
 from src.core.database.uow import ApplicationUnitOfWork
 from src.event_log.models import EventLog
+from src.user.auth import refresh_reuse
 from src.user.auth.realm import USER_AUTH_REALM
 from src.user.auth.schemas import ResetPasswordModel
-from src.user.auth.usecases import (
-    record_refresh_reuse,
-    reset_password_confirm,
-    verify_email,
-)
+from src.user.auth.usecases import reset_password_confirm, verify_email
 from src.user.models import User
 from tests.factories.user_factory import build_user
 from tests.fakes.redis import InMemoryRedis
@@ -129,9 +126,9 @@ async def test_a_recorded_reuse_is_committed_on_a_session_of_its_own(
     link: Link, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The request that detected it answers 401 and commits nothing itself."""
-    monkeypatch.setattr(record_refresh_reuse, "async_session", link.sessions)
+    monkeypatch.setattr(refresh_reuse, "async_session", link.sessions)
 
-    await record_refresh_reuse.record_refresh_reuse(
+    await refresh_reuse.record_refresh_reuse(
         RefreshTokenReuseError(
             "reuse", subject_id=str(link.user_id), session_id="session"
         ),

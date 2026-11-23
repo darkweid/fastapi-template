@@ -24,6 +24,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 # Own rows sit at the end of the id range, past anything another test left.
 BEFORE_OWN_IDS = UUID(int=2**128 - 100)
+KEPT_IDS = [UUID(int=BEFORE_OWN_IDS.int + number) for number in (4, 5, 6)]
 
 Sessions = async_sessionmaker[AsyncSession]
 
@@ -51,8 +52,8 @@ async def stale(sessions: Sessions) -> AsyncGenerator[list[UUID]]:
         _user(created_at=func.now()),
         _user(is_deleted=True, deleted_at=func.now()),
     ]
-    for number, user in enumerate(kept, start=4):
-        user.id = UUID(int=BEFORE_OWN_IDS.int + number)
+    for user_id, user in zip(KEPT_IDS, kept, strict=True):
+        user.id = user_id
     async with sessions() as session:
         session.add_all([*expired, *kept])
         await session.commit()
@@ -95,20 +96,21 @@ async def test_a_row_someone_holds_is_skipped(
             assert await _lock(session) == [stale[0], stale[2]]
 
 
-async def test_a_user_verified_after_the_read_is_not_deleted(
+async def test_only_a_listed_user_that_is_still_stale_is_deleted(
     sessions: Sessions, stale: list[UUID]
 ) -> None:
+    """A user may verify between the read of the ids and the delete."""
     async with sessions() as session:
         await session.execute(
             update(User).where(User.id == stale[0]).values(is_verified=True)
         )
         deleted = await UserRepository().soft_delete_unverified(
             session,
-            stale,
+            [*stale[:2], *KEPT_IDS],
             created_before=get_utc_now() - tasks.UNVERIFIED_USER_MAX_AGE,
         )
 
-    assert sorted(user.id for user in deleted) == stale[1:]
+    assert sorted(user.id for user in deleted) == [stale[1]]
 
 
 async def test_the_task_deletes_every_batch_and_records_each_user(

@@ -67,13 +67,20 @@ async def invalidate_session(
 
     False when no key was left: something else had already ended it. Of several
     concurrent calls one answers True.
+
+    Both go in one transaction: a call that raises between them would have ended
+    the session without answering True, and the next call answers False. A
+    reply lost after Redis applied the transaction still does that; a reuse
+    detected there goes unrecorded.
     """
-    deleted = await redis_client.delete(
-        keys.access(subject_id, session_id),
-        keys.refresh(subject_id, session_id),
-        keys.latest_access(subject_id, session_id),
-    )
-    await redis_client.zrem(keys.sessions(subject_id), session_id)
+    async with redis_client.pipeline(transaction=True) as pipe:
+        pipe.delete(
+            keys.access(subject_id, session_id),
+            keys.refresh(subject_id, session_id),
+            keys.latest_access(subject_id, session_id),
+        )
+        pipe.zrem(keys.sessions(subject_id), session_id)
+        deleted, _ = await pipe.execute()
     return bool(deleted)
 
 

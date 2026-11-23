@@ -30,10 +30,10 @@ class VerifyEmailUseCase:
 
     An invalid, expired or superseded token, an email naming no user and a
     blocked account answer success=False instead of raising - the endpoint must
-    not confirm who has an account. A second click on an already used link lands there too:
-    decoding consumes the challenge, so the link no longer decodes. The
-    already-verified branch covers the other case - a token still live for an
-    account that got verified some other way - and answers success for it.
+    not confirm who has an account. A second click on an already used link lands
+    there too: decoding consumes the challenge, so the link no longer decodes.
+    The already-verified branch covers the other case - a token still live for
+    an account that got verified some other way - and answers success for it.
 
     The token is spent before the transaction runs, which is what stops two
     concurrent clicks from both proceeding; a failed commit therefore burns the

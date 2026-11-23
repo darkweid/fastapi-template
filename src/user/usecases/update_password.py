@@ -48,8 +48,10 @@ class UpdateUserPasswordUseCase:
     - Deletes every session key of the user before the commit rather than
       after: with Redis unavailable the change then fails as a whole, instead
       of leaving a new password alongside sessions holding the old one.
-    - Retires the account's live reset link the same way: one requested before
-      the change, by whoever could read that mailbox, must not undo it.
+    - Retires the reset link live at that moment the same way: whoever could
+      read that mailbox must not undo the change with it. A reset mail still
+      queued issues its link later, and a confirm already past its link check
+      runs on; neither is stopped here.
     - Bumps the user:{id} cache namespace version twice, pre- and post-commit.
     """
 

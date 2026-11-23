@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 from taskiq import TaskiqDepends
@@ -49,7 +50,8 @@ async def cleanup_unverified_users(
 
     Works in batches, one transaction each, in ascending id order. A batch that
     fails is reported and passed over: the next run takes its users again. A
-    batch whose ids could not even be read ends the run.
+    batch whose ids could not even be read ends the run, and so does a Redis
+    error, which every later batch would meet too.
 
     Side effects:
     - Retires the account's verification and reset challenges before the
@@ -85,9 +87,12 @@ async def cleanup_unverified_users(
             )
             logger.error("Unverified user cleanup batch failed", exc_info=failure)
             sentry_sdk.capture_exception(failure)
+            if isinstance(error, RedisError):
+                break
         if not batch:
-            return f"Deleted {deleted_count} unverified users."
+            break
         last_id = batch[-1]
+    return f"Deleted {deleted_count} unverified users."
 
 
 async def _delete_batch(

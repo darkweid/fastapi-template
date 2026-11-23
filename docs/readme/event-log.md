@@ -86,7 +86,7 @@ pending in that transaction, so the commit carries only the audit row.
 A reused refresh token is found where no use case runs - the rate limiter's
 identifier, the auth dependency - so the user realm records
 `user.refresh_reuse_detected` from its `on_refresh_reuse` callback
-(`src/user/auth/usecases/record_refresh_reuse.py`), in a session and unit of
+(`src/user/auth/refresh_reuse.py`), in a session and unit of
 work of its own. The session has ended by then, so a failure to record is
 reported to Sentry and never replaces the 401.
 

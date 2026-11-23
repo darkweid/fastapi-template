@@ -25,9 +25,9 @@ class SendVerificationUseCase:
 
     Answers success whether or not anything was sent: an unknown address, an
     already verified one and a blocked account must look identical from outside,
-    or the endpoint confirms who has an account. The notifier's throttle key is released when
-    the transaction fails to commit, so a failed attempt does not lock the
-    address out of a retry.
+    or the endpoint confirms who has an account. The notifier's throttle key is
+    released when the transaction fails to commit, so a failed attempt does not
+    lock the address out of a retry.
     """
 
     def __init__(

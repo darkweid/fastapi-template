@@ -71,7 +71,7 @@ Follow `src/user/auth/` as the worked example throughout.
    once a reused refresh token has ended its session. A realm that records
    nothing leaves it out; one that records passes the same function here and to
    `RefreshAccessUseCase`, since either may detect the reuse. It opens its own
-   database session (`src/user/auth/usecases/record_refresh_reuse.py`).
+   database session (`src/user/auth/refresh_reuse.py`).
    This file stays short, like the user realm's, whose only addition to the
    aliases is its `get_user_actor` helper.
 

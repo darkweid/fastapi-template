@@ -2,6 +2,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from src.user.auth.realm import (
     RESET_PASSWORD_PURPOSE,
@@ -287,3 +288,50 @@ async def test_a_failed_send_takes_back_only_what_it_holds(
 
     assert await fake_redis.get(key) == "newer-jti"
     assert await fake_redis.get("throttle:key") == "newer-owner"
+
+
+@pytest.mark.parametrize(("task", "purpose"), TASKS)
+@pytest.mark.parametrize("retry", [False, True])
+async def test_a_challenge_stored_with_a_lost_reply_is_taken_back(
+    task: Any,
+    purpose: str,
+    retry: bool,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry would take it for the link of a newer send and mail nothing."""
+    mailer = MockMailer()
+    monkeypatch.setattr("src.user.auth.tasks.get_mailer", ProvideValue(mailer))
+    store = fake_redis.set
+
+    async def lose_reply(*args: Any, **kwargs: Any) -> bool:
+        await store(*args, **kwargs)
+        raise RedisConnectionError("reply lost")
+
+    with monkeypatch.context() as lossy:
+        lossy.setattr(fake_redis, "set", lose_reply)
+        with pytest.raises(RedisConnectionError):
+            await task(EMAIL, "John Doe", retry=retry, redis_client=fake_redis)
+    key = USER_AUTH_REALM.keys.one_time(purpose, EMAIL)
+    assert await fake_redis.exists(key) == 0
+
+    await task(EMAIL, "John Doe", retry=True, redis_client=fake_redis)
+
+    assert len(mailer.sent_template_emails) == 1
+
+
+async def test_a_failed_store_takes_back_no_challenge_but_its_own(
+    fake_redis: InMemoryRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = USER_AUTH_REALM.keys.one_time(VERIFICATION_PURPOSE, EMAIL)
+    await fake_redis.set(key, "newer-jti", ex=600)
+    monkeypatch.setattr(
+        fake_redis, "set", AsyncMock(side_effect=RedisConnectionError("down"))
+    )
+
+    with pytest.raises(RedisConnectionError):
+        await send_verification_email_task(
+            EMAIL, "John Doe", retry=True, redis_client=fake_redis
+        )
+
+    assert await fake_redis.get(key) == "newer-jti"

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import sentry_sdk
@@ -13,6 +14,10 @@ logger = get_logger(__name__)
 # rate limiter that usually detects the reuse has none.
 RefreshReuseCallback = Callable[[RefreshTokenReuseError, str | None], Awaitable[None]]
 
+# The callback runs inside the request it belongs to, which must get its 401
+# even while the database hangs.
+REUSE_CALLBACK_TIMEOUT_SECONDS = 5
+
 
 async def report_refresh_reuse(
     callback: RefreshReuseCallback | None,
@@ -24,7 +29,8 @@ async def report_refresh_reuse(
     if callback is None:
         return
     try:
-        await callback(error, ip)
+        async with asyncio.timeout(REUSE_CALLBACK_TIMEOUT_SECONDS):
+            await callback(error, ip)
     except Exception as exc:
         # A driver error quotes the row it failed on.
         failure = scrubbed(

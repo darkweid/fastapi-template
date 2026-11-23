@@ -51,6 +51,7 @@ async def _deliver_tokenized_email(
     sends nothing for the same reason - the newer link reaches the same mailbox.
     One exception: if the failed run could not retire its own challenge (Redis
     unreachable), the retry stops at that one and the user asks for a new link.
+    The retry cannot tell the two apart, hence the warning.
 
     Token creation happens inside the cleanup scope on purpose: if it fails
     (for example a transient Redis error), the throttle key must be released
@@ -81,7 +82,11 @@ async def _deliver_tokenized_email(
             template_body=template_body.model_copy(update={"link": link}),
         )
     except ChallengeAlreadyLiveError:
-        logger.info("Skipped a retried %s email: a challenge is live", purpose)
+        logger.warning(
+            "Skipped a retried %s email for %s: a challenge is live",
+            purpose,
+            mask_email(email),
+        )
     except Exception:
         if jti:
             with suppress(Exception):

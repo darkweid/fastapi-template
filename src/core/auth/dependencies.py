@@ -297,7 +297,9 @@ def build_realm_auth(
         The token is only decoded and checked against the session registry, not
         resolved to a principal: the endpoint's own auth dependency does that
         afterwards, and a limiter that queried the database would hand an
-        unauthenticated caller a way to make one.
+        unauthenticated caller a way to make one. The exception is a reused
+        refresh token presented here: recording the reuse may reach the
+        database, at most once per live session.
         """
         token = request.headers.get("Authorization")
         if not token:
