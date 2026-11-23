@@ -17,8 +17,7 @@ from taskiq.receiver import Receiver
 from taskiq.result import TaskiqResult
 
 from loggers import get_logger
-from src.core.redis.core import create_redis_client
-from src.main.config import config
+from taskiq_worker.dependencies import get_marker_redis_singleton
 
 logger = get_logger(__name__)
 
@@ -70,7 +69,7 @@ class IdempotencyReceiver(Receiver):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._marker_client = create_redis_client(config.redis.tasks_dsn)
+        self._marker_client = get_marker_redis_singleton()
 
     async def run_task(
         self,

@@ -328,15 +328,22 @@ there is no `KEYS`/`SCAN` call and no set of members to enumerate. An entry answ
 to its namespace (`cache.invalidate(namespace)`) and to every tag its key declares
 (`cache.invalidate_tags("users")`); each is one counter, so a tag flush costs one
 key deletion no matter how many entries carry the tag. A read that finds a counter
-missing is a miss, and the next write starts a new generation from the Redis
-server clock, so a deleted or evicted counter never readdresses a stored value.
+missing is a miss. Before the value is computed the miss reserves the generation of
+every counter, starting the missing ones from the Redis server clock, so a deleted
+or evicted counter never readdresses a stored value. The write stores the value only
+while every counter still holds its reserved generation, so a value computed across
+an invalidation is returned to its caller and never stored. A miss therefore costs
+three round trips: read, reserve, write. When the reservation fails, the value is
+computed and not stored. `get_or_set`, `@cached` and `@cached_route` do this; other
+code calls `reserve` before it reads and `set_reserved` after.
 
 **Fail-open, and what it costs:** a lost connection, a timeout or an `OOM` refusal
 from a full Redis is swallowed — so a Redis outage degrades the API instead of
 breaking it. An unreachable Redis turns reads into misses and drops writes and
 counter deletions; a full one refuses only the writes, so hits keep serving and
 invalidation keeps working. The outage is reported once per cooldown, and the
-recovery only at a successful write, since under `OOM` a read proves nothing,
+recovery only at a stored value, since under `OOM` a read proves nothing and a
+reservation of existing counters only reads,
 and only after a minute without a failure, so a Redis at the edge of `maxmemory`
 that refuses a write more often than once a minute stays one incident. Everything
 else Redis can raise (a
@@ -418,7 +425,7 @@ another" once a shared cache sits on the request path.
 - Redis Streams delivery is at-least-once: a worker XACKs a message only after the task finishes, so a worker crash between sending the email and acking can redeliver the task and duplicate the send — an accepted trade-off, not a defect.
 - `infra/redis.conf` enables AOF (`appendfsync everysec`) alongside the RDB snapshots, since this Redis now also holds the task stream: an RDB-only setup can lose queued jobs written since the last snapshot on a crash.
 - `taskiq_worker/broker.py`'s `STREAM_MAXLEN` bounds stream growth (acked entries are never otherwise removed), sized well above any realistic backlog for this workload — `XADD MAXLEN` trims oldest-first regardless of ack state, so a cap sized too close to real traffic could discard unacknowledged work.
-- PII lifecycle: task payloads (email addresses, etc.) persist in the Redis stream until `STREAM_MAXLEN` trims them and live on disk in the AOF/RDB volume until then. Outbox rows keep the same task args in Postgres for 7 days (`outbox_purge`, `src/core/outbox/tasks.py`). Worker-side dedup keys (`taskiq:done:{task_id}`, 1-hour TTL, and the running claim `taskiq:running:{task_id}`, held while the task runs) carry no payload.
+- PII lifecycle: task payloads (email addresses, etc.) persist in the Redis stream until `STREAM_MAXLEN` trims them and live on disk in the AOF/RDB volume until then. Outbox rows keep the same task args in Postgres for 7 days after publishing, and for 30 days once they are `FAILED` (`outbox_purge`, `src/core/outbox/tasks.py`). Worker-side dedup keys (`taskiq:done:{task_id}`, 1-hour TTL, and the running claim `taskiq:running:{task_id}`, held while the task runs) carry no payload.
 - `send_email_with_s3_attachments_task` (`src/core/email_service/tasks.py`) carries S3 object keys, never file bytes or local paths — the attachment content itself never touches the Redis stream or the outbox row, only the key string does. The task deletes the objects only after a confirmed send and only when called with `cleanup=True`, so a retry can re-download and re-send the same keys; a task picked up after S3 was disabled fails with `InfrastructureException` instead of silently dropping the attachment.
 
 **Why it matters:** taskiq serializes task arguments onto the Redis stream. Passing tokens or sensitive objects through it expands the attack surface. Creating tokens inside the task keeps sensitive material within the application boundary.

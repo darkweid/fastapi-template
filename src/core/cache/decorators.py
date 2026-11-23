@@ -176,15 +176,20 @@ def cached_route(
                 # can guarantee it is there: a key_builder that took the identity
                 # and ignored it would serve one caller's private body to every
                 # other caller, with a matching ETag, and nothing would raise.
-                key = CacheKey(key.namespace, f"{key.suffix}:{identity_id}")
+                key = CacheKey(
+                    key.namespace, f"{key.suffix}:{identity_id}", tags=key.tags
+                )
 
             raw = await cache.get_raw(key)
             cache_status = "HIT"
             if raw is None:
                 cache_status = "MISS"
+                # Taken before the endpoint reads, so an invalidation while it runs
+                # keeps the body it computed out of the cache.
+                reservation = await cache.reserve(key)
                 result = await func(*args, **kwargs)
                 raw = _serializer.dumps(result)
-                await cache.set_raw(key, raw, ttl=ttl)
+                await cache.set_reserved(key, raw, reservation, ttl=ttl)
 
             etag = _build_etag(raw)
             headers = {

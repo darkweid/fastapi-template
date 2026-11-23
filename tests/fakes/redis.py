@@ -18,6 +18,7 @@ from src.core.cache.redis_scripts import (
     CACHE_DELETE_SCRIPT,
     CACHE_GET_SCRIPT,
     CACHE_INVALIDATE_SCRIPT,
+    CACHE_RESERVE_SCRIPT,
     CACHE_SET_SCRIPT,
 )
 from taskiq_worker.receiver import RELEASE_CLAIM_SCRIPT, RENEW_CLAIM_SCRIPT
@@ -88,8 +89,8 @@ class InMemoryRedis:
         # refresh grace-window math never races the real clock. Key expiry
         # stays on time.monotonic() and is unaffected by reassigning this.
         self.wall_clock: Callable[[], float] = time.time
-        # Last generation a cache write started. The wall clock is often pinned in
-        # tests, and two writes reading the same pinned TIME would reuse a
+        # Last generation a cache reservation started. The wall clock is often pinned
+        # in tests, and two reservations reading the same pinned TIME would reuse a
         # generation real Redis - whose clock moves between scripts - never does.
         self._last_cache_generation = 0
         self._store: dict[str, str] = {}
@@ -106,9 +107,10 @@ class InMemoryRedis:
         self._failures = 0
         self._failure_error: Exception = redis_exc.ConnectionError("fake redis down")
         # A full instance under noeviction. Real Redis refuses only commands that
-        # may grow memory, so only the cache write script is refused: reads, DEL
-        # and EXPIRE keep working, and a fake refusing them too would hide code
-        # that treats a successful read as proof the instance recovered.
+        # may grow memory, so only the SETs of the cache reserve and set scripts
+        # are refused: reads, DEL and EXPIRE keep working, and a fake refusing them
+        # too would hide code that treats a successful read as proof the instance
+        # recovered.
         self.out_of_memory = False
 
     def set_evalsha_result(self, key: str, result: int) -> None:
@@ -394,6 +396,8 @@ class InMemoryRedis:
         args = keys_and_args[numkeys:]
         if normalized == CACHE_GET_SCRIPT.strip():
             return self._eval_cache_get(counters, *args)
+        if normalized == CACHE_RESERVE_SCRIPT.strip():
+            return self._eval_cache_reserve(counters, *args)
         if normalized == CACHE_SET_SCRIPT.strip():
             return self._eval_cache_set(counters, *args)
         if normalized == CACHE_DELETE_SCRIPT.strip():
@@ -438,22 +442,37 @@ class InMemoryRedis:
         )
         return self._read(key)
 
-    def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
-        self.cache_eval_calls += 1
+    def _refuse_write_when_full(self) -> None:
         if self.out_of_memory:
             raise redis_exc.OutOfMemoryError(
                 "command not allowed when used memory > 'maxmemory'."
             )
+
+    def _eval_cache_reserve(self, counters: list[str], *args: Any) -> list[str]:
+        self.cache_eval_calls += 1
         generation = self._next_cache_generation()
         versions: list[str] = []
         for counter in counters:
-            version = self._read(counter) or generation
-            self._write(counter, version, ttl_seconds=int(args[4]))
+            version = self._read(counter)
+            if version is None:
+                self._refuse_write_when_full()
+                version = generation
+                self._write(counter, version, ttl_seconds=int(args[0]))
             versions.append(version)
+        return versions
+
+    def _eval_cache_set(self, counters: list[str], *args: Any) -> int:
+        self.cache_eval_calls += 1
+        reserved = [_normalize_value(version) for version in args[5:]]
+        if self._cache_versions(counters) != reserved:
+            return 0
+        self._refuse_write_when_full()
         key = self._cache_value_key(
-            versions, _normalize_value(args[0]), _normalize_value(args[1])
+            reserved, _normalize_value(args[0]), _normalize_value(args[1])
         )
         self._write(key, _normalize_value(args[2]), ttl_seconds=int(args[3]))
+        for counter in counters:
+            self._expire(counter, int(args[4]))
         return 1
 
     def _eval_cache_delete(self, counters: list[str], *args: Any) -> int:

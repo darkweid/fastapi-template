@@ -3,13 +3,20 @@ from unittest.mock import AsyncMock
 
 from pydantic import SecretStr
 import pytest
+from taskiq import InMemoryBroker
 
 from src.main.config import config
 from src.user.auth.realm import USER_AUTH_REALM, VERIFICATION_PURPOSE
 from src.user.auth.tasks import send_verification_email_task
 from taskiq_worker.broker import broker
 import taskiq_worker.dependencies as tasks_dependencies
-from taskiq_worker.dependencies import close_tasks_redis_client, get_tasks_redis_client
+from taskiq_worker.dependencies import (
+    close_marker_redis_client,
+    close_tasks_redis_client,
+    get_marker_redis_singleton,
+    get_tasks_redis_client,
+)
+from taskiq_worker.receiver import IdempotencyReceiver
 from tests.fakes.email import MockMailer
 from tests.fakes.redis import InMemoryRedis
 from tests.helpers.providers import ProvideAsyncValue, ProvideValue
@@ -20,9 +27,11 @@ def _reset_tasks_redis_singleton() -> Generator[None]:
     """The worker Redis client is a module-level singleton; tests must not leak it."""
     tasks_dependencies._tasks_redis_client = None
     tasks_dependencies._cache_redis_client = None
+    tasks_dependencies._marker_redis_client = None
     yield
     tasks_dependencies._tasks_redis_client = None
     tasks_dependencies._cache_redis_client = None
+    tasks_dependencies._marker_redis_client = None
 
 
 @pytest.fixture
@@ -184,3 +193,29 @@ async def test_a_message_resent_by_the_retry_middleware_is_known_as_a_retry(
     await kicker.kiq("user@example.com", "John Doe")
 
     assert len(mailer.sent_template_emails) == sent
+
+
+async def test_receivers_share_a_client_that_the_shutdown_close_drops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The receiver is built by the CLI, so a client only it refers to has nobody
+    to close it."""
+    clients: list[InMemoryRedis] = []
+
+    def build(dsn: str) -> InMemoryRedis:
+        assert dsn == config.redis.tasks_dsn
+        clients.append(InMemoryRedis())
+        return clients[-1]
+
+    monkeypatch.setattr(tasks_dependencies, "create_redis_client", build)
+    first, second = (
+        IdempotencyReceiver(broker=InMemoryBroker(), run_startup=False)
+        for _ in range(2)
+    )
+    assert first._marker_client is second._marker_client is clients[0]  # noqa: SLF001
+
+    await close_marker_redis_client()
+    await close_marker_redis_client()
+
+    assert clients[0].closed
+    assert get_marker_redis_singleton() is clients[1]

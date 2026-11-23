@@ -123,6 +123,65 @@ async def _client(app: FastAPI) -> httpx2.AsyncClient:
     )
 
 
+async def test_a_body_computed_across_an_invalidation_is_not_stored(
+    runtime_cache: InMemoryCache,
+) -> None:
+    """The endpoint read the old row, the write committed and invalidated, and the
+    endpoint then finished: its body must reach its caller and nobody else."""
+    app = FastAPI()
+    names = iter(["stale", "fresh"])
+
+    @app.get("/users/{user_id}", response_model=Summary)
+    @cached_route(key_builder=route_key, ttl=60, scope=CacheScope.PUBLIC)
+    async def read_user(user_id: str, request: Request, response: Response) -> Summary:
+        name = next(names)
+        if name == "stale":
+            await runtime_cache.invalidate(f"user:{user_id}")
+        return Summary(name=name)
+
+    async with await _client(app) as client:
+        first = await client.get("/users/1")
+        second = await client.get("/users/1")
+
+    assert first.json() == {"name": "stale"}
+    assert second.headers["X-Cache-Status"] == "MISS"
+    assert second.json() == {"name": "fresh"}
+
+
+async def test_a_private_entry_dies_with_the_tag_of_its_key(
+    runtime_cache: InMemoryCache,
+) -> None:
+    """A private entry dropping the tags would survive the bulk invalidation the
+    public one answers to."""
+    app = FastAPI()
+    counter: list[int] = []
+
+    def tagged_key(request: Request) -> CacheKey:
+        return CacheKey(namespace="user:1", suffix="summary", tags=("users",))
+
+    @app.get("/me", response_model=Summary)
+    @cached_route(
+        key_builder=tagged_key,
+        ttl=60,
+        scope=CacheScope.PRIVATE,
+        identity=constant_identity,
+    )
+    async def read_me(request: Request, response: Response) -> Summary:
+        counter.append(1)
+        return Summary(name="ada")
+
+    headers = {"X-Test-User": "alice"}
+    async with await _client(app) as client:
+        await client.get("/me", headers=headers)
+        hit = await client.get("/me", headers=headers)
+        await runtime_cache.invalidate_tags("users")
+        after = await client.get("/me", headers=headers)
+
+    assert hit.headers["X-Cache-Status"] == "HIT"
+    assert after.headers["X-Cache-Status"] == "MISS"
+    assert len(counter) == 2
+
+
 async def test_miss_then_hit() -> None:
     counter: list[int] = []
     async with await _client(build_app(counter)) as client:

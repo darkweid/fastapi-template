@@ -7,6 +7,9 @@ from typing import Protocol
 
 from starlette.datastructures import UploadFile
 
+# Held in memory one at a time, per upload in flight.
+DEFAULT_MULTIPART_PART_SIZE_BYTES = 8 * 1024 * 1024
+
 
 @dataclass(frozen=True, slots=True)
 class StoredObject:
@@ -38,7 +41,8 @@ class S3ClientProtocol(Protocol):
         file: UploadFile,
         *,
         bucket: str | None = None,
-        part_size_bytes: int = 8 * 1024 * 1024,
+        max_size_bytes: int,
+        part_size_bytes: int = DEFAULT_MULTIPART_PART_SIZE_BYTES,
         content_type: str | None = None,
         cache_control: str | None = None,
     ) -> None: ...

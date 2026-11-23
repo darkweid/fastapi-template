@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from itertools import count
 
 from src.core.cache.base import BaseCache
-from src.core.cache.interface import CacheKey, Serializer
+from src.core.cache.interface import CacheKey, CacheReservation, Serializer
 from src.core.cache.keys import value_key
 from src.core.utils.datetime_utils import get_utc_now
 
@@ -20,8 +20,9 @@ class InMemoryCache(BaseCache):
     """
     Process-local cache with the same version-counter semantics as RedisCache.
 
-    A missing counter is a miss, a write materializes every counter it needs with
-    a generation never handed out before, and invalidation deletes counters. The
+    A missing counter is a miss, a reservation starts every missing counter with a
+    generation never handed out before, a write lands only while each counter still
+    holds its reserved generation, and invalidation deletes counters. The
     process never evicts a counter, but keeping the rules identical is what lets
     the shared cache contract run against both implementations.
     """
@@ -72,13 +73,23 @@ class InMemoryCache(BaseCache):
             return None
         return entry.raw
 
-    async def _write_raw(self, key: CacheKey, raw: str, ttl: int) -> None:
+    async def _reserve_counters(
+        self, counters: Sequence[str]
+    ) -> CacheReservation | None:
         generation = str(next(self._generations))
-        for counter in self._counter_keys(key):
-            self._versions.setdefault(counter, generation)
-        current_key = self._current_key(key)
-        if current_key is None:
+        return tuple(
+            self._versions.setdefault(counter, generation) for counter in counters
+        )
+
+    async def _write_raw(
+        self, key: CacheKey, raw: str, ttl: int, reservation: CacheReservation
+    ) -> None:
+        current = tuple(self._versions.get(name) for name in self._counter_keys(key))
+        if current != reservation:
             return
+        current_key = value_key(
+            self._prefix, key.namespace, ".".join(reservation), key.suffix
+        )
         self._entries[current_key] = _Entry(
             raw=raw,
             expires_at=get_utc_now() + timedelta(seconds=ttl),

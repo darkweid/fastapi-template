@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, update
@@ -70,11 +70,37 @@ class OutboxRepository(BaseRepository[OutboxMessage]):
             update(self.model).where(self.model.id == message_id).values(**values)
         )
 
-    async def purge_published(self, session: AsyncSession, cutoff: datetime) -> int:
+    async def purge(
+        self,
+        session: AsyncSession,
+        status: Literal[OutboxMessageStatus.PUBLISHED, OutboxMessageStatus.FAILED],
+        cutoff: datetime,
+        *,
+        limit: int,
+    ) -> int:
+        """
+        Delete at most `limit` rows that reached `status` before `cutoff`, skipping
+        rows another transaction holds.
+        """
+        # A row has no failure time of its own: `updated_at` is when it failed,
+        # because nothing writes a FAILED row again.
+        reached_at = {
+            OutboxMessageStatus.PUBLISHED: self.model.published_at,
+            OutboxMessageStatus.FAILED: self.model.updated_at,
+        }[status]
+        # MATERIALIZED: inlined, the planner may run the LIMIT subquery more than
+        # once and delete more than `limit` rows.
+        batch = (
+            select(self.model.id)
+            .where(self.model.status == status, reached_at < cutoff)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+            .cte("batch")
+            .prefix_with("MATERIALIZED", dialect="postgresql")
+        )
         result = await session.execute(
-            delete(self.model).where(
-                self.model.status == OutboxMessageStatus.PUBLISHED,
-                self.model.published_at < cutoff,
-            )
+            delete(self.model)
+            .where(self.model.id.in_(select(batch.c.id)))
+            .execution_options(synchronize_session=False)
         )
         return int(result.rowcount) if hasattr(result, "rowcount") else 0

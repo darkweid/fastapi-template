@@ -5,7 +5,7 @@ from typing import Any, TypeVar, cast
 from pydantic import ValidationError
 
 from loggers import get_logger
-from src.core.cache.interface import CacheKey, Serializer
+from src.core.cache.interface import CacheKey, CacheReservation, Serializer
 from src.core.cache.keys import tag_version_key, version_key
 
 logger = get_logger(__name__)
@@ -17,8 +17,8 @@ class BaseCache(ABC):
     """
     Semantics shared by every Cache implementation.
 
-    Subclasses supply storage only - reading, writing, dropping a key and retiring
-    version counters. TTL validation, the `enabled` switch, serialization, key
+    Subclasses supply storage only - reading, writing, dropping a key, reserving and
+    retiring version counters. TTL validation, the `enabled` switch, serialization, key
     composition and the decode-and-drop rule live here, so the in-memory
     implementation the tests run against cannot drift from the Redis one that
     serves production traffic.
@@ -89,10 +89,27 @@ class BaseCache(ABC):
         return await self._read_raw(key)
 
     async def set_raw(self, key: CacheKey, raw: str, *, ttl: int | None = None) -> None:
-        resolved_ttl = self._resolve_ttl(ttl)
+        # A bad ttl must raise before the reservation creates counters.
+        self._resolve_ttl(ttl)
+        await self.set_reserved(key, raw, await self.reserve(key), ttl=ttl)
+
+    async def reserve(self, key: CacheKey) -> CacheReservation | None:
         if not self._enabled:
+            return None
+        return await self._reserve_counters(self._counter_keys(key))
+
+    async def set_reserved(
+        self,
+        key: CacheKey,
+        raw: str,
+        reservation: CacheReservation | None,
+        *,
+        ttl: int | None = None,
+    ) -> None:
+        resolved_ttl = self._resolve_ttl(ttl)
+        if reservation is None:
             return
-        await self._write_raw(key, raw, resolved_ttl)
+        await self._write_raw(key, raw, resolved_ttl, reservation)
 
     async def delete(self, key: CacheKey) -> None:
         if not self._enabled:
@@ -129,15 +146,25 @@ class BaseCache(ABC):
             # get() is typed Any because JsonSerializer.loads is untyped without a
             # model; get_or_set's own contract guarantees the stored value is T.
             return cast(T, cached)
+        reservation = await self.reserve(key)
         value = await factory()
-        await self.set(key, value, ttl=ttl)
+        await self.set_reserved(
+            key, self._serializer.dumps(value), reservation, ttl=ttl
+        )
         return value
 
     @abstractmethod
     async def _read_raw(self, key: CacheKey) -> str | None: ...
 
     @abstractmethod
-    async def _write_raw(self, key: CacheKey, raw: str, ttl: int) -> None: ...
+    async def _reserve_counters(
+        self, counters: Sequence[str]
+    ) -> CacheReservation | None: ...
+
+    @abstractmethod
+    async def _write_raw(
+        self, key: CacheKey, raw: str, ttl: int, reservation: CacheReservation
+    ) -> None: ...
 
     @abstractmethod
     async def _drop(self, key: CacheKey) -> None: ...

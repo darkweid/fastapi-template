@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+import inspect
 import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -19,11 +21,20 @@ from src.core.errors.exceptions import (
     InstanceProcessingException,
     PayloadTooLargeException,
 )
+from src.core.storage.s3 import adapter as adapter_module
 from src.core.storage.s3.adapter import (
     MAX_MULTIPART_PARTS,
     S3Adapter,
 )
-from src.core.storage.s3.interface import StoredObject
+from src.core.storage.s3.interface import (
+    DEFAULT_MULTIPART_PART_SIZE_BYTES,
+    S3ClientProtocol,
+    StoredObject,
+)
+from tests.fakes.s3 import InMemoryS3Client
+from tests.helpers.logs import capture_logger
+
+NO_LIMIT = 2**40
 
 
 class FakeClientCM:
@@ -265,7 +276,11 @@ async def test_upload_large_uploadfile_stores_cache_control(
 
     async with adapter:
         await adapter.upload_large_uploadfile(
-            "key-large", upload, part_size_bytes=5, cache_control="no-cache"
+            "key-large",
+            upload,
+            max_size_bytes=NO_LIMIT,
+            part_size_bytes=5,
+            cache_control="no-cache",
         )
 
     create_kwargs = client.create_multipart_upload.await_args.kwargs
@@ -538,7 +553,11 @@ async def test_upload_large_uploadfile_multipart(
 
     async with adapter:
         await adapter.upload_large_uploadfile(
-            "key-large", upload, part_size_bytes=5, content_type="text/plain"
+            "key-large",
+            upload,
+            max_size_bytes=NO_LIMIT,
+            part_size_bytes=5,
+            content_type="text/plain",
         )
 
     client.create_multipart_upload.assert_awaited_once()
@@ -574,7 +593,9 @@ async def test_upload_large_uploadfile_autoadjusts_part_size(
     upload.read = AsyncMock(side_effect=[b"x", b""])
 
     async with adapter:
-        await adapter.upload_large_uploadfile("key-large", upload, part_size_bytes=5)
+        await adapter.upload_large_uploadfile(
+            "key-large", upload, max_size_bytes=NO_LIMIT, part_size_bytes=5
+        )
 
     assert upload.read.call_args_list[0].args[0] == 6 * 1024 * 1024
 
@@ -620,7 +641,7 @@ async def test_upload_large_uploadfile_rejects_too_many_parts(
     async with adapter:
         with pytest.raises(PayloadTooLargeException):
             await adapter.upload_large_uploadfile(
-                "key-large", upload, part_size_bytes=5
+                "key-large", upload, max_size_bytes=NO_LIMIT, part_size_bytes=5
             )
 
 
@@ -658,7 +679,7 @@ async def test_upload_large_uploadfile_aborts_on_error(
     async with adapter:
         with pytest.raises(RuntimeError):
             await adapter.upload_large_uploadfile(
-                "key-large", upload, part_size_bytes=5
+                "key-large", upload, max_size_bytes=NO_LIMIT, part_size_bytes=5
             )
 
     client.abort_multipart_upload.assert_awaited_once()
@@ -689,7 +710,7 @@ async def test_upload_large_uploadfile_requires_min_part_size(
     async with adapter:
         with pytest.raises(InfrastructureException):
             await adapter.upload_large_uploadfile(
-                "key-large", upload, part_size_bytes=1
+                "key-large", upload, max_size_bytes=NO_LIMIT, part_size_bytes=1
             )
 
 
@@ -721,10 +742,209 @@ async def test_upload_large_uploadfile_empty_stream_raises_infrastructure(
     async with adapter:
         with pytest.raises(InfrastructureException):
             await adapter.upload_large_uploadfile(
-                "key-large", upload, part_size_bytes=5
+                "key-large", upload, max_size_bytes=NO_LIMIT, part_size_bytes=5
             )
 
     client.abort_multipart_upload.assert_awaited_once()
+
+
+@pytest.fixture
+def multipart(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[S3Adapter, AsyncMock, FakeClientCM]:
+    """The adapter with five-byte parts and an upload already created."""
+    adapter, client, cm = s3_mocks
+    monkeypatch.setattr(adapter_module, "MIN_MULTIPART_PART_SIZE_BYTES", 5)
+    monkeypatch.setattr(
+        S3Adapter, "_round_up_to_megabyte", lambda self, size_bytes: size_bytes
+    )
+    client.create_multipart_upload.return_value = {"UploadId": "u1"}
+    client.upload_part.return_value = {"ETag": "e1"}
+    return adapter, client, cm
+
+
+def _upload(data: bytes) -> UploadFile:
+    return UploadFile(filename="file.txt", file=io.BytesIO(data))
+
+
+async def _cancel_during_a_part(
+    adapter: S3Adapter, client: AsyncMock
+) -> asyncio.Task[None]:
+    """A multipart upload cancelled while its first part is on the wire."""
+    sending = asyncio.Event()
+
+    async def hang(**_: object) -> None:
+        sending.set()
+        await asyncio.Event().wait()
+
+    client.upload_part.side_effect = hang
+    task = asyncio.create_task(
+        adapter.upload_large_uploadfile(
+            "key-large", _upload(b"012345"), max_size_bytes=NO_LIMIT, part_size_bytes=5
+        )
+    )
+    await asyncio.wait_for(sending.wait(), timeout=10)
+    task.cancel()
+    return task
+
+
+async def test_a_cancelled_multipart_upload_is_aborted(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """A client that disconnects mid-upload cancels the request; parts left behind
+    are billed until somebody finds them."""
+    adapter, client, _ = multipart
+
+    async with adapter:
+        task = await _cancel_during_a_part(adapter, client)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    client.abort_multipart_upload.assert_awaited_once_with(
+        Bucket="default-bucket", Key="key-large", UploadId="u1"
+    )
+
+
+async def test_a_repeated_cancellation_does_not_stop_the_abort(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """A cancel scope cancels again at every await, so the abort must survive its
+    caller, and the client must not close under it."""
+    adapter, client, cm = multipart
+    aborting, proceed = asyncio.Event(), asyncio.Event()
+    finished: list[bool] = []
+
+    async def slow_abort(**_: object) -> None:
+        aborting.set()
+        await proceed.wait()
+        finished.append(not cm.exited)
+
+    client.abort_multipart_upload.side_effect = slow_abort
+    async with adapter:
+        task = await _cancel_during_a_part(adapter, client)
+        await asyncio.wait_for(aborting.wait(), timeout=10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert finished == []
+        asyncio.get_running_loop().call_soon(proceed.set)
+
+    assert finished == [True]
+    assert cm.exited
+
+
+async def test_a_failed_abort_does_not_replace_the_upload_error(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    adapter, client, _ = multipart
+    client.upload_part.side_effect = RuntimeError("part refused")
+    client.abort_multipart_upload.side_effect = ConnectionError("abort refused")
+
+    with capture_logger(caplog, adapter_module.logger):
+        async with adapter:
+            with pytest.raises(RuntimeError, match="part refused") as caught:
+                await adapter.upload_large_uploadfile(
+                    "key-large",
+                    _upload(b"012345"),
+                    max_size_bytes=NO_LIMIT,
+                    part_size_bytes=5,
+                )
+
+    assert caught.value.__context__ is None
+    assert "u1 not aborted" in caplog.text
+
+
+async def test_a_declared_size_over_the_limit_creates_no_upload(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = multipart
+    upload = _upload(b"0")
+    upload.size = 12
+
+    async with adapter:
+        with pytest.raises(PayloadTooLargeException):
+            await adapter.upload_large_uploadfile(
+                "key-large", upload, max_size_bytes=11, part_size_bytes=5
+            )
+
+    client.create_multipart_upload.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("limit", "parts_sent"), [(4, 0), (11, 2)], ids=["first part", "later part"]
+)
+async def test_a_body_larger_than_it_declared_is_refused_while_streaming(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM], limit: int, parts_sent: int
+) -> None:
+    """The declared size comes from the client, so it cannot be the only check."""
+    adapter, client, _ = multipart
+    upload = _upload(b"0123456789AB")
+    upload.size = 1
+
+    async with adapter:
+        with pytest.raises(PayloadTooLargeException):
+            await adapter.upload_large_uploadfile(
+                "key-large", upload, max_size_bytes=limit, part_size_bytes=5
+            )
+
+    assert client.upload_part.await_count == parts_sent
+    client.abort_multipart_upload.assert_awaited_once()
+    client.complete_multipart_upload.assert_not_awaited()
+
+
+async def test_a_body_of_exactly_the_limit_is_stored(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = multipart
+
+    async with adapter:
+        await adapter.upload_large_uploadfile(
+            "key-large", _upload(b"0123456789A"), max_size_bytes=11, part_size_bytes=5
+        )
+
+    client.complete_multipart_upload.assert_awaited_once()
+
+
+@pytest.mark.parametrize("client_type", [S3ClientProtocol, S3Adapter, InMemoryS3Client])
+def test_every_client_splits_by_the_same_part_size(client_type: type) -> None:
+    parameters = inspect.signature(client_type.upload_large_uploadfile).parameters
+
+    assert parameters["part_size_bytes"].default == DEFAULT_MULTIPART_PART_SIZE_BYTES
+
+
+async def test_a_client_that_fails_to_close_does_not_fail_the_finished_work(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A task whose send already went out would be retried and send again."""
+    adapter, client, _ = s3_mocks
+    monkeypatch.setattr(FakeClientCM, "__aexit__", _refuse)
+
+    with capture_logger(caplog, adapter_module.logger):
+        async with adapter:
+            await adapter.upload_bytes("key", b"data")
+
+    client.put_object.assert_awaited_once()
+    assert "client failed to close" in caplog.text
+
+
+async def test_a_client_that_fails_to_close_keeps_the_error_of_the_block(
+    s3_mocks: tuple[S3Adapter, AsyncMock, FakeClientCM],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, _, _ = s3_mocks
+    monkeypatch.setattr(FakeClientCM, "__aexit__", _refuse)
+
+    with pytest.raises(ValueError, match="block"):
+        async with adapter:
+            raise ValueError("block")
+
+
+async def _refuse(*_: object) -> None:
+    raise ConnectionError("pool refused to close")
 
 
 @pytest.mark.asyncio

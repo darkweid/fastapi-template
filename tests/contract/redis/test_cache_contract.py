@@ -1,4 +1,5 @@
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 
@@ -318,6 +319,134 @@ async def test_a_sustained_out_of_memory_is_reported_once(
 
     sentry_capture.assert_called_once()
     assert sentry_capture.call_args.kwargs["tags"]["redis.error"] == "OutOfMemoryError"
+
+
+RACE_KEY = CacheKey("users", "1", tags=("profile", "team"))
+RACE_COUNTERS = (
+    version_key(PREFIX, "users"),
+    tag_version_key(PREFIX, "profile"),
+    tag_version_key(PREFIX, "team"),
+)
+
+
+async def _stored_values(client: Redis) -> list[str]:
+    """A value under retired generations is out of every read's reach, so only the
+    keyspace shows that it was written and holds memory until its ttl."""
+    if isinstance(client, InMemoryRedis):
+        keys = client.keys_snapshot()
+    else:
+        keys = [key async for key in client.scan_iter()]
+    return [key for key in keys if key.startswith(f"{PREFIX}:users:v")]
+
+
+async def test_a_reservation_returns_the_generations_it_started(
+    redis_backend: Redis,
+) -> None:
+    """In the order the value key is composed in; another order would store the
+    value where no read looks."""
+    cache = _cache(redis_backend)
+    await cache.reserve(CacheKey("notes", "1", tags=("team",)))
+
+    reservation = await cache.reserve(RACE_KEY)
+
+    stored = tuple([await redis_backend.get(counter) for counter in RACE_COUNTERS])
+    assert reservation == stored
+    assert len(set(stored)) == 2
+    for counter in RACE_COUNTERS:
+        assert await redis_backend.ttl(counter) >= VERSION_TTL_SECONDS - 1
+    await cache.set_reserved(RACE_KEY, '{"n": 1}', reservation)
+    assert await cache.get(RACE_KEY) == {"n": 1}
+
+
+@pytest.mark.parametrize("counter", RACE_COUNTERS)
+async def test_a_value_is_not_stored_once_any_counter_is_gone(
+    redis_backend: Redis, counter: str
+) -> None:
+    """Invalidated or evicted, the counter's absence means the value may predate
+    an invalidation. The refused write leaves no counter behind either."""
+    cache = _cache(redis_backend)
+    reservation = await cache.reserve(RACE_KEY)
+    await redis_backend.delete(counter)
+
+    await cache.set_reserved(RACE_KEY, '{"n": 1}', reservation)
+
+    assert await redis_backend.exists(counter) == 0
+    assert await _stored_values(redis_backend) == []
+    assert await cache.get(RACE_KEY) is None
+
+
+@pytest.mark.parametrize("counter", RACE_COUNTERS)
+async def test_a_value_is_not_stored_once_any_counter_restarted(
+    redis_backend: Redis, counter: str
+) -> None:
+    """Another reader's miss brings the counter back: the write must compare the
+    generation, not the presence."""
+    cache = _cache(redis_backend)
+    reservation = await cache.reserve(RACE_KEY)
+    await redis_backend.delete(counter)
+    restarted = await cache.reserve(RACE_KEY)
+
+    await cache.set_reserved(RACE_KEY, '{"n": "stale"}', reservation)
+
+    assert restarted != reservation
+    assert await _stored_values(redis_backend) == []
+    assert await cache.get(RACE_KEY) is None
+    await cache.set_reserved(RACE_KEY, '{"n": "fresh"}', restarted)
+    await cache.set_reserved(RACE_KEY, '{"n": "stale"}', reservation)
+    assert await cache.get(RACE_KEY) == {"n": "fresh"}
+
+
+async def test_a_miss_never_reserves_by_reading(redis_backend: Redis) -> None:
+    """GET stays read-only: a full Redis refuses a script that writes, and reads
+    must keep working there."""
+    cache = _cache(redis_backend)
+
+    assert await cache.get(RACE_KEY) is None
+
+    assert await redis_backend.exists(*RACE_COUNTERS) == 0
+
+
+async def test_a_full_redis_stores_nothing_and_keeps_serving_hits(
+    redis_backend: Redis, sentry_capture: MagicMock
+) -> None:
+    """With the counters present a reservation only reads, so it is granted and the
+    write is what is refused; without them the reservation is refused. Either way
+    the value is computed, and neither is a recovery."""
+    cache = _cache(redis_backend)
+    hit = CacheKey("users", "hit")
+    await cache.set(hit, {"n": 1})
+
+    async def compute() -> dict[str, int]:
+        return {"n": 2}
+
+    async with _out_of_memory(redis_backend):
+        assert await cache.reserve(hit) is not None
+        assert await cache.reserve(CacheKey("notes", "1")) is None
+        assert await cache.get_or_set(CacheKey("users", "2"), compute) == {"n": 2}
+        assert await cache.get_or_set(CacheKey("notes", "1"), compute) == {"n": 2}
+        assert await cache.get(hit) == {"n": 1}
+        assert await cache.get(CacheKey("users", "2")) is None
+        assert await redis_backend.exists(version_key(PREFIX, "notes")) == 0
+
+    sentry_capture.assert_called_once()
+
+
+async def test_an_invalidation_racing_the_write_never_leaves_the_stale_value(
+    real_redis: Redis, redis_client_factory: Callable[[], Redis]
+) -> None:
+    """Whichever of the two scripts runs first, the value computed before the
+    invalidation is gone after both."""
+    for attempt in range(50):
+        key = CacheKey("users", str(attempt), tags=("profile",))
+        writer, invalidator = (_cache(redis_client_factory()) for _ in range(2))
+        reservation = await writer.reserve(key)
+
+        await asyncio.gather(
+            writer.set_reserved(key, '{"n": "stale"}', reservation),
+            invalidator.invalidate_tags("profile"),
+        )
+
+        assert await writer.get(key) is None
 
 
 async def test_a_value_misses_after_its_counter_is_evicted_and_a_sibling_writes(

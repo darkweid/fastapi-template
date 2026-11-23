@@ -44,6 +44,24 @@ async def close_tasks_redis_client() -> None:
         _tasks_redis_client = None
 
 
+_marker_redis_client: Redis | None = None
+
+
+def get_marker_redis_singleton() -> Redis:
+    """The receiver's client, one per worker process; closed like the others."""
+    global _marker_redis_client
+    if _marker_redis_client is None:
+        _marker_redis_client = create_redis_client(config.redis.tasks_dsn)
+    return _marker_redis_client
+
+
+async def close_marker_redis_client() -> None:
+    global _marker_redis_client
+    if _marker_redis_client is not None:
+        await _marker_redis_client.aclose()
+        _marker_redis_client = None
+
+
 _cache_redis_client: Redis | None = None
 
 

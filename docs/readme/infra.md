@@ -130,10 +130,11 @@ process; the cache clients count against the cache instance only.
   it to a separate instance with an eviction policy (see `CACHE_REDIS_URL` above)
   rather than turning eviction on here.
 - Version counters are safe to evict. A read that finds any counter of its key
-  missing is a miss, `invalidate()`/`invalidate_tags()` delete counters, and a
-  write that finds one missing starts a new generation from the Redis server
-  clock (`TIME`, microseconds), so a recreated counter never addresses a value
-  stored under an earlier generation. The one way a generation repeats is that
+  missing is a miss, `invalidate()`/`invalidate_tags()` delete counters, and the
+  reservation made on a miss starts the missing ones with a new generation from
+  the Redis server clock (`TIME`, microseconds), so a recreated counter never
+  addresses a value stored under an earlier generation. A value is stored only
+  while every counter still holds its reserved generation. The one way a generation repeats is that
   clock moving backwards - a manual clock change, or a failover onto a replica
   whose clock lags - and the exposure is bounded by the value ttl.
 - The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys

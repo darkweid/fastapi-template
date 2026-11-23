@@ -24,6 +24,7 @@ import src.user.tasks  # noqa: F401
 from taskiq_worker.broker import broker, retry_schedule_source
 from taskiq_worker.dependencies import (
     close_cache_redis_client,
+    close_marker_redis_client,
     close_tasks_redis_client,
     get_cache_redis_singleton,
 )
@@ -64,10 +65,12 @@ async def on_worker_startup(_: TaskiqState) -> None:
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def on_worker_shutdown(_: TaskiqState) -> None:
     # One failing close must not skip the rest. The stack runs them in reverse:
-    # the cache built on the Redis client is dropped first, the client last.
+    # the cache built on the Redis client is dropped first, the Redis clients
+    # last, the receiver's after every other.
     # A raised close still propagates into the broker's own shutdown, which then
     # skips its pool disconnect; the process exits right after, so that is fine.
     async with AsyncExitStack() as stack:
+        stack.push_async_callback(close_marker_redis_client)
         stack.push_async_callback(close_tasks_redis_client)
         # SmartRetryMiddleware writes retries through this source's own pool;
         # the scheduler closes it through its sources, the worker here.

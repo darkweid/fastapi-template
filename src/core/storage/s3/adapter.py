@@ -12,12 +12,17 @@ from botocore.exceptions import ClientError
 from starlette.datastructures import UploadFile
 
 from loggers import get_logger
+from src.core.errors.describe import describe_error
 from src.core.errors.exceptions import (
     InfrastructureException,
     InstanceProcessingException,
     PayloadTooLargeException,
 )
-from src.core.storage.s3.interface import S3ClientProtocol, StoredObject
+from src.core.storage.s3.interface import (
+    DEFAULT_MULTIPART_PART_SIZE_BYTES,
+    S3ClientProtocol,
+    StoredObject,
+)
 
 MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
 MAX_MULTIPART_PARTS = 10_000
@@ -70,6 +75,8 @@ class S3Adapter(S3ClientProtocol):
         self._session = aioboto3.Session()
         self._client_cm: Any = None
         self._client: Any = None
+        # A task nothing refers to may be collected before it finishes.
+        self._aborts: set[asyncio.Task[None]] = set()
         self._client_config = self._build_client_config(
             signature_version=signature_version,
             addressing_style=addressing_style,
@@ -104,7 +111,14 @@ class S3Adapter(S3ClientProtocol):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        await self.close(exc_type, exc, tb)
+        # The work inside the block is done by now: a client that fails to close
+        # must neither report it as failed nor replace the error it raised.
+        try:
+            await self.close(exc_type, exc, tb)
+        except Exception as error:
+            logger.warning(
+                "[S3Adapter] client failed to close: %s", describe_error(error)
+            )
 
     def _get_bucket(self, bucket: str | None) -> str:
         return bucket or self._bucket
@@ -218,7 +232,8 @@ class S3Adapter(S3ClientProtocol):
         file: UploadFile,
         *,
         bucket: str | None = None,
-        part_size_bytes: int = 16 * 1024 * 1024,
+        max_size_bytes: int,
+        part_size_bytes: int = DEFAULT_MULTIPART_PART_SIZE_BYTES,
         content_type: str | None = None,
         cache_control: str | None = None,
     ) -> None:
@@ -227,7 +242,10 @@ class S3Adapter(S3ClientProtocol):
 
         Note:
         - Part size must be at least 5 MB (except the last part).
-        - Size limits are not enforced here; callers must validate large uploads.
+        - `max_size_bytes` is checked against the declared size and again against
+          the bytes actually read, since a declared size may lie.
+        - A failed or cancelled upload is aborted. An abort that fails is only
+          logged, so give the bucket a lifecycle rule for incomplete uploads.
         - The UploadFile source should be seekable; synchronous file backends may
           block the event loop under high concurrency.
         """
@@ -235,6 +253,7 @@ class S3Adapter(S3ClientProtocol):
             raise InfrastructureException("Multipart part size must be at least 5 MB.")
         size = self._get_uploadfile_size(file)
         if size is not None:
+            self._check_upload_size(size, max_size_bytes)
             if size == 0:
                 await self.upload_bytes(
                     key=key,
@@ -273,6 +292,8 @@ class S3Adapter(S3ClientProtocol):
             first_chunk = await file.read(part_size_bytes)
             if not first_chunk:
                 raise InfrastructureException("Empty stream for non-empty file.")
+            bytes_read = len(first_chunk)
+            self._check_upload_size(bytes_read, max_size_bytes)
             upload_response = await client.upload_part(
                 Bucket=bucket_name,
                 Key=key,
@@ -287,6 +308,8 @@ class S3Adapter(S3ClientProtocol):
                 chunk = await file.read(part_size_bytes)
                 if not chunk:
                     break
+                bytes_read += len(chunk)
+                self._check_upload_size(bytes_read, max_size_bytes)
                 if part_number > MAX_MULTIPART_PARTS:
                     raise PayloadTooLargeException(
                         "Multipart upload exceeds the maximum number of parts."
@@ -309,13 +332,33 @@ class S3Adapter(S3ClientProtocol):
                 UploadId=upload_id,
                 MultipartUpload={"Parts": parts},
             )
-        except Exception:
-            await client.abort_multipart_upload(
-                Bucket=bucket_name,
-                Key=key,
-                UploadId=upload_id,
+        except BaseException:
+            # A cancelled request must not cancel the abort too, and cancellation
+            # may be delivered again while this waits: the abort runs on, and
+            # close() waits for it.
+            abort = asyncio.create_task(
+                self._abort_multipart_upload(
+                    client, Bucket=bucket_name, Key=key, UploadId=upload_id
+                )
             )
+            self._aborts.add(abort)
+            abort.add_done_callback(self._aborts.discard)
+            await asyncio.shield(abort)
             raise
+
+    async def _abort_multipart_upload(self, client: Any, **upload: str) -> None:
+        try:
+            await client.abort_multipart_upload(**upload)
+        except Exception as error:
+            logger.warning(
+                "[S3Adapter] multipart upload %s not aborted: %s",
+                upload["UploadId"],
+                describe_error(error),
+            )
+
+    def _check_upload_size(self, size: int, max_size_bytes: int) -> None:
+        if size > max_size_bytes:
+            raise PayloadTooLargeException("Upload file size exceeds configured limit.")
 
     async def download_bytes(self, key: str, *, bucket: str | None = None) -> bytes:
         """Download an object into memory (small files only)."""
@@ -573,5 +616,9 @@ class S3Adapter(S3ClientProtocol):
         client_cm = self._client_cm
         self._client = None
         self._client_cm = None
-        if client_cm:
-            await client_cm.__aexit__(exc_type, exc, tb)
+        try:
+            if self._aborts:
+                await asyncio.wait(self._aborts)
+        finally:
+            if client_cm:
+                await client_cm.__aexit__(exc_type, exc, tb)
