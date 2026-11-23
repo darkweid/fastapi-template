@@ -23,6 +23,7 @@ from src.core.database.mixins import SoftDeleteMixin
 from src.core.database.query import ListQuery, RelatedSearch, SortOrder
 from src.core.database.transactions import advisory_xact_lock, try_advisory_xact_lock
 from src.core.database.types import EagerLoadSequence
+from src.core.errors.describe import describe_error
 from src.core.utils.datetime_utils import get_utc_now
 
 logger = get_logger(__name__)
@@ -378,7 +379,9 @@ class BaseRepository(Generic[T]):
                 return instance
 
             logger.debug(
-                "%s update skipped [NotFound]. filters=%s", self.model.__name__, filters
+                "%s update skipped [NotFound]. filters=%s",
+                self.model.__name__,
+                sorted(filters),
             )
             return None
         except (IntegrityError, SQLAlchemyError):
@@ -561,10 +564,14 @@ class SoftDeleteRepository(BaseRepository[T], Generic[T]):
                     count,
                 )
             return count
-        except SQLAlchemyError:
+        except SQLAlchemyError as error:
             if commit:
                 await session.rollback()
-            logger.exception("Batch soft-delete failed for %s", self.model.__name__)
+            logger.error(
+                "Batch soft-delete failed for %s: %s",
+                self.model.__name__,
+                describe_error(error),
+            )
             raise
 
     def _assert_softdelete_fields(self) -> None:

@@ -1,18 +1,25 @@
+import asyncio
 import logging
+from typing import Any
 
+from aiosmtplib import SMTPTimeoutError
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.exc import (
+    DBAPIError,
     IntegrityError,
+    InterfaceError,
     NotSupportedError,
     OperationalError,
     ProgrammingError,
+    TimeoutError as PoolTimeoutError,
 )
 
 import src.core.middleware as middleware
 from src.core.request_context import _REQUEST_ID_PATTERN
+from tests.helpers.logs import capture_logger
 
 
 class DummyUnique:
@@ -482,3 +489,113 @@ def test_describe_integrity_error_reads_psycopg_diagnostics() -> None:
     assert middleware.describe_integrity_error(error) == (
         "sqlstate=23505 constraint_name=uq_users_email table_name=users"
     )
+
+
+class DriverError(Exception):
+    def __init__(self, sqlstate: str | None = None) -> None:
+        super().__init__("invalid input for query argument $1: 'secret@example.com'")
+        self.sqlstate = sqlstate
+
+
+def _database_error(sqlstate: str | None = None, **options: bool) -> DBAPIError:
+    return DBAPIError("SELECT 1", None, DriverError(sqlstate), **options)
+
+
+def _wrapped_database_error() -> RuntimeError:
+    error = RuntimeError("wrapped")
+    error.__cause__ = _database_error()
+    return error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        PoolTimeoutError("QueuePool limit of size 5 reached"),
+        _database_error("08006"),
+        _database_error("57P01"),
+        _database_error("53300"),
+        _database_error(connection_invalidated=True),
+        OperationalError("connect", None, Exception("ConnectionRefusedError")),
+    ],
+    ids=["pool", "08006", "57P01", "53300", "invalidated", "connect"],
+)
+def test_a_database_outage_answers_503(error: Exception) -> None:
+    resp = TestClient(_make_app(lambda: error)).get("/boom")
+
+    assert (resp.status_code, resp.json()["code"]) == (503, "service_unavailable")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _database_error("28P01"),
+        _database_error("3D000"),
+        _database_error("57014"),
+        InterfaceError("SELECT 1", None, DriverError()),
+        TimeoutError("read timed out"),
+        asyncio.TimeoutError(),
+        OSError("connection refused"),
+        SMTPTimeoutError("Timed out connecting to smtp"),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+def test_what_is_not_a_database_outage_answers_500(error: Exception) -> None:
+    """A failed SMTP or HTTP call raises the same builtin classes as a lost
+    connection, and a 503 would blame the database for it."""
+    resp = TestClient(_make_app(lambda: error)).get("/boom")
+
+    assert (resp.status_code, resp.json()["code"]) == (500, "internal_error")
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        _database_error,
+        lambda: _database_error("08006"),
+        lambda: ProgrammingError("SELECT 1", None, DriverError("42703")),
+        _wrapped_database_error,
+    ],
+    ids=["refused value", "outage", "programming", "wrapped"],
+)
+def test_a_driver_error_reaches_logs_and_sentry_without_its_text(
+    factory: Any, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """asyncpg quotes the bound value in its own message, which hide_parameters
+    does not touch."""
+    captured: list[BaseException] = []
+    monkeypatch.setattr(middleware.sentry_sdk, "capture_exception", captured.append)
+
+    with capture_logger(caplog, middleware.logger):
+        TestClient(_make_app(factory)).get("/boom")
+
+    assert "driver=DriverError" in caplog.text
+    assert "secret@example.com" not in caplog.text
+    [reported] = captured
+    assert "secret@example.com" not in str(reported)
+    assert reported.__cause__ is None
+    assert reported.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: IntegrityError("msg", None, DummyUnique()),  # type: ignore[arg-type]
+        lambda: _database_error("08006"),
+        lambda: _database_error("42703"),
+        lambda: RuntimeError("boom"),
+    ],
+    ids=["409", "503", "database 500", "unexpected 500"],
+)
+def test_the_error_middlewares_responses_carry_the_security_headers(
+    factory: Any,
+) -> None:
+    """The headers middleware was the innermost one, so a response an outer
+    middleware made went out without them."""
+    resp = TestClient(_make_app(factory)).get("/boom")
+
+    assert resp.status_code >= 400
+    assert resp.headers["Content-Security-Policy"] == (
+        middleware.STRICT_CONTENT_SECURITY_POLICY
+    )
+    for name, value in middleware.BASE_SECURITY_HEADERS.items():
+        assert resp.headers[name] == value

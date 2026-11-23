@@ -20,7 +20,9 @@ from src.main.lifespan import lifespan
 from src.main.openapi import SWAGGER_UI_PARAMETERS
 from src.main.presentation import include_exceptions_handlers, include_routers
 from src.main.route_logging import log_routes_summary
+from src.main.sentry import init_sentry
 
+init_sentry()
 register_event_subscribers()
 logging.getLogger("uvicorn.access").disabled = True
 logger = get_logger(__name__)

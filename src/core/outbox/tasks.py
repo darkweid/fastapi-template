@@ -8,6 +8,7 @@ from taskiq import TaskiqDepends
 
 from loggers import get_logger
 from src.core.database.uow import ApplicationUnitOfWork
+from src.core.errors.describe import describe_error
 from src.core.outbox.models import OutboxMessage
 from src.core.utils.datetime_utils import get_utc_now
 from taskiq_worker.broker import broker
@@ -78,7 +79,11 @@ async def outbox_sweeper(
                 )
             except BROKER_UNREACHABLE_ERRORS as exc:
                 await uow.outbox.mark_publish_failure(
-                    uow.session, message.id, str(exc), final=False, count_attempt=False
+                    uow.session,
+                    message.id,
+                    describe_error(exc),
+                    final=False,
+                    count_attempt=False,
                 )
                 failed += 1
                 # The rest of the batch would wait out the same timeout, one
@@ -87,7 +92,7 @@ async def outbox_sweeper(
             except Exception as exc:
                 final = message.attempts + 1 >= MAX_PUBLISH_ATTEMPTS
                 await uow.outbox.mark_publish_failure(
-                    uow.session, message.id, str(exc), final=final
+                    uow.session, message.id, describe_error(exc), final=final
                 )
                 if final:
                     _report_failed_message(message)

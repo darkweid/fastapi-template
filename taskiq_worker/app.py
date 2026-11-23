@@ -26,8 +26,10 @@ from taskiq_worker.dependencies import (
     close_tasks_redis_client,
     get_cache_redis_singleton,
 )
+from taskiq_worker.log_scrubbing import install_log_scrubbing
 
 init_sentry()
+install_log_scrubbing()
 register_event_subscribers()
 
 

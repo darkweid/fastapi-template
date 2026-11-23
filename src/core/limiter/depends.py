@@ -9,6 +9,7 @@ from pydantic import Field
 import redis.exceptions as redisExc
 
 from loggers import get_logger
+from src.core.errors.describe import describe_error, scrub
 from src.core.limiter import FastAPILimiter
 from src.core.redis.degradation import RedisDegradationReporter
 
@@ -124,16 +125,15 @@ class RateLimiter:
             cls._fallback_windows.pop(expired_key, None)
 
     @classmethod
-    def _evict_oldest_fallback_window(cls) -> str | None:
+    def _evict_oldest_fallback_window(cls) -> None:
         if not cls._fallback_windows:
-            return None
+            return
 
         oldest_key = min(
             cls._fallback_windows,
             key=lambda key: cls._fallback_windows[key].expires_at_ms,
         )
         cls._fallback_windows.pop(oldest_key, None)
-        return oldest_key
 
     def _check_limit_in_memory(self, key: str) -> int:
         now_ms = _current_time_ms()
@@ -143,12 +143,11 @@ class RateLimiter:
 
             if state is None:
                 if len(self._fallback_windows) >= self._fallback_max_entries:
-                    evicted_key = self._evict_oldest_fallback_window()
+                    self._evict_oldest_fallback_window()
                     logger.warning(
                         "[RateLimiter] In-memory fallback capacity reached (%s). "
-                        "Evicting oldest key %s to keep fallback state bounded.",
+                        "Evicting the oldest window to keep fallback state bounded.",
                         self._fallback_max_entries,
-                        evicted_key,
                     )
                 self._fallback_windows[key] = _InMemoryRateLimitWindow(
                     count=1,
@@ -166,18 +165,16 @@ class RateLimiter:
         self, key: str, redis_error: redisExc.RedisError
     ) -> int:
         logger.error(
-            "[RateLimiter] Redis unavailable for key %s: %s. Using in-memory fallback limiter.",
-            key,
-            redis_error,
+            "[RateLimiter] Redis unavailable: %s. Using in-memory fallback limiter.",
+            describe_error(redis_error),
         )
         self._degradation_reporter.report_degraded(redis_error)
         try:
             return self._check_limit_in_memory(key)
-        except Exception:
+        except Exception as error:
             logger.error(
-                "[RateLimiter] Redis unavailable for key %s and in-memory fallback failed. Allowing request as a security-significant incident.",
-                key,
-                exc_info=True,
+                "[RateLimiter] Redis unavailable and in-memory fallback failed. Allowing request as a security-significant incident.",
+                exc_info=scrub(error),
             )
             return 0
 
@@ -207,12 +204,13 @@ class RateLimiter:
         endpoint = request.scope["endpoint"]
         endpoint_name = f"{endpoint.__module__}.{endpoint.__qualname__}"
         key = f"{FastAPILimiter.prefix}:{rate_key}:{endpoint_name}"
-        logger.debug(f"RateLimiter key: {key}")
         pexpire = await self._check_limit(key)
 
         if pexpire != 0:
-            logger.warning(
-                f"[RateLimiter] Limit exceeded for key: {key}, will retry after {pexpire}ms"
+            logger.info(
+                "[RateLimiter] Limit exceeded on %s, retry after %dms",
+                endpoint_name,
+                pexpire,
             )
             await self.callback(request, response, pexpire)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import logging
 from unittest.mock import AsyncMock, Mock
 
 from fastapi import Request, Response
@@ -15,6 +16,7 @@ from src.core.redis.degradation import (
     RedisDegradationReporter,
 )
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.logs import capture_logger
 from tests.helpers.requests import build_request
 
 
@@ -378,10 +380,13 @@ async def test_rate_limiter_reports_sentry_on_redis_recovery(
         "[RateLimiter] Redis recovered"
         in capture_message_mock.call_args_list[1].args[0]
     )
-    assert (
-        "after 2 failure(s): the first 60500ms ago, the last 60000ms ago"
-        in capture_message_mock.call_args_list[1].args[0]
-    )
+    assert capture_message_mock.call_args_list[1].kwargs["contexts"] == {
+        "redis_degradation": {
+            "failure_count": 2,
+            "first_failure_ms_ago": 60_500,
+            "last_failure_ms_ago": 60_000,
+        }
+    }
     assert capture_message_mock.call_args_list[1].kwargs["level"] == "info"
 
 
@@ -426,3 +431,46 @@ async def test_rate_limiter_does_not_report_recovery_on_a_refused_call(
 
     assert capture_message_mock.call_count == 2
     assert "Redis recovered" in capture_message_mock.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_a_limiter_logs_no_key(
+    limiter_state: None,
+    fake_redis: InMemoryRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The key holds the caller's IP or user id, or whatever a custom identifier
+    returned, and a Redis error can quote the command it stood in."""
+    request = build_request(
+        path="/test",
+        endpoint=sample_endpoint,
+        headers={"X-Rate-Key": "secret@example.com"},
+    )
+    refusing = RateLimiter(
+        times=1, seconds=1, identifier=header_identifier, callback=AsyncMock()
+    )
+
+    with capture_logger(caplog, limiter_depends.logger):
+        FastAPILimiter.redis = fake_redis
+        FastAPILimiter.lua_sha = "sha"
+        with monkeypatch.context() as patched:
+            patched.setattr(refusing, "_check_limit", AsyncMock(return_value=1000))
+            await refusing(request, Response())
+
+        FastAPILimiter.redis = ErrorRedis()
+        FastAPILimiter.lua_sha = "sha"
+        await refusing(request, Response())
+        monkeypatch.setattr(
+            refusing,
+            "_check_limit_in_memory",
+            Mock(side_effect=redis_exc.ResponseError("SET secret@example.com")),
+        )
+        await refusing(request, Response())
+
+    assert "Limit exceeded on" in caplog.text
+    assert "Redis unavailable: ConnectionError" in caplog.text
+    assert "security-significant incident" in caplog.text
+    assert "secret@example.com" not in caplog.text
+    [refusal] = [r for r in caplog.records if "Limit exceeded" in r.getMessage()]
+    assert refusal.levelno == logging.INFO

@@ -16,7 +16,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.exc import IntegrityError, MultipleResultsFound
+from sqlalchemy.exc import DBAPIError, IntegrityError, MultipleResultsFound
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, load_only, mapped_column, relationship
 
@@ -30,6 +30,7 @@ from src.core.database.repositories import (
 )
 from src.core.errors.exceptions import FilteringError
 from src.core.utils.datetime_utils import get_utc_now
+from tests.helpers.logs import capture_logger
 
 
 class RepositoryModel(SQLAlchemyBase):
@@ -1068,3 +1069,37 @@ async def test_ambiguous_write_touches_no_row_and_rolls_back_a_commit(
     session.delete.assert_not_awaited()
     session.commit.assert_not_awaited()
     assert session.rollback.await_count == 2
+
+
+async def test_an_update_that_finds_nothing_logs_the_filter_names_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.return_value = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+
+    with capture_logger(caplog, repository_module.logger):
+        await repo.update(session, {"name": "x"}, name="secret@example.com")
+
+    assert "update skipped [NotFound]" in caplog.text
+    assert "'name'" in caplog.text
+    assert "secret@example.com" not in caplog.text
+
+
+async def test_a_failed_batch_soft_delete_logs_no_error_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = RepositorySoftDeleteRepository()
+    session = RepositorySession()
+    session.execute.side_effect = DBAPIError(
+        "UPDATE", None, ValueError("'secret@example.com'")
+    )
+
+    with capture_logger(caplog, repository_module.logger), pytest.raises(DBAPIError):
+        await repo.batch_soft_delete(
+            session=session, filters=FilterCondition(eq={"id": 1})
+        )
+
+    assert "DBAPIError driver=ValueError" in caplog.text
+    assert "secret@example.com" not in caplog.text

@@ -208,8 +208,10 @@ changing either later signs every session out and voids every emailed link.
   there. These are the defaults: `make init-project SUBNET=` moves the subnet,
   and with it the `172.30.0.x` values here become that `/24`'s `.1` and upper
   `/25`.
-- `DEBUG=false`, `VALIDATE_CERTS=true`, `COOKIE_SECURE=true` outside local
-  development; `check_env.py` hard-blocks the other way round in a deploy.
+- `DEBUG=false`, `TESTING=false`, `VALIDATE_CERTS=true`, `COOKIE_SECURE=true`
+  outside local development; `check_env.py` hard-blocks the other way round in a
+  deploy. It also refuses `EMAIL_USE_TLS` and `EMAIL_STARTTLS` both true or both
+  false, and `S3_VERIFY_SSL=false` while S3 is enabled.
 - `S3_ENABLED` is `false` by default. Turn it on and fill `S3_BUCKET_NAME`,
   `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION_NAME` only if the
   project stores files; while it is off those credentials stay dormant and the

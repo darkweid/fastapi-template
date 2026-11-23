@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from loggers import get_logger
 from src.core.errors.codes import ErrorCode
+from src.core.errors.describe import describe_validation_error, reportable
 from src.core.errors.exceptions import CoreException
 from src.core.errors.scrubbed import scrubbed
 
@@ -65,17 +66,19 @@ def format_log_message(
         log_msg = f"[{err}] {method} {endpoint} | {msg}"
 
     if additional_info:
-        sensitive = {
+        sensitive = (
             "authorization",
             "token",
             "password",
             "secret",
             "api_key",
             "api-key",
-        }
+        )
 
         def mask(k: str, v: Any) -> str:
-            return "***" if k.lower() in sensitive else repr(v)
+            # Substring: `refresh_token` and `new_password` are secrets too.
+            key = k.lower()
+            return "***" if any(part in key for part in sensitive) else repr(v)
 
         additional_str = ", ".join(
             f"{k}={mask(k, additional_info[k])}" for k in sorted(additional_info)
@@ -91,7 +94,7 @@ async def handle_core_exception(request: Request, exc: CoreException) -> JSONRes
     )
     getattr(response_logger, exc.log_level)(log_message)
     if exc.capture_to_sentry:
-        sentry_sdk.capture_exception(exc)
+        sentry_sdk.capture_exception(reportable(exc))
     headers = exc.response_headers()
     return JSONResponse(
         status_code=exc.status_code,
@@ -171,23 +174,6 @@ async def handle_request_validation_exception(
         )
         | {"errors": safe_errors},
     )
-
-
-def describe_validation_error(exc: ValidationError) -> str:
-    """
-    Summarize a backend ValidationError by model, location and error type.
-
-    `str(exc)` prints every `input_value`, `errors()` carries `input` and a
-    `ctx` that can repeat it, and a validator's own message may quote it, so
-    none of them reach a log line or Sentry.
-    """
-    locations = "; ".join(
-        f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['type']}"
-        for error in exc.errors(
-            include_url=False, include_context=False, include_input=False
-        )
-    )
-    return f"{exc.title}: {locations}"
 
 
 async def handle_validation_error(

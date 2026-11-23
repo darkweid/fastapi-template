@@ -1,7 +1,11 @@
 import logging
+import traceback
 from unittest.mock import AsyncMock
 
+from aiosmtplib import SMTPRecipientRefused, SMTPRecipientsRefused
 import pytest
+from taskiq import InMemoryBroker
+from taskiq.middlewares import SmartRetryMiddleware
 
 from src.core.email_service import tasks
 from src.core.email_service.enums import MessageType
@@ -11,9 +15,11 @@ from src.core.email_service.tasks import (
     send_email_with_s3_attachments_task,
 )
 from src.core.errors.exceptions import InfrastructureException
+from src.core.errors.scrubbed import ScrubbedError
 from src.main.config import config
 from tests.fakes.email import MockMailer
 from tests.fakes.s3 import InMemoryS3Client
+from tests.helpers.logs import capture_logger
 from tests.helpers.providers import ProvideValue
 
 
@@ -112,7 +118,7 @@ async def test_send_email_with_s3_attachments_task_failure_keeps_keys(
     )
     await fake_s3.upload_bytes("outbox/report.pdf", b"pdf-bytes")
 
-    with pytest.raises(RuntimeError, match="send failed"):
+    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
         await send_email_with_s3_attachments_task(
             "S", ["a@b.com"], ["outbox/report.pdf"], "plain", cleanup=True
         )
@@ -184,7 +190,7 @@ async def test_email_tasks_propagate_exceptions(
     )
     monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ScrubbedError, match="^RuntimeError$"):
         await send_email_task("Subj", ["a@b.com"], "tpl.html", {"k": "v"}, "html")
 
 
@@ -196,3 +202,67 @@ def test_email_task_registration() -> None:
     )
     assert send_email_task.labels["retry_on_error"] is True
     assert send_email_with_s3_attachments_task.labels["retry_on_error"] is True
+
+
+ADDRESS = "a@b.com"
+REFUSED = SMTPRecipientsRefused([SMTPRecipientRefused(550, "unknown", ADDRESS)])
+
+
+async def test_a_refused_recipient_stays_out_of_the_log_and_the_raised_error(
+    mock_mailer: MockMailer,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """taskiq logs whatever leaves a task, so logging without the address is not
+    enough: the error itself must not carry it."""
+    monkeypatch.setattr(mock_mailer, "send_template", AsyncMock(side_effect=REFUSED))
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
+
+    with capture_logger(caplog, tasks.logger), pytest.raises(ScrubbedError) as caught:
+        await send_email_task("Subj", [ADDRESS], "tpl.html", {"k": "v"}, "html")
+
+    assert "Failed to send email" in caplog.text
+    for text in (caplog.text, "".join(traceback.format_exception(caught.value))):
+        assert "SMTPRecipientsRefused" in text
+        assert ADDRESS not in text
+
+
+async def test_a_failure_with_s3_attachments_logs_no_address(
+    fake_s3: InMemoryS3Client,
+    mock_mailer: MockMailer,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(config.s3, "S3_ENABLED", True)
+    monkeypatch.setattr(
+        tasks, "build_s3_adapter", lambda s3_config: FakeS3AdapterContext(fake_s3)
+    )
+    monkeypatch.setattr(
+        mock_mailer, "send_with_attachment_bytes", AsyncMock(side_effect=REFUSED)
+    )
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
+
+    with capture_logger(caplog, tasks.logger), pytest.raises(ScrubbedError) as caught:
+        await send_email_with_s3_attachments_task("S", [ADDRESS], [], "plain")
+
+    for text in (caplog.text, "".join(traceback.format_exception(caught.value))):
+        assert "SMTPRecipientsRefused" in text
+        assert ADDRESS not in text
+
+
+async def test_a_scrubbed_failure_is_still_retried(
+    mock_mailer: MockMailer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    send = AsyncMock(side_effect=[REFUSED, None])
+    monkeypatch.setattr(mock_mailer, "send_template", send)
+    monkeypatch.setattr(tasks, "get_mailer", ProvideValue(mock_mailer))
+    broker = InMemoryBroker(await_inplace=True).with_middlewares(
+        SmartRetryMiddleware(default_delay=0, use_jitter=False)
+    )
+    task = broker.task(task_name="probe", retry_on_error=True)(
+        send_email_task.original_func
+    )
+
+    await task.kiq("Subj", [ADDRESS], "tpl.html", {"k": "v"}, "html")
+
+    assert send.await_count == 2

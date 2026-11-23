@@ -13,6 +13,7 @@ from src.core.cache.redis_scripts import (
     CACHE_INVALIDATE_SCRIPT,
     CACHE_SET_SCRIPT,
 )
+from src.core.errors.describe import describe_error
 from src.core.redis.degradation import RedisDegradationReporter
 
 logger = get_logger(__name__)
@@ -120,12 +121,16 @@ class RedisCache(BaseCache):
             logger.debug("[Cache] counters %s retired", list(counters))
         except FAIL_OPEN_ERRORS as error:
             logger.warning(
-                "[Cache] invalidate failed for counters %s: %s", list(counters), error
+                "[Cache] invalidate failed for counters %s: %s",
+                list(counters),
+                describe_error(error),
             )
             self._reporter.report_degraded(error)
 
     def _on_redis_outage(
         self, operation: str, key: CacheKey, error: redis_exc.RedisError
     ) -> None:
-        logger.warning("[Cache] %s failed for %s: %s", operation, key, error)
+        logger.warning(
+            "[Cache] %s failed for %s: %s", operation, key, describe_error(error)
+        )
         self._reporter.report_degraded(error)

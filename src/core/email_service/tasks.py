@@ -5,6 +5,7 @@ from loggers import get_logger
 from src.core.email_service.enums import MessageType
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.smtp_mailer import SmtpMailer
+from src.core.errors.describe import scrub
 from src.core.errors.exceptions import InfrastructureException
 from src.core.storage.s3.dependencies import build_s3_adapter
 from src.core.utils.security import mask_email
@@ -39,9 +40,12 @@ async def send_email_task(
         logger.info(
             "Email successfully sent to %s", [mask_email(r) for r in recipients]
         )
-    except Exception as e:
-        logger.exception("Failed to send email: %s", e)
-        raise
+    except Exception as error:
+        # An SMTP error quotes the recipients, and taskiq logs whatever leaves the
+        # task, so a stand-in is raised, unchained.
+        failure = scrub(error)
+        logger.error("Failed to send email", exc_info=failure)
+        raise failure from None
 
 
 @broker.task(task_name="send_email_with_s3_attachments", retry_on_error=True)
@@ -94,6 +98,7 @@ async def send_email_with_s3_attachments_task(
         logger.info(
             "Email with S3 attachments sent to %s", [mask_email(r) for r in recipients]
         )
-    except Exception as e:
-        logger.exception("Failed to send email with S3 attachments: %s", e)
-        raise
+    except Exception as error:
+        failure = scrub(error)
+        logger.error("Failed to send email with S3 attachments", exc_info=failure)
+        raise failure from None

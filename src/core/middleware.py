@@ -6,14 +6,21 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import sentry_sdk
 from sqlalchemy.exc import (
+    DBAPIError,
     IntegrityError,
-    OperationalError,
-    ProgrammingError,
+    TimeoutError as PoolTimeoutError,
 )
 from starlette.responses import Response
 
 from loggers import get_logger
 from src.core.errors.codes import ErrorCode
+from src.core.errors.describe import (
+    describe_database_error,
+    describe_integrity_error,
+    is_database_outage,
+    reportable,
+    sqlstate_of,
+)
 from src.core.errors.handlers import format_error_response
 from src.core.errors.scrubbed import scrubbed
 from src.core.request_context import request_id_var, resolve_request_id
@@ -73,19 +80,6 @@ def register_middlewares(app: FastAPI) -> None:
     """Registers all custom middlewares in proper order"""
 
     @app.middleware("http")
-    async def security_headers_middleware(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        response = await call_next(request)
-        for name, value in BASE_SECURITY_HEADERS.items():
-            response.headers.setdefault(name, value)
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            _get_content_security_policy(request.url.path),
-        )
-        return response
-
-    @app.middleware("http")
     async def request_timing_middleware(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
@@ -123,22 +117,22 @@ def register_middlewares(app: FastAPI) -> None:
             if handled_result.send_to_sentry:
                 sentry_sdk.capture_exception(scrubbed(summary, exc))
             return handled_result.response
-        except OperationalError as e:
+        except (DBAPIError, PoolTimeoutError) as exc:
+            summary = describe_database_error(exc)
+            failure = scrubbed(summary, exc)
+            sentry_sdk.capture_exception(failure)
+            if is_database_outage(exc):
+                logger.error(f"Database unavailable at {request.url.path}: {summary}")
+                return JSONResponse(
+                    status_code=503,
+                    content=format_error_response(
+                        ErrorCode.SERVICE_UNAVAILABLE,
+                        "Database is temporarily unavailable. Please try again later.",
+                    ),
+                )
             logger.error(
-                f"Database connection error at {request.url.path}: {str(e.orig)}"
+                f"Database error at {request.url.path}: {summary}", exc_info=failure
             )
-            sentry_sdk.capture_exception(e)
-            return JSONResponse(
-                status_code=503,
-                content=format_error_response(
-                    ErrorCode.SERVICE_UNAVAILABLE,
-                    "Database is temporarily unavailable. Please try again later.",
-                ),
-            )
-
-        except ProgrammingError as e:
-            logger.error(f"SQL syntax error at {request.url.path}: {str(e.orig)}")
-            sentry_sdk.capture_exception(e)
             return _internal_error_response()
 
     @app.middleware("http")
@@ -148,9 +142,30 @@ def register_middlewares(app: FastAPI) -> None:
         try:
             return await call_next(request)
         except Exception as e:
-            logger.exception("Unexpected error at %s: %s", request.url.path, e)
-            sentry_sdk.capture_exception(e)
+            failure = reportable(e)
+            logger.error(
+                "Unexpected error at %s: %s",
+                request.url.path,
+                failure,
+                exc_info=failure,
+            )
+            sentry_sdk.capture_exception(failure)
             return _internal_error_response()
+
+    @app.middleware("http")
+    async def security_headers_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Outside the error middlewares: their own 4xx/5xx responses carry the
+        # headers too.
+        response = await call_next(request)
+        for name, value in BASE_SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            _get_content_security_policy(request.url.path),
+        )
+        return response
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -171,46 +186,6 @@ def register_middlewares(app: FastAPI) -> None:
         return response
 
 
-_INTEGRITY_DIAGNOSTICS = ("constraint_name", "table_name", "column_name")
-
-
-def _diagnostic(error: IntegrityError, name: str) -> str | None:
-    """
-    Read one diagnostic field wherever the driver put it.
-
-    SQLAlchemy's asyncpg adapter copies only `sqlstate` onto the DBAPI error
-    and keeps the asyncpg exception, which has the rest, as its `__cause__`;
-    psycopg exposes them under `.diag`.
-    """
-    driver_error = error.orig
-    for source in (
-        driver_error,
-        getattr(driver_error, "__cause__", None),
-        getattr(driver_error, "diag", None),
-    ):
-        value = getattr(source, name, None)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def describe_integrity_error(error: IntegrityError) -> str:
-    """
-    Name the violation by its SQLSTATE and schema objects, never by its values.
-
-    The driver's message carries the DETAIL line (`Key (email)=(...) already
-    exists`, `Failing row contains (...)`), which echoes whatever a caller
-    sent, so neither it nor `str(error)` goes to a log or to Sentry.
-    """
-    parts = [f"sqlstate={_diagnostic(error, 'sqlstate')}"]
-    parts.extend(
-        f"{name}={value}"
-        for name in _INTEGRITY_DIAGNOSTICS
-        if (value := _diagnostic(error, name)) is not None
-    )
-    return " ".join(parts)
-
-
 def handle_postgresql_error(
     error: IntegrityError,
 ) -> PostgresqlErrorHandlingResult:
@@ -218,10 +193,10 @@ def handle_postgresql_error(
     Map a PostgreSQL IntegrityError onto a response, a Sentry flag and a log severity.
 
     A unique violation answers 409, which on registration tells a caller that
-    an address is already taken. That is a deliberate trade: account
-    enumeration through this route is cheap anyway (login timing, password
-    reset), while a client that cannot distinguish "already registered" from
-    a generic failure sends the user in circles. The conflicting value itself
+    an address is already taken. That is a deliberate trade: registration is the
+    one route that tells, and a client that cannot distinguish "already
+    registered" from a generic failure sends the user in circles. Login, resend
+    and password reset answer the same either way. The conflicting value itself
     is never echoed back — the DB DETAIL can carry someone else's data (an
     email, a phone number), so only the status and code are client-facing.
 
@@ -229,7 +204,7 @@ def handle_postgresql_error(
     is a bug in the application rather than bad input: it answers 500 and goes
     to Sentry.
     """
-    sqlstate = _diagnostic(error, "sqlstate")
+    sqlstate = sqlstate_of(error)
 
     if sqlstate == "23505":  # UniqueViolation
         return PostgresqlErrorHandlingResult(

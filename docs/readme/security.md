@@ -87,7 +87,8 @@ Redis-backed **fixed window** counter via Lua script:
 - Thread-safe dictionary with lock.
 - Capped at 100,000 entries (~20-25 MB).
 - Oldest entries evicted when at capacity.
-- State transitions (degraded/recovered) reported to Sentry, recovery only at
+- State transitions (degraded/recovered) reported to Sentry with a constant
+  message; the component and the error class are tags. Recovery only at
   an admitted call: a full Redis (`OOM`) still answers the reads a refused
   call makes, so only a call whose window write succeeds proves it recovered.
   That call closes the incident only after a minute without a failure, so a
@@ -166,13 +167,17 @@ Nginx additionally sets `server_tokens off` (hides version) and `client_max_body
 
 ## Error Handling and Information Leakage Prevention
 
-`src/core/middleware.py`, `src/core/errors/exceptions.py`
+`src/core/middleware.py`, `src/core/errors/exceptions.py`, `src/core/errors/describe.py`
 
 - All domain code raises project-specific exceptions (`UnauthorizedException`, `AccessForbiddenException`, etc.) — never raw `HTTPException`.
 - PostgreSQL errors are mapped to safe HTTP responses: unique violation to 409, foreign key to 400, others to generic 500.
+- An unreachable database answers 503 `service_unavailable`: a connection that could not be opened (`do_connect` listener in `src/core/database/engine.py`), an exhausted pool, a connection lost later, or SQLSTATE `08*`, `57P0x` (shutdown, `pg_terminate_backend`) and `53300` (no slot left). A session the server ended for idling in a transaction looks the same as a lost one. A wrong password (`28P01`), a missing database (`3D000`) and a statement timeout (`57014`) stay 500: retrying does not help them. An `OSError` or `TimeoutError` from SMTP or HTTP is never read as a database outage.
+- An exception whose text echoes input never reaches a log or Sentry as itself: `describe_error`, `scrub` and `reportable` in `src/core/errors/describe.py` name it by class, SQLSTATE and schema objects. asyncpg quotes the refused value in its own message, which `hide_parameters` does not touch. A task whose error can quote an address raises `scrub(error) from None`; the worker also scrubs the tracebacks taskiq logs (`taskiq_worker/log_scrubbing.py`). A `types_of_exceptions` on such a task would see `ScrubbedError`.
+- Caller mistakes (400 filtering, 401) are logged at `debug`, 403 and an exceeded rate limit at `info`; a reused refresh token stays a `warning`. Rate-limit log lines name the endpoint, never the key.
+- Security headers are set outside the error middlewares, so their 4xx/5xx responses carry them too. A CORS preflight answer is made further out and carries only the nginx ones.
 - Unexpected errors return `"Unexpected error"` — no stack traces, no internal details.
 - Request timing middleware logs only method, path, duration, and status code — no request/response bodies.
-- Server errors are reported to Sentry with context for debugging.
+- Server errors are reported to Sentry once each. `init_sentry()` runs before the application is built and passes `failed_request_status_codes=set()`, so a status code alone is never an event (a probe's 503) and an `InfrastructureException` is not filed twice. The aiohttp integration is off: its breadcrumbs hold full URLs, tokens included.
 
 **Why it matters:** Error messages are an information disclosure vector. Generic responses prevent attackers from inferring database schema, business logic, or technology stack from error output.
 

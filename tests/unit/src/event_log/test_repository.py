@@ -4,12 +4,13 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from src.event_log.actor import Actor
 from src.event_log.enums import ActorType, ObjectType
 from src.event_log.events import DomainEvent, PublishedEvent
-from src.event_log.repositories import EventLogRepository
+from src.event_log.repositories import EventLogRepository, logger
+from tests.helpers.logs import capture_logger
 
 
 class SomethingHappened(DomainEvent):
@@ -114,3 +115,51 @@ async def test_a_failing_action_is_not_reported_as_a_logging_failure(
             )
 
     assert captured.call_count == 0
+
+
+async def test_a_failed_insert_is_reported_without_the_row(
+    fake_session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The DETAIL line echoes the payload and the caller's address."""
+    fake_session.fail_nested_with = IntegrityError(
+        "insert", {}, Exception("Failing row contains (10.0.0.1, secret@example.com)")
+    )
+
+    with (
+        patch("src.event_log.repositories.sentry_sdk.capture_exception") as captured,
+        capture_logger(caplog, logger),
+    ):
+        await _record(
+            fake_session,
+            Actor.system(),
+            SomethingHappened(
+                object_id=uuid4(), changes={}, signed_up_on=date(2020, 1, 1)
+            ),
+        )
+
+    assert "Failed to record test.something_happened" in caplog.text
+    assert "secret@example.com" not in caplog.text
+    [reported] = captured.call_args.args
+    assert "secret@example.com" not in str(reported)
+    assert reported.__cause__ is None
+
+
+async def test_a_lost_connection_is_the_callers_error(fake_session) -> None:
+    """Its transaction is gone, so a swallowed failure resurfaces at the commit
+    as a PendingRollbackError and turns a 503 into a 500."""
+    lost = DBAPIError("insert", {}, Exception("closed"), connection_invalidated=True)
+    fake_session.fail_nested_with = lost
+
+    with (
+        patch("src.event_log.repositories.sentry_sdk.capture_exception") as captured,
+        pytest.raises(DBAPIError),
+    ):
+        await _record(
+            fake_session,
+            Actor.system(),
+            SomethingHappened(
+                object_id=uuid4(), changes={}, signed_up_on=date(2020, 1, 1)
+            ),
+        )
+
+    captured.assert_not_called()

@@ -24,6 +24,7 @@ FALSY_VALUES = {"0", "false", "f", "n", "no", "off"}
 # the boolean that is forbidden there.
 FORBIDDEN_BOOLEANS = {
     "DEBUG": True,
+    "TESTING": True,
     "VALIDATE_CERTS": False,
     "COOKIE_SECURE": False,
 }
@@ -46,6 +47,8 @@ TEMPLATE_PROJECT_NAME = "fastapi-template"
 # placeholder credential sitting under this prefix costs nothing and should
 # not fail the gate - only S3_ENABLED itself is checked in that state.
 S3_KEY_PREFIX = "S3_"
+S3_VERIFY_SSL_KEY = "S3_VERIFY_SSL"
+EMAIL_TLS_KEYS = ("EMAIL_USE_TLS", "EMAIL_STARTTLS")
 # The literals below are hostnames to match, not addresses to bind to, which is
 # what the linters read them as.
 LOCAL_HOSTNAMES = {"localhost", "::1", "0.0.0.0"}  # noqa: S104 # nosec B104
@@ -233,6 +236,17 @@ def collect_problems(example: dict[str, str], actual: dict[str, str]) -> list[st
     )
     if missing_keys:
         problems.append(f"Missing keys in .env: {', '.join(missing_keys)}")
+
+    # One of the two is always false, so neither can be forbidden on its own: both
+    # false sends mail in the clear, both true is a handshake no server accepts.
+    email_tls = [as_bool(actual.get(key, "")) for key in EMAIL_TLS_KEYS]
+    if email_tls in ([True, True], [False, False]):
+        problems.append(f"Exactly one of {' and '.join(EMAIL_TLS_KEYS)} must be true")
+
+    if s3_enabled and as_bool(actual.get(S3_VERIFY_SSL_KEY, "")) is False:
+        problems.append(
+            f"{S3_VERIFY_SSL_KEY}=false is not allowed outside local development"
+        )
 
     for key, value in sorted(actual.items()):
         skip_s3_placeholder = is_dormant_s3_key(key, s3_enabled)

@@ -73,6 +73,8 @@ async def test_sweeper_increments_attempts_on_publish_error() -> None:
 
     repo.mark_publish_failure.assert_awaited_once()
     assert repo.mark_publish_failure.await_args.kwargs["final"] is False
+    # Stored in the row, so the class alone: a broker's text can quote the message.
+    assert repo.mark_publish_failure.await_args.args[2] == "RuntimeError"
     repo.mark_published.assert_not_awaited()
 
 
@@ -140,7 +142,10 @@ async def test_unreachable_broker_does_not_spend_publish_attempts() -> None:
         result = await outbox_sweeper(session=FakeAsyncSession())
 
     repo.mark_publish_failure.assert_awaited_once()
-    assert repo.mark_publish_failure.await_args.args[1] == first.id
+    assert repo.mark_publish_failure.await_args.args[1:] == (
+        first.id,
+        "ConnectionError",
+    )
     assert repo.mark_publish_failure.await_args.kwargs == {
         "final": False,
         "count_attempt": False,

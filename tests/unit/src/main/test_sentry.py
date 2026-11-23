@@ -115,12 +115,14 @@ def test_init_sentry_passes_the_privacy_options(
     )
 
     kwargs = init_mock.call_args.kwargs
-    assert kwargs["disabled_integrations"] == [disabled]
+    [always, requested] = kwargs["disabled_integrations"]
+    assert isinstance(always, AioHttpIntegration)
+    assert requested is disabled
     assert kwargs["before_send"] is before_send
     assert kwargs["before_send_transaction"] is before_send_transaction
 
 
-def test_init_sentry_disables_nothing_by_default(
+def test_init_sentry_disables_only_the_aiohttp_integration_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     init_mock = MagicMock()
@@ -133,6 +135,7 @@ def test_init_sentry_disables_nothing_by_default(
     sentry_module.init_sentry()
 
     kwargs = init_mock.call_args.kwargs
-    assert kwargs["disabled_integrations"] == []
+    [disabled] = kwargs["disabled_integrations"]
+    assert isinstance(disabled, AioHttpIntegration)
     assert kwargs["before_send"] is None
     assert kwargs["before_send_transaction"] is None

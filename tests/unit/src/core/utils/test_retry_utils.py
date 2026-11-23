@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.core.utils import retry as retry_module
 from src.core.utils.retry import with_retries
+from tests.helpers.logs import capture_logger
 
 
 class SyncCounter:
@@ -77,3 +80,27 @@ async def test_with_retries_async_raises_after_max(
 
     assert counter.calls == 2
     sleep_mock.assert_awaited_once()
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+async def test_with_retries_logs_no_error_text(
+    kind: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("src.core.utils.retry.time.sleep", Mock())
+    monkeypatch.setattr("src.core.utils.retry.asyncio.sleep", AsyncMock())
+    counter = (
+        SyncCounter(fail_times=2, result=1)
+        if kind == "sync"
+        else AsyncCounter(fail_times=2, result=1)
+    )
+
+    with (
+        capture_logger(caplog, retry_module.logger),
+        pytest.raises(ValueError, match="fail"),
+    ):
+        outcome = with_retries(max_retries=2, delay=0)(counter.run)()
+        if isinstance(outcome, Awaitable):
+            await outcome
+
+    assert "ValueError" in caplog.text
+    assert "fail\n" not in caplog.text.replace("Failed", "")

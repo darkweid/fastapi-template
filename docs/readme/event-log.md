@@ -53,7 +53,8 @@ that shapes everything below: a payload cannot be pruned once written.
    subscriber, all in the action's transaction, so a rolled-back action
    leaves neither an audit row nor a subscriber's work claiming it happened.
    The row goes in a SAVEPOINT and a failed INSERT is swallowed into Sentry:
-   an audit row is never worth failing the action it describes. The session
+   an audit row is never worth failing the action it describes. Only a lost
+   connection is raised on: it took the action with it. The session
    is flushed first, so a constraint violation of the *action* surfaces to
    the caller instead of being swallowed as a logging failure. A use case
    never calls `uow.event_logs.record` itself.

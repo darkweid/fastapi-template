@@ -80,7 +80,7 @@ class RegisterUseCase:
                     await self.notifier.release_throttle(slot)
                 raise
 
-        logger.info("[Register User] User '%s' registered successfully.", data.username)
+        logger.info("[Register User] User %s registered successfully.", user.id)
         return UserProfileViewModel.model_validate(user)
 
     async def _queue_verification(

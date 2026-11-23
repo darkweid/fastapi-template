@@ -9,6 +9,7 @@ from taskiq.decor import AsyncTaskiqDecoratedTask
 from loggers import get_logger
 from src.core.auth.challenges import delete_if_value
 from src.core.database.uow import ApplicationUnitOfWork
+from src.core.errors.describe import scrub
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.outbox.dependencies import get_task_dispatcher
 from src.core.outbox.dispatcher import TaskDispatcher
@@ -106,15 +107,16 @@ class EmailNotifier:
                 throttle_key=slot.key if slot else None,
                 throttle_owner=slot.owner if slot else None,
             )
-        except Exception:
+        except Exception as error:
             # The outbox insert failed with the transaction still open: release
             # the throttle so the user can retry immediately.
             if slot:
                 await self.release_throttle(slot)
-            logger.exception(
+            logger.error(
                 "Failed to enqueue %s email for %s",
                 self.log_label,
                 mask_email(user.email),
+                exc_info=scrub(error),
             )
             raise
         return slot

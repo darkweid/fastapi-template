@@ -12,6 +12,7 @@ from src.core.email_service.tasks import (
     send_email_task,
     send_email_with_s3_attachments_task,
 )
+from src.core.errors.describe import describe_error
 from src.core.errors.exceptions import InfrastructureException
 from src.core.outbox.dispatcher import TaskDispatcher
 from src.core.utils.security import mask_email
@@ -52,7 +53,7 @@ class EmailService:
                 [mask_email(str(e)) for e in normalized],
             )
         except Exception as e:
-            logger.error("Failed to send template email: %s", e)
+            logger.error("Failed to send template email: %s", describe_error(e))
             raise
 
     async def send_template_email_with_delay(
@@ -82,7 +83,7 @@ class EmailService:
                 "Email task queued for %s", [mask_email(str(e)) for e in normalized]
             )
         except Exception as e:
-            logger.error("Failed to queue template email task: %s", e)
+            logger.error("Failed to queue template email task: %s", describe_error(e))
             raise
 
     async def send_file_to_email_with_delay(
@@ -141,7 +142,7 @@ class EmailService:
             )
 
         except Exception as e:
-            logger.error("Failed to send email with attachments: %s", e)
+            logger.error("Failed to send email with attachments: %s", describe_error(e))
             raise
 
         finally:

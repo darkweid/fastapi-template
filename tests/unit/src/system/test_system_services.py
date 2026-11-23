@@ -8,9 +8,11 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.core.errors.exceptions import ServiceUnavailableException
+from src.system import services as system_services
 from src.system.repositories import SystemRepository
 from src.system.services import HealthService, ReadinessService
 from tests.fakes.db import FakeAsyncSession
+from tests.helpers.logs import capture_logger
 
 
 class RedisOk:
@@ -154,3 +156,27 @@ async def test_health_reports_no_ratio_without_a_memory_cap() -> None:
 
     assert result.status == "ok"
     assert result.redis_memory_used_ratio is None
+
+
+async def test_a_failed_probe_logs_no_error_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A connection error quotes the URL it was given, password included."""
+    secret = "redis://:hunter2@host"
+    session = FakeAsyncSession()
+    session.execute = AsyncMock(side_effect=SQLAlchemyError(secret))
+    redis_client = Mock()
+    redis_client.ping = AsyncMock(side_effect=RuntimeError(secret))
+    redis_client.info = AsyncMock(side_effect=RuntimeError(secret))
+
+    readiness = ReadinessService(repository=SystemRepository(), session=session)
+    health = HealthService(redis_client=redis_client, readiness=readiness)
+
+    with capture_logger(caplog, system_services.logger):
+        await health.get_status()
+        redis_client.ping = AsyncMock(return_value=True)
+        await health.get_status()
+
+    for probe in ("Postgres health", "Redis health", "Redis memory"):
+        assert f"{probe} check failed: " in caplog.text
+    assert "hunter2" not in caplog.text

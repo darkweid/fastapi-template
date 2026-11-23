@@ -1,10 +1,15 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from src.core.errors.exceptions import InstanceProcessingException
 from src.core.utils.security import build_throttle_key
-from src.user.auth.services.email_notifier import EmailNotifier, ThrottleSlot
+from src.user.auth.services.email_notifier import (
+    EmailNotifier,
+    ThrottleSlot,
+    logger as email_notifier_logger,
+)
 from src.user.auth.tasks import (
     send_reset_password_email_task,
     send_verification_email_task,
@@ -12,6 +17,7 @@ from src.user.auth.tasks import (
 from tests.factories.user_factory import build_user
 from tests.fakes.db import FakeUnitOfWork
 from tests.fakes.redis import InMemoryRedis
+from tests.helpers.logs import capture_logger
 
 NOTIFIER_CONFIGS = [
     pytest.param(
@@ -231,3 +237,29 @@ async def test_the_queued_task_carries_the_slot_the_send_answers(
         "throttle_key": "slot",
         "throttle_owner": slot.owner,
     }
+
+
+async def test_a_failed_queueing_logs_no_row(
+    fake_redis: InMemoryRedis,
+    fake_uow: FakeUnitOfWork,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The outbox row holds the address and the link, and a driver error quotes it."""
+    dispatcher = AsyncMock()
+    dispatcher.enqueue_transactional.side_effect = IntegrityError(
+        "INSERT", None, Exception("Failing row contains (user@example.com)")
+    )
+    notifier = build_notifier(
+        dispatcher, fake_redis, send_verification_email_task, "throttled", "log"
+    )
+
+    with (
+        capture_logger(caplog, email_notifier_logger),
+        pytest.raises(IntegrityError),
+    ):
+        await notifier.send(
+            uow=fake_uow, user=build_user(email="user@example.com"), throttle_key=None
+        )
+
+    assert "IntegrityError driver=Exception" in caplog.text
+    assert "user@example.com" not in caplog.text

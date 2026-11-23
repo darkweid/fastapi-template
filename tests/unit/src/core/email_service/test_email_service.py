@@ -1,8 +1,11 @@
+import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+from aiosmtplib import SMTPRecipientRefused, SMTPRecipientsRefused
 import pytest
 
+from src.core.email_service import service as service_module
 from src.core.email_service.interfaces import AbstractMailer
 from src.core.email_service.schemas import MailTemplateBodyFile, MailTemplateDataBody
 from src.core.email_service.service import EmailService
@@ -13,6 +16,7 @@ from src.core.email_service.tasks import (
 from src.core.errors.exceptions import InfrastructureException
 from src.main.config import config
 from tests.fakes.email import MockMailer
+from tests.helpers.logs import capture_logger
 
 
 class FailingMailer(AbstractMailer):
@@ -361,3 +365,31 @@ async def test_send_email_with_attachments_keeps_file_on_error_without_cleanup(
         )
 
     assert file_path.exists()
+
+
+@pytest.mark.parametrize("delivery", ["template", "attachments", "queue"])
+async def test_a_failed_delivery_logs_no_address(
+    delivery: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    refused = SMTPRecipientsRefused([SMTPRecipientRefused(550, "unknown", "a@b.com")])
+    mailer = AsyncMock(spec=MockMailer)
+    mailer.send_template.side_effect = refused
+    mailer.send_with_attachments.side_effect = refused
+    dispatcher = AsyncMock()
+    dispatcher.enqueue.side_effect = refused
+    service = EmailService(mailer=mailer, dispatcher=dispatcher)
+    body = MailTemplateDataBody(title="t", link="https://example.com")
+
+    with capture_logger(caplog, service_module.logger), contextlib.suppress(Exception):
+        if delivery == "template":
+            await service.send_template_email("S", ["a@b.com"], "t.html", body)
+        elif delivery == "queue":
+            await service.send_template_email_with_delay(
+                "S", ["a@b.com"], "t.html", body
+            )
+        else:
+            await service.send_email_with_attachments("S", ["a@b.com"], "b", [])
+
+    assert "SMTPRecipientsRefused" in caplog.text
+    assert "a@b.com" not in caplog.text

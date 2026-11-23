@@ -15,7 +15,6 @@ from src.core.redis.core import create_redis_client
 from src.core.redis.lifecycle import verify_redis_client
 from src.core.storage.s3.dependencies import build_s3_adapter
 from src.main.config import config
-from src.main.sentry import init_sentry
 from taskiq_worker.broker import broker
 
 logger = get_logger(__name__)
@@ -23,8 +22,6 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    init_sentry()
-
     # Each close is pushed right before its resource starts, and every close is
     # safe on a resource that never finished starting. A failure anywhere in
     # startup, or an exception out of the app, therefore closes whatever was

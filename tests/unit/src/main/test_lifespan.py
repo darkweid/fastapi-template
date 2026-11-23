@@ -54,11 +54,6 @@ def patched_infra_lifecycle(monkeypatch: pytest.MonkeyPatch) -> Generator[list[s
     async def http_shutdown() -> None:
         calls.append("http_shutdown")
 
-    monkeypatch.setattr(
-        lifespan_module,
-        "init_sentry",
-        Mock(side_effect=lambda: calls.append("init_sentry")),
-    )
     monkeypatch.setattr(lifespan_module, "create_redis_client", create_redis_client)
     monkeypatch.setattr(lifespan_module, "verify_redis_client", verify_redis_client)
     monkeypatch.setattr(lifespan_module.FastAPILimiter, "init", limiter_init)
@@ -84,7 +79,6 @@ async def test_lifespan_initializes_and_shutdowns(
         assert isinstance(app.state.redis_client, FakeRedisClient)
 
     assert patched_infra_lifecycle == [
-        "init_sentry",
         "redis_create",
         "redis_verify",
         "limiter_startup",
@@ -214,7 +208,6 @@ async def test_a_failed_redis_ping_closes_the_client(
             pytest.fail("the app must not start")
 
     assert patched_infra_lifecycle == [
-        "init_sentry",
         "redis_create",
         "redis_verify",
         "redis_close",
@@ -282,7 +275,6 @@ async def test_a_failed_limiter_startup_closes_the_limiter_and_the_client(
             pytest.fail("the app must not start")
 
     assert patched_infra_lifecycle == [
-        "init_sentry",
         "redis_create",
         "redis_verify",
         "limiter_startup",
@@ -310,7 +302,6 @@ async def test_a_failed_cache_startup_closes_what_was_opened(
             pytest.fail("the app must not start")
 
     assert patched_infra_lifecycle == [
-        "init_sentry",
         "redis_create",
         "redis_verify",
         "limiter_startup",
@@ -368,7 +359,6 @@ async def test_lifespan_starts_the_cache_on_the_dedicated_client_when_configured
         assert app.state.redis_client is not dedicated
 
     assert patched_infra_lifecycle == [
-        "init_sentry",
         "redis_create",
         "redis_verify",
         "limiter_startup",

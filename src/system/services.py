@@ -4,6 +4,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loggers import get_logger
+from src.core.errors.describe import describe_error
 from src.core.errors.exceptions import ServiceUnavailableException
 from src.system.repositories import SystemRepository
 from src.system.schemas import HealthCheckResponse
@@ -53,17 +54,15 @@ class ReadinessService:
 
     async def check_postgres(self) -> bool:
         """
-        Catches everything on purpose: a host that does not resolve reaches the
-        probe as a bare socket.gaierror from the driver, never wrapped into
-        SQLAlchemyError, and a probe that raises on an unreachable database
-        defeats its own point.
+        Catches everything on purpose: a probe that raises on an unreachable
+        database defeats its own point.
         """
         try:
             async with asyncio.timeout(POSTGRES_PROBE_TIMEOUT_SECONDS):
                 await self.repository.ping(self.session)
             return True
         except Exception as exc:
-            logger.warning("Postgres health check failed: %s", exc)
+            logger.warning("Postgres health check failed: %s", describe_error(exc))
             return False
 
 
@@ -109,7 +108,7 @@ class HealthService:
         try:
             return bool(await self.redis_client.ping())
         except Exception as exc:
-            logger.warning("Redis health check failed: %s", exc)
+            logger.warning("Redis health check failed: %s", describe_error(exc))
             return False
 
     async def _redis_memory_used_ratio(self) -> float | None:
@@ -119,7 +118,7 @@ class HealthService:
             used = int(memory["used_memory"])
             limit = int(memory["maxmemory"])
         except Exception as exc:
-            logger.warning("Redis memory check failed: %s", exc)
+            logger.warning("Redis memory check failed: %s", describe_error(exc))
             return None
         if limit <= 0:
             return None

@@ -1,9 +1,10 @@
 import sentry_sdk
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loggers import get_logger
 from src.core.database.repositories import BaseRepository
+from src.core.errors.describe import scrub
 from src.event_log.events import PublishedEvent
 from src.event_log.models import EventLog
 
@@ -21,7 +22,8 @@ class EventLogRepository(BaseRepository[EventLog]):
     default_order_by = "created_at"
 
     async def record(self, session: AsyncSession, published: PublishedEvent) -> None:
-        """Append one row, and never let that failure become the caller's.
+        """Append one row, and never let that failure become the caller's, short
+        of a lost connection.
 
         Called by `ApplicationUnitOfWork.publish`, never by a use case: the
         journal is one reader of an event, and nothing else may hang on
@@ -53,9 +55,16 @@ class EventLogRepository(BaseRepository[EventLog]):
                     )
                 )
         except SQLAlchemyError as error:
+            # The connection took the caller's transaction with it: there is no
+            # action left to protect, and going on would end in a
+            # PendingRollbackError that hides the outage.
+            if isinstance(error, DBAPIError) and error.connection_invalidated:
+                raise
             # Swallowed on purpose: an audit row is never worth failing the
             # action it describes. The SAVEPOINT is what keeps that possible -
             # its rollback undoes the failed INSERT and leaves the caller's own
             # work intact. Sentry is what keeps the failure visible.
-            logger.error("[EventLog] Failed to record %s", event.code, exc_info=error)
-            sentry_sdk.capture_exception(error)
+            # A driver error quotes the row, so only a scrubbed copy leaves.
+            failure = scrub(error)
+            logger.error("[EventLog] Failed to record %s", event.code, exc_info=failure)
+            sentry_sdk.capture_exception(failure)

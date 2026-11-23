@@ -1,9 +1,11 @@
 from unittest.mock import AsyncMock
 
+from aiosmtplib import SMTPException
 import pytest
 
-from src.core.database.uow.sqlalchemy import SQLAlchemyUnitOfWork
+from src.core.database.uow.sqlalchemy import SQLAlchemyUnitOfWork, logger
 from tests.fakes.db import FakeAsyncSession
+from tests.helpers.logs import capture_logger
 
 
 @pytest.fixture
@@ -72,3 +74,24 @@ async def test_add_hook_after_completion_raises(uow: SQLAlchemyUnitOfWork) -> No
         await uow.commit()
     with pytest.raises(RuntimeError):
         uow.add_after_commit_hook(AsyncMock())
+
+
+async def test_a_failing_hook_logs_no_address(
+    uow: SQLAlchemyUnitOfWork, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A hook publishes tasks and invalidates caches: an SMTP or Redis error it
+    raises can quote what it was handed."""
+
+    refused = SMTPException("refused: secret@example.com")
+
+    async def broken() -> None:
+        raise refused
+
+    with capture_logger(caplog, logger):
+        async with uow:
+            uow.add_after_commit_hook(broken)
+            await uow.commit()
+
+    assert "After-commit hook failed" in caplog.text
+    assert "SMTPException" in caplog.text
+    assert "secret@example.com" not in caplog.text

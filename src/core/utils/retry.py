@@ -6,6 +6,7 @@ import time
 from typing import Any, TypeVar, cast
 
 from loggers import get_logger
+from src.core.errors.describe import describe_error
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,7 @@ def with_retries(max_retries: int = 3, delay: int = 2) -> Callable[[F], F]:
                             "[RETRY] Async function '%s' attempt %d failed: %s",
                             func.__name__,
                             attempt,
-                            e,
+                            describe_error(e),
                         )
                         if attempt == max_retries:
                             raise
@@ -52,7 +53,7 @@ def with_retries(max_retries: int = 3, delay: int = 2) -> Callable[[F], F]:
                         "[RETRY] Sync function '%s' attempt %d failed: %s",
                         func.__name__,
                         attempt,
-                        e,
+                        describe_error(e),
                     )
                     if attempt == max_retries:
                         raise
