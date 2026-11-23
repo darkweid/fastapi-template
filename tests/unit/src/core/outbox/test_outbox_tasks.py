@@ -5,8 +5,10 @@ from uuid import uuid4
 from redis import exceptions as redis_exceptions
 
 from src.core.outbox import tasks as outbox_tasks
+from src.core.outbox.enums import OutboxMessageStatus
 from src.core.outbox.tasks import (
     MAX_PUBLISH_ATTEMPTS,
+    PURGE_BATCH_SIZE,
     outbox_purge,
     outbox_sweeper,
 )
@@ -109,19 +111,44 @@ async def test_sweeper_fails_unregistered_task_immediately() -> None:
     assert result == "Published 0, failed 1."
 
 
-async def test_purge_uses_retention_cutoff() -> None:
-    uow, repo = make_uow([])
-    repo.purge_published = AsyncMock(return_value=5)
+def purge_uows(*deleted: int) -> tuple[list[FakeUnitOfWork], AsyncMock]:
+    """One unit of work per batch; each batch answers the next count."""
+    repo = AsyncMock()
+    repo.purge = AsyncMock(side_effect=deleted)
+    return [FakeUnitOfWork(repositories={"outbox": repo}) for _ in deleted], repo
+
+
+async def test_purge_keeps_each_status_for_its_own_retention() -> None:
+    uows, repo = purge_uows(5, 2)
     frozen_now = get_utc_now()
 
-    with patch_uow(uow), patch.object(
-        outbox_tasks, "get_utc_now", return_value=frozen_now
-    ):
+    with patch.object(
+        outbox_tasks, "ApplicationUnitOfWork", side_effect=uows
+    ), patch.object(outbox_tasks, "get_utc_now", return_value=frozen_now):
         result = await outbox_purge(session=FakeAsyncSession())
 
-    cutoff = repo.purge_published.await_args.args[1]
-    assert cutoff == frozen_now - timedelta(days=7)
-    assert result == "Deleted 5 published outbox messages."
+    assert [awaited.args[1:] for awaited in repo.purge.await_args_list] == [
+        (OutboxMessageStatus.PUBLISHED, frozen_now - timedelta(days=7)),
+        (OutboxMessageStatus.FAILED, frozen_now - timedelta(days=30)),
+    ]
+    assert result == "Deleted 5 published, 2 failed outbox messages."
+
+
+async def test_purge_commits_each_batch_and_stops_at_a_short_one() -> None:
+    """One transaction over the whole backlog would hold its row locks for as long
+    as the backlog is big, and lose all of it to one failure."""
+    full = PURGE_BATCH_SIZE
+    uows, repo = purge_uows(full, full, 1, full, 0)
+
+    with patch.object(outbox_tasks, "ApplicationUnitOfWork", side_effect=uows):
+        result = await outbox_purge(session=FakeAsyncSession())
+
+    assert repo.purge.await_count == 5
+    assert all(
+        awaited.kwargs == {"limit": full} for awaited in repo.purge.await_args_list
+    )
+    assert [uow.commit.await_count for uow in uows] == [1] * 5
+    assert result == f"Deleted {2 * full + 1} published, {full} failed outbox messages."
 
 
 async def test_unreachable_broker_does_not_spend_publish_attempts() -> None:

@@ -19,6 +19,9 @@ class OutboxMessage(Base, UUID7IDMixin, TimestampMixin):
             "created_at",
             postgresql_where=text("status = 'PENDING'"),
         ),
+        # The purge's, one per status it deletes.
+        Index(None, "published_at", postgresql_where=text("status = 'PUBLISHED'")),
+        Index(None, "updated_at", postgresql_where=text("status = 'FAILED'")),
     )
 
     # The insert's own clock, not now(): now() is the start of the enqueuing

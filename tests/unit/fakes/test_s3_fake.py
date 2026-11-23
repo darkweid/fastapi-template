@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import hashlib
+from io import BytesIO
 
 from botocore.exceptions import ClientError
+from fastapi import UploadFile
 import pytest
 
-from src.core.errors.exceptions import InstanceProcessingException
+from src.core.errors.exceptions import (
+    InstanceProcessingException,
+    PayloadTooLargeException,
+)
 from tests.fakes.s3 import InMemoryS3Client
 
 
@@ -115,3 +120,13 @@ async def test_fake_objects_shows_only_the_default_bucket() -> None:
     await s3.upload_bytes("b", b"y", bucket="other")
 
     assert s3.objects == {"a": b"x"}
+
+
+async def test_fake_refuses_the_large_upload_the_adapter_refuses() -> None:
+    s3 = InMemoryS3Client()
+    upload = UploadFile(filename="a", file=BytesIO(b"123"))
+
+    with pytest.raises(PayloadTooLargeException):
+        await s3.upload_large_uploadfile("a", upload, max_size_bytes=2)
+
+    assert s3.objects == {}

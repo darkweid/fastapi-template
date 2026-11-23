@@ -2,8 +2,10 @@ from datetime import timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.dialects import postgresql
 
+from src.core.outbox.enums import OutboxMessageStatus
 from src.core.outbox.repositories import OutboxRepository
 from src.core.utils.datetime_utils import get_utc_now
 from tests.fakes.db import FakeAsyncSession
@@ -57,18 +59,31 @@ async def test_mark_publish_failure_not_final_keeps_status() -> None:
     assert "status" not in {c.key for c in query._values}  # noqa: SLF001
 
 
-async def test_purge_published_filters_status_and_cutoff() -> None:
+async def test_purge_deletes_a_bounded_batch() -> None:
+    """Inlined, the planner may run the LIMIT subquery more than once per
+    statement and delete more than the limit."""
     session = FakeAsyncSession()
     session.execute.return_value = MagicMock(rowcount=3)
 
-    deleted = await OutboxRepository().purge_published(
-        session, cutoff=get_utc_now() - timedelta(days=7)
+    deleted = await OutboxRepository().purge(
+        session, OutboxMessageStatus.PUBLISHED, get_utc_now(), limit=10
     )
 
     assert deleted == 3
     sql = _compiled_sql(session)
-    assert "DELETE FROM outbox_messages" in sql
-    assert "status" in sql and "published_at" in sql
+    assert "AS MATERIALIZED" in sql
+    assert "LIMIT" in sql
+    assert "FOR UPDATE SKIP LOCKED" in sql
+
+
+async def test_purge_refuses_a_status_that_is_still_to_deliver() -> None:
+    with pytest.raises(KeyError):
+        await OutboxRepository().purge(
+            FakeAsyncSession(),
+            OutboxMessageStatus.PENDING,  # type: ignore[arg-type]
+            get_utc_now(),
+            limit=10,
+        )
 
 
 async def test_mark_publish_failure_can_leave_attempts_alone() -> None:

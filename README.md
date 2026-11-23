@@ -69,11 +69,6 @@ pointing at localhost, so the example value cannot reach a deploy unnoticed. It 
 rejects `TESTING=true`, `EMAIL_USE_TLS` and `EMAIL_STARTTLS` with the same value, and
 `S3_VERIFY_SSL=false` while S3 is enabled.
 
-Upgrading an existing fork: the email tasks no longer take `base_url` and the
-path as arguments, so any message already sitting in the outbox or the broker
-carries a payload the new signature cannot bind. Drain the queue before rolling
-out, or expect those specific emails to fail their retries and be dropped.
-
 ## Delayed Email Attachments
 `EmailService.send_file_to_email_with_delay` queues `send_email_with_s3_attachments_task`
 (`src/core/email_service/tasks.py`) with a list of S3 object keys, not local file paths
@@ -86,11 +81,6 @@ send with `cleanup=True` — deletes the objects, so a retry after a failed send
 re-download and re-send the same keys. The synchronous `send_email_with_attachments`
 path is unaffected: it still reads from local `Path`s and deletes them only when
 called with `cleanup=True`.
-
-Upgrading an existing fork: the old `send_email_with_file_task` (disk-path
-attachments) is gone, replaced by `send_email_with_s3_attachments_task` (S3-key
-attachments) with a different signature. Drain the queue before rolling out, or
-expect those specific emails to fail their retries and be dropped.
 
 ## Auth Cookie & CSRF Configuration
 The refresh token is delivered as an httponly cookie by default, with a stateless
@@ -168,16 +158,22 @@ A client should expect and can rely on:
   `If-None-Match` on the next request; a match returns `304 Not Modified` with no
   body.
 - `X-Cache-Status: HIT` or `MISS` — whether the response came from the cache or was
-  computed and stored on this call.
+  computed on this call.
 
 `PATCH /v1/users/me` invalidates the cached summary for the updated user as part of
 the same transaction, so a `GET` that starts after the `PATCH` has returned normally
-observes the new body. Two gaps are left open on purpose, both bounded by the TTL:
-a `GET` that missed the cache *before* the `PATCH` and is still computing writes its
-already-stale body after the invalidation; and if Redis is unreachable at that
-moment, the counter deletion is swallowed (the cache never fails a request) while the
-transaction commits, so a value cached before the outage keeps serving until it
-expires.
+observes the new body. A `GET` that missed the cache before the `PATCH` and is still
+computing reserved its version counters first, so its already-stale body is not
+stored. Three gaps are left open on purpose, each bounded by the TTL:
+
+- Redis is unreachable at that moment: the counter deletion is swallowed (the cache
+  never fails a request) while the transaction commits. A value cached before the
+  outage keeps serving, and a value computed across it may still be stored.
+- The process dies between the commit and the after-commit invalidation: a value
+  another request started computing after the invalidation inside the transaction
+  and before the commit keeps serving.
+- Redis restarts or fails over and loses the deletion: the counter comes back, and
+  with it every value stored under it.
 
 That invalidation names one user. A write that touches many at once — a bulk
 import, a role migration — instead flushes them all through the tag every user key

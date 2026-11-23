@@ -6,17 +6,23 @@ import redis.exceptions as redis_exc
 
 from loggers import get_logger
 from src.core.cache.base import BaseCache
-from src.core.cache.interface import CacheKey, Serializer
+from src.core.cache.interface import CacheKey, CacheReservation, Serializer
 from src.core.cache.redis_scripts import (
     CACHE_DELETE_SCRIPT,
     CACHE_GET_SCRIPT,
     CACHE_INVALIDATE_SCRIPT,
+    CACHE_RESERVE_SCRIPT,
     CACHE_SET_SCRIPT,
 )
 from src.core.errors.describe import describe_error
 from src.core.redis.degradation import RedisDegradationReporter
 
 logger = get_logger(__name__)
+
+# How long a miss may take between its reservation and its write; a value computed
+# for longer is not stored. A miss that stores nothing leaves its counters for as
+# long, and a path-derived namespace makes one per guessed id.
+RESERVATION_TTL_SECONDS = 300
 
 # A lost or unresponsive connection is a cache outage worth failing open on.
 # Every other RedisError - a ResponseError from a malformed argument or a broken
@@ -39,7 +45,7 @@ class RedisCache(BaseCache):
     value happen in a single round trip. Transport failures and OOM refusals are
     swallowed (a cache outage must not fail a request); programmer errors -
     unserializable values, a ttl outside (0, version_ttl], a rejected command -
-    are raised. Only a successful write reports recovery.
+    are raised. Only a stored value reports recovery.
     """
 
     def __init__(
@@ -86,9 +92,27 @@ class RedisCache(BaseCache):
         logger.debug("[Cache] hit %s", key)
         return cast(str, raw)
 
-    async def _write_raw(self, key: CacheKey, raw: str, ttl: int) -> None:
+    async def _reserve_counters(
+        self, counters: Sequence[str]
+    ) -> CacheReservation | None:
         try:
-            await self._eval(
+            versions = await self._eval(
+                CACHE_RESERVE_SCRIPT,
+                counters,
+                str(min(self._version_ttl, RESERVATION_TTL_SECONDS)),
+            )
+        except FAIL_OPEN_ERRORS as error:
+            self._on_counters_outage("reserve", counters, error)
+            return None
+        # Not a recovery: with every counter present this read and extended them at
+        # most, which a full Redis still does.
+        return tuple(versions)
+
+    async def _write_raw(
+        self, key: CacheKey, raw: str, ttl: int, reservation: CacheReservation
+    ) -> None:
+        try:
+            stored = await self._eval(
                 CACHE_SET_SCRIPT,
                 self._counter_keys(key),
                 self._namespace_prefix(key.namespace),
@@ -96,9 +120,13 @@ class RedisCache(BaseCache):
                 raw,
                 str(ttl),
                 str(self._version_ttl),
+                *reservation,
             )
         except FAIL_OPEN_ERRORS as error:
             self._on_redis_outage("write", key, error)
+            return
+        if not stored:
+            logger.debug("[Cache] %s invalidated while computed, not stored", key)
             return
         # Only a write proves recovery: under OOM a read or a DEL still succeeds,
         # so recovering on one would restart the cooldown on every miss.
@@ -120,12 +148,18 @@ class RedisCache(BaseCache):
             await self._eval(CACHE_INVALIDATE_SCRIPT, counters)
             logger.debug("[Cache] counters %s retired", list(counters))
         except FAIL_OPEN_ERRORS as error:
-            logger.warning(
-                "[Cache] invalidate failed for counters %s: %s",
-                list(counters),
-                describe_error(error),
-            )
-            self._reporter.report_degraded(error)
+            self._on_counters_outage("invalidate", counters, error)
+
+    def _on_counters_outage(
+        self, operation: str, counters: Sequence[str], error: redis_exc.RedisError
+    ) -> None:
+        logger.warning(
+            "[Cache] %s failed for counters %s: %s",
+            operation,
+            list(counters),
+            describe_error(error),
+        )
+        self._reporter.report_degraded(error)
 
     def _on_redis_outage(
         self, operation: str, key: CacheKey, error: redis_exc.RedisError

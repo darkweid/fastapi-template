@@ -31,6 +31,8 @@ services:
       context: ..
       dockerfile: infra/postgres/Dockerfile
     image: template-postgres-test:18
+    # Reaps a healthcheck's orphaned processes, as in infra/docker-compose.yml.
+    init: true
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

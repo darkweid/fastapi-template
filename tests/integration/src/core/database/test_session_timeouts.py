@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from src.core.database.engine import session_timeouts
 from src.core.database.transactions import set_local_statement_timeout
 from src.main.config import get_settings
+from tests.helpers.races import WAIT_SECONDS
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -39,6 +40,17 @@ async def limited_engine(database_template: str) -> AsyncGenerator[AsyncEngine]:
 
 async def _show(session: AsyncSession, setting: str) -> str:
     return (await session.execute(text(f"SHOW {setting}"))).scalar_one()
+
+
+async def _wait_until_ended(engine: AsyncEngine, backend: int) -> None:
+    async with asyncio.timeout(WAIT_SECONDS), engine.connect() as connection:
+        while await connection.scalar(
+            text("SELECT count(*) FROM pg_stat_activity WHERE pid = :pid"),
+            {"pid": backend},
+        ):
+            # A transaction keeps the snapshot of pg_stat_activity it first read.
+            await connection.rollback()
+            await asyncio.sleep(0.01)
 
 
 async def test_connection_starts_with_the_configured_limits(
@@ -71,13 +83,13 @@ async def test_a_transaction_still_sets_its_own_statement_cap(
 
 
 async def test_server_ends_a_transaction_left_idle_past_the_limit(
-    database_template: str,
+    limited_engine: AsyncEngine,
 ) -> None:
     engine = _engine(idle_in_transaction_timeout_seconds=0.2)
     try:
         async with AsyncSession(engine) as session:
-            await session.execute(text("SELECT 1"))
-            await asyncio.sleep(1)
+            backend = await session.scalar(text("SELECT pg_backend_pid()"))
+            await _wait_until_ended(limited_engine, backend)
             with pytest.raises(DBAPIError):
                 await session.execute(text("SELECT 1"))
             await session.rollback()

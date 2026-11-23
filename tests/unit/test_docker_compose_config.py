@@ -325,3 +325,11 @@ def test_the_postgres_healthcheck_goes_over_tcp() -> None:
         compose = yaml.safe_load((PROJECT_ROOT / "infra" / name).read_text("utf-8"))
         test = compose["services"]["postgres"]["healthcheck"]["test"]
         assert "pg_isready -h 127.0.0.1 " in " ".join(test), name
+
+
+def test_postgres_runs_under_an_init_wherever_it_is_started() -> None:
+    """A healthcheck that times out leaves its process to PID 1. The postmaster
+    never reaps it, and reads a nonzero exit as a crashed backend of its own."""
+    for name in ("docker-compose.yml", "docker-compose.test.yml"):
+        text = (PROJECT_ROOT / "infra" / name).read_text(encoding="utf-8")
+        assert yaml.safe_load(text)["services"]["postgres"]["init"] is True, name

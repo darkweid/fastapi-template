@@ -47,3 +47,15 @@ async def test_ttl_defaults_to_configured_value(cache: InMemoryCache) -> None:
     await cache.set(KEY, {"name": "ada"})
 
     assert cache.ttl_of(KEY) == 60
+
+
+async def test_a_refused_store_keeps_nothing(cache: InMemoryCache) -> None:
+    """A value under retired generations is out of every read's reach, so it would
+    only hold memory."""
+    reservation = await cache.reserve(KEY)
+    await cache.invalidate(KEY.namespace)
+    await cache.set_reserved(KEY, "{}", reservation)
+    assert await cache.reserve(KEY) != reservation
+    await cache.set_reserved(KEY, "{}", reservation)
+
+    assert cache._entries == {}  # noqa: SLF001

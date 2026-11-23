@@ -204,7 +204,8 @@ async def test_worker_shutdown_closes_every_client_when_one_close_raises(
     clean_cache_singleton: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cache client closes before the tasks client it may be borrowing, and
+    """The cache client closes before the tasks client it may be borrowing, the
+    receiver's after both, and
     the retry schedule source - whose pool SmartRetryMiddleware writes every
     retry through - closes too, even when another close raises."""
     closed: list[str] = []
@@ -216,9 +217,15 @@ async def test_worker_shutdown_closes_every_client_when_one_close_raises(
     async def close_tasks_redis_client() -> None:
         closed.append("tasks")
 
+    async def close_marker_redis_client() -> None:
+        closed.append("marker")
+
     async def close_http_clients() -> None:
         raise RuntimeError("provider session refused to close")
 
+    monkeypatch.setattr(
+        worker_app, "close_marker_redis_client", close_marker_redis_client
+    )
     monkeypatch.setattr(
         worker_app, "close_cache_redis_client", close_cache_redis_client
     )
@@ -231,5 +238,5 @@ async def test_worker_shutdown_closes_every_client_when_one_close_raises(
     with pytest.raises(RuntimeError, match="refused to close"):
         await worker_app.on_worker_shutdown(TaskiqState())
 
-    assert closed == ["cache", "tasks"]
+    assert closed == ["cache", "tasks", "marker"]
     retry_source.shutdown.assert_awaited_once()

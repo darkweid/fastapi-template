@@ -7,9 +7,15 @@ import hashlib
 from botocore.exceptions import ClientError
 from starlette.datastructures import UploadFile
 
-from src.core.errors.exceptions import InstanceProcessingException
+from src.core.errors.exceptions import (
+    InstanceProcessingException,
+    PayloadTooLargeException,
+)
 from src.core.storage.s3.adapter import MAX_LIST_PAGE_SIZE
-from src.core.storage.s3.interface import StoredObject
+from src.core.storage.s3.interface import (
+    DEFAULT_MULTIPART_PART_SIZE_BYTES,
+    StoredObject,
+)
 
 
 class InMemoryS3Client:
@@ -80,11 +86,14 @@ class InMemoryS3Client:
         file: UploadFile,
         *,
         bucket: str | None = None,
-        part_size_bytes: int = 8 * 1024 * 1024,
+        max_size_bytes: int,
+        part_size_bytes: int = DEFAULT_MULTIPART_PART_SIZE_BYTES,
         content_type: str | None = None,
         cache_control: str | None = None,
     ) -> None:
         data = await file.read()
+        if len(data) > max_size_bytes:
+            raise PayloadTooLargeException("Upload file size exceeds configured limit.")
         await self.upload_bytes(
             key,
             data,

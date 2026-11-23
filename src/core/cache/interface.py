@@ -5,6 +5,9 @@ from typing import Any, Protocol, TypeVar
 
 T = TypeVar("T")
 
+# The generation of every counter of a key, in the key's own counter order.
+CacheReservation = tuple[str, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class CacheKey:
@@ -47,6 +50,13 @@ class Serializer(Protocol):
 
 
 class Cache(Protocol):
+    """
+    A value computed on a miss is stored through `get_or_set`, or through `reserve`
+    before the value is read and `set_reserved` after: an invalidation in between
+    then discards it. `set` and `set_raw` reserve at the write, so they are only
+    for a value that cannot have gone stale before the call.
+    """
+
     async def get(self, key: CacheKey, *, model: type[T] | None = None) -> Any: ...
 
     async def set(
@@ -58,6 +68,31 @@ class Cache(Protocol):
     async def set_raw(
         self, key: CacheKey, raw: str, *, ttl: int | None = None
     ) -> None: ...
+
+    async def reserve(self, key: CacheKey) -> CacheReservation | None:
+        """
+        Take the key's current generations, starting the missing ones.
+
+        A value that takes longer than five minutes to compute may be refused.
+        `None` when the cache is disabled or cannot take the reservation: the
+        value must not be stored.
+        """
+        ...
+
+    async def set_reserved(
+        self,
+        key: CacheKey,
+        raw: str,
+        reservation: CacheReservation | None,
+        *,
+        ttl: int | None = None,
+    ) -> None:
+        """
+        Store the value only if every generation still equals the reserved one.
+
+        A `None` reservation stores nothing.
+        """
+        ...
 
     async def delete(self, key: CacheKey) -> None: ...
 

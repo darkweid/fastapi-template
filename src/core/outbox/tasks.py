@@ -1,5 +1,5 @@
-from datetime import timedelta
-from typing import Annotated
+from datetime import datetime, timedelta
+from typing import Annotated, Literal
 
 from redis import exceptions as redis_exceptions
 import sentry_sdk
@@ -9,6 +9,7 @@ from taskiq import TaskiqDepends
 from loggers import get_logger
 from src.core.database.uow import ApplicationUnitOfWork
 from src.core.errors.describe import describe_error
+from src.core.outbox.enums import OutboxMessageStatus
 from src.core.outbox.models import OutboxMessage
 from src.core.utils.datetime_utils import get_utc_now
 from taskiq_worker.broker import broker
@@ -19,6 +20,11 @@ logger = get_logger(__name__)
 SWEEPER_BATCH_SIZE = 100
 MAX_PUBLISH_ATTEMPTS = 10
 PUBLISHED_RETENTION_DAYS = 7
+# Longer than the published one: a FAILED row is the only copy of a message that
+# was never delivered, and a person needs time to look at it. Not forever, because
+# its arguments may hold addresses.
+FAILED_RETENTION_DAYS = 30
+PURGE_BATCH_SIZE = 1000
 # How long a fresh row belongs to its own after-commit publish before the
 # sweeper may take it. Far longer than a kiq plus one UPDATE ever takes, and
 # short enough that a publish which did fail is retried within a sweep or two.
@@ -111,10 +117,35 @@ async def outbox_purge(
     *,
     session: Annotated[AsyncSession, TaskiqDepends(get_tasks_session)],
 ) -> str:
-    """Delete published outbox rows older than the retention window."""
-    cutoff = get_utc_now() - timedelta(days=PUBLISHED_RETENTION_DAYS)
-    uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
-    async with uow:
-        deleted = await uow.outbox.purge_published(uow.session, cutoff)
-        await uow.commit()
-    return f"Deleted {deleted} published outbox messages."
+    """Delete published and failed outbox rows older than their retention."""
+    now = get_utc_now()
+    published = await _purge_in_batches(
+        session,
+        OutboxMessageStatus.PUBLISHED,
+        now - timedelta(days=PUBLISHED_RETENTION_DAYS),
+    )
+    failed = await _purge_in_batches(
+        session,
+        OutboxMessageStatus.FAILED,
+        now - timedelta(days=FAILED_RETENTION_DAYS),
+    )
+    return f"Deleted {published} published, {failed} failed outbox messages."
+
+
+async def _purge_in_batches(
+    session: AsyncSession,
+    status: Literal[OutboxMessageStatus.PUBLISHED, OutboxMessageStatus.FAILED],
+    cutoff: datetime,
+) -> int:
+    total = 0
+    while True:
+        uow: ApplicationUnitOfWork = ApplicationUnitOfWork(session)
+        async with uow:
+            deleted = await uow.outbox.purge(
+                uow.session, status, cutoff, limit=PURGE_BATCH_SIZE
+            )
+            await uow.commit()
+        total += deleted
+        # A short batch is the last one, or the rest is locked: the next run's.
+        if deleted < PURGE_BATCH_SIZE:
+            return total

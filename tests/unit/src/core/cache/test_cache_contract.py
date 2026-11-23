@@ -245,6 +245,102 @@ async def test_get_or_set_runs_the_factory_once(cache: Cache) -> None:
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("warm", [False, True], ids=["cold", "warm"])
+@pytest.mark.parametrize("by_tag", [False, True], ids=["namespace", "tag"])
+async def test_a_value_computed_across_an_invalidation_is_not_stored(
+    cache: Cache, by_tag: bool, warm: bool
+) -> None:
+    """The factory read the row before the invalidation, so storing what it built
+    would serve the old row until its ttl. Cold is the read right after another
+    invalidation: no counter exists for the miss to remember."""
+    if warm:
+        await cache.set(OTHER_TAGGED_KEY, {"name": "grace"}, ttl=60)
+        await cache.set(OTHER_KEY, {"phone": "1"}, ttl=60)
+
+    async def factory() -> Sample:
+        if by_tag:
+            await cache.invalidate_tags("users")
+        else:
+            await cache.invalidate(TAGGED_KEY.namespace)
+        return Sample(name="stale")
+
+    returned = await cache.get_or_set(TAGGED_KEY, factory, ttl=60, model=Sample)
+
+    assert returned == Sample(name="stale")
+    assert await cache.get(TAGGED_KEY) is None
+
+
+@pytest.mark.parametrize("by_tag", [False, True], ids=["namespace", "tag"])
+async def test_a_stale_value_does_not_replace_one_stored_after_the_invalidation(
+    cache: Cache, by_tag: bool
+) -> None:
+    """The second reader starts the counters again: present is not enough, they
+    must be the generations the first reader reserved."""
+
+    async def fresh_factory() -> Sample:
+        return Sample(name="fresh")
+
+    async def stale_factory() -> Sample:
+        if by_tag:
+            await cache.invalidate_tags("users")
+        else:
+            await cache.invalidate(TAGGED_KEY.namespace)
+        await cache.get_or_set(TAGGED_KEY, fresh_factory, ttl=60, model=Sample)
+        return Sample(name="stale")
+
+    await cache.get_or_set(TAGGED_KEY, stale_factory, ttl=60, model=Sample)
+
+    assert await cache.get(TAGGED_KEY, model=Sample) == Sample(name="fresh")
+
+
+async def test_an_unrelated_invalidation_does_not_discard_the_value(
+    cache: Cache,
+) -> None:
+    async def factory() -> Sample:
+        await cache.invalidate("user:2")
+        await cache.invalidate_tags("roles")
+        return Sample(name="ada")
+
+    await cache.get_or_set(TAGGED_KEY, factory, ttl=60, model=Sample)
+
+    assert await cache.get(TAGGED_KEY, model=Sample) == Sample(name="ada")
+
+
+async def test_concurrent_misses_share_a_reservation(cache: Cache) -> None:
+    """A second miss must not restart the counters under the first."""
+    first = await cache.reserve(TAGGED_KEY)
+    second = await cache.reserve(TAGGED_KEY)
+
+    assert first == second
+    await cache.set_reserved(TAGGED_KEY, '{"name": "ada"}', first, ttl=60)
+    assert await cache.get(TAGGED_KEY) == {"name": "ada"}
+
+
+async def test_a_reservation_serves_nothing_by_itself(cache: Cache) -> None:
+    await cache.reserve(KEY)
+
+    assert await cache.get(KEY) is None
+
+
+async def test_no_reservation_stores_nothing(cache: Cache) -> None:
+    await cache.set_reserved(KEY, '{"name": "ada"}', None, ttl=60)
+
+    assert await cache.get(KEY) is None
+
+
+async def test_a_bad_ttl_raises_without_a_reservation(cache: Cache) -> None:
+    """The reservation is None whenever the cache is off, which must not hide a
+    ttl that fails the day it is turned on."""
+    with pytest.raises(ValueError):
+        await cache.set_reserved(KEY, "1", None, ttl=0)
+
+
+async def test_a_disabled_cache_reserves_nothing(
+    make_cache: Callable[..., Cache],
+) -> None:
+    assert await make_cache(enabled=False).reserve(KEY) is None
+
+
 async def test_disabled_cache_neither_stores_nor_reads(
     make_cache: Callable[..., Cache],
 ) -> None:

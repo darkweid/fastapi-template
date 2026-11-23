@@ -303,6 +303,52 @@ async def test_a_read_delete_or_invalidation_does_not_report_recovery(
     assert sentry_capture.call_count == 1
 
 
+async def test_a_failed_reservation_runs_the_factory_and_stores_nothing(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    """With no generation to compare against, a store could bring back a value an
+    invalidation retired."""
+    reserve = cache._reserve_counters  # noqa: SLF001
+
+    async def fail_then_reserve(counters: list[str]) -> tuple[str, ...] | None:
+        fake_redis.fail_next_commands(1)
+        return await reserve(counters)
+
+    cache._reserve_counters = fail_then_reserve  # type: ignore[method-assign]
+    factory = AsyncMock(return_value={"name": "ada"})
+
+    assert await cache.get_or_set(KEY, factory, ttl=60) == {"name": "ada"}
+
+    factory.assert_awaited_once()
+    assert await cache.get(KEY) is None
+    assert sentry_capture.call_count == 1
+
+
+async def test_a_reservation_or_a_refused_store_does_not_report_recovery(
+    cache: RedisCache, fake_redis: InMemoryRedis, sentry_capture: MagicMock
+) -> None:
+    """Both only read when the counters exist, and a full Redis answers reads."""
+    reservation = await cache.reserve(KEY)
+    await cache.invalidate(KEY.namespace)
+    await cache.reserve(KEY)
+    fake_redis.fail_next_commands(1)
+    await cache.get(KEY)
+
+    await cache.reserve(KEY)
+    await cache.set_reserved(KEY, "{}", reservation, ttl=60)
+
+    assert sentry_capture.call_count == 1
+
+
+async def test_a_bad_ttl_creates_no_counter(
+    cache: RedisCache, fake_redis: InMemoryRedis
+) -> None:
+    with pytest.raises(ValueError):
+        await cache.set(KEY, {"name": "ada"}, ttl=0)
+
+    assert fake_redis.keys_snapshot() == []
+
+
 async def test_a_successful_write_reports_recovery_after_the_quiet_window(
     fake_redis: InMemoryRedis, sentry_capture: MagicMock
 ) -> None:
