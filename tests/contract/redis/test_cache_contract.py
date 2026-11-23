@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from src.core.cache.interface import CacheKey
 from src.core.cache.keys import tag_version_key, value_key, version_key
-from src.core.cache.redis_cache import RedisCache
+from src.core.cache.redis_cache import RESERVATION_TTL_SECONDS, RedisCache
 from src.core.cache.serializer import JsonSerializer
 from src.core.redis.degradation import RedisDegradationReporter
 from tests.fakes.redis import InMemoryRedis
@@ -19,13 +19,15 @@ VERSION_TTL_SECONDS = 600
 SHRUNK_TTL_SECONDS = 5
 
 
-def _cache(redis_client: Redis) -> RedisCache:
+def _cache(
+    redis_client: Redis, *, version_ttl: int = VERSION_TTL_SECONDS
+) -> RedisCache:
     return RedisCache(
         redis_client=redis_client,
         serializer=JsonSerializer(),
         prefix=PREFIX,
         default_ttl=DEFAULT_TTL_SECONDS,
-        version_ttl=VERSION_TTL_SECONDS,
+        version_ttl=version_ttl,
         # The quiet window would mask a recovery reported by the wrong operation.
         reporter=RedisDegradationReporter("Cache", recovery_quiet_ms=0),
     )
@@ -353,8 +355,11 @@ async def test_a_reservation_returns_the_generations_it_started(
     assert reservation == stored
     assert len(set(stored)) == 2
     for counter in RACE_COUNTERS:
-        assert await redis_backend.ttl(counter) >= VERSION_TTL_SECONDS - 1
+        remaining = await redis_backend.ttl(counter)
+        assert RESERVATION_TTL_SECONDS - 1 <= remaining <= RESERVATION_TTL_SECONDS
     await cache.set_reserved(RACE_KEY, '{"n": 1}', reservation)
+    for counter in RACE_COUNTERS:
+        assert await redis_backend.ttl(counter) >= VERSION_TTL_SECONDS - 1
     assert await cache.get(RACE_KEY) == {"n": 1}
 
 
@@ -394,6 +399,77 @@ async def test_a_value_is_not_stored_once_any_counter_restarted(
     await cache.set_reserved(RACE_KEY, '{"n": "fresh"}', restarted)
     await cache.set_reserved(RACE_KEY, '{"n": "stale"}', reservation)
     assert await cache.get(RACE_KEY) == {"n": "fresh"}
+
+
+async def test_a_factory_that_raises_leaves_only_short_lived_counters(
+    redis_backend: Redis,
+) -> None:
+    """A scan over missing ids reserves a namespace per id and stores nothing; at
+    the version ttl that fills a Redis that evicts nothing."""
+
+    async def missing() -> None:
+        raise LookupError
+
+    with pytest.raises(LookupError):
+        await _cache(redis_backend).get_or_set(RACE_KEY, missing)
+
+    for counter in RACE_COUNTERS:
+        assert 0 < await redis_backend.ttl(counter) <= RESERVATION_TTL_SECONDS
+
+
+async def test_a_reservation_does_not_outlive_the_version_ttl(
+    redis_backend: Redis,
+) -> None:
+    cache = _cache(redis_backend, version_ttl=DEFAULT_TTL_SECONDS)
+
+    await cache.reserve(RACE_KEY)
+
+    for counter in RACE_COUNTERS:
+        assert 0 < await redis_backend.ttl(counter) <= DEFAULT_TTL_SECONDS
+
+
+async def test_a_reservation_extends_a_counter_about_to_expire(
+    redis_backend: Redis,
+) -> None:
+    """The second reader of a cold key gets as long to compute as the first. A full
+    Redis still extends: EXPIRE takes no memory."""
+    cache = _cache(redis_backend)
+    first = await cache.reserve(RACE_KEY)
+    for counter in RACE_COUNTERS:
+        await redis_backend.expire(counter, SHRUNK_TTL_SECONDS)
+
+    async with _out_of_memory(redis_backend):
+        assert await cache.reserve(RACE_KEY) == first
+
+    for counter in RACE_COUNTERS:
+        assert await redis_backend.ttl(counter) >= RESERVATION_TTL_SECONDS - 1
+
+
+async def test_a_reservation_leaves_a_longer_lived_counter_alone(
+    redis_backend: Redis,
+) -> None:
+    """A counter cut short would take the values stored under it along."""
+    cache = _cache(redis_backend)
+    await cache.set(RACE_KEY, {"n": 1})
+
+    await cache.reserve(RACE_KEY)
+
+    for counter in RACE_COUNTERS:
+        assert await redis_backend.ttl(counter) >= VERSION_TTL_SECONDS - 1
+
+
+async def test_a_value_is_not_stored_once_its_reservation_expired(
+    redis_backend: Redis,
+) -> None:
+    cache = _cache(redis_backend)
+    reservation = await cache.reserve(RACE_KEY)
+    for counter in RACE_COUNTERS:
+        await redis_backend.expire(counter, 0)
+
+    await cache.set_reserved(RACE_KEY, '{"n": 1}', reservation)
+
+    assert await _stored_values(redis_backend) == []
+    assert await redis_backend.exists(*RACE_COUNTERS) == 0
 
 
 async def test_a_miss_never_reserves_by_reading(redis_backend: Redis) -> None:

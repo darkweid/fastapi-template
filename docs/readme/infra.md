@@ -134,9 +134,14 @@ process; the cache clients count against the cache instance only.
   reservation made on a miss starts the missing ones with a new generation from
   the Redis server clock (`TIME`, microseconds), so a recreated counter never
   addresses a value stored under an earlier generation. A value is stored only
-  while every counter still holds its reserved generation. The one way a generation repeats is that
-  clock moving backwards - a manual clock change, or a failover onto a replica
-  whose clock lags - and the exposure is bounded by the value ttl.
+  while every counter still holds its reserved generation. The one way a
+  generation repeats is that clock moving backwards - a manual clock change, or a
+  failover onto a replica whose clock lags - and the exposure is bounded by the
+  value ttl.
+- A counter a reservation starts expires after five minutes
+  (`RESERVATION_TTL_SECONDS`) unless a value is stored under it, so requests that
+  store nothing, such as a scan over missing ids, do not fill a Redis that evicts
+  nothing. A value that takes longer than that to compute may not be stored.
 - The cache's Lua scripts (`src/core/cache/scripts/*.lua`) address multiple keys
   per invocation without hash tags, so as written they run correctly against a
   single Redis instance but not against a sharded Redis Cluster — a cluster

@@ -23,7 +23,7 @@ class InMemoryCache(BaseCache):
     A missing counter is a miss, a reservation starts every missing counter with a
     generation never handed out before, a write lands only while each counter still
     holds its reserved generation, and invalidation deletes counters. The
-    process never evicts a counter, but keeping the rules identical is what lets
+    process never evicts or expires a counter, but keeping the rules identical is what lets
     the shared cache contract run against both implementations.
     """
 

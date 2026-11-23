@@ -19,6 +19,11 @@ from src.core.redis.degradation import RedisDegradationReporter
 
 logger = get_logger(__name__)
 
+# How long a miss may take between its reservation and its write; a value computed
+# for longer is not stored. A miss that stores nothing leaves its counters for as
+# long, and a path-derived namespace makes one per guessed id.
+RESERVATION_TTL_SECONDS = 300
+
 # A lost or unresponsive connection is a cache outage worth failing open on.
 # Every other RedisError - a ResponseError from a malformed argument or a broken
 # Lua script above all - is a programmer error: swallowing it would hide the bug
@@ -92,13 +97,15 @@ class RedisCache(BaseCache):
     ) -> CacheReservation | None:
         try:
             versions = await self._eval(
-                CACHE_RESERVE_SCRIPT, counters, str(self._version_ttl)
+                CACHE_RESERVE_SCRIPT,
+                counters,
+                str(min(self._version_ttl, RESERVATION_TTL_SECONDS)),
             )
         except FAIL_OPEN_ERRORS as error:
             self._on_counters_outage("reserve", counters, error)
             return None
-        # Not a recovery: with every counter present this only read, which a full
-        # Redis still answers.
+        # Not a recovery: with every counter present this read and extended them at
+        # most, which a full Redis still does.
         return tuple(versions)
 
     async def _write_raw(

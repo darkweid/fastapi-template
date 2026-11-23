@@ -27,6 +27,9 @@ from src.core.storage.s3.interface import (
 MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
 MAX_MULTIPART_PARTS = 10_000
 MAX_LIST_PAGE_SIZE = 1000
+# A cancelled request and close() wait for the abort, inside the 30s gunicorn drains
+# in and the 35s of stop_grace_period.
+ABORT_TIMEOUT_SECONDS = 5
 logger = get_logger(__name__)
 
 
@@ -244,8 +247,10 @@ class S3Adapter(S3ClientProtocol):
         - Part size must be at least 5 MB (except the last part).
         - `max_size_bytes` is checked against the declared size and again against
           the bytes actually read, since a declared size may lie.
-        - A failed or cancelled upload is aborted. An abort that fails is only
-          logged, so give the bucket a lifecycle rule for incomplete uploads.
+        - A failed or cancelled upload is aborted once its upload id is known. A
+          request cancelled while the upload is being created, and an abort that
+          fails (it is only logged), leave it to the bucket's lifecycle rule for
+          incomplete uploads.
         - The UploadFile source should be seekable; synchronous file backends may
           block the event loop under high concurrency.
         """
@@ -254,7 +259,9 @@ class S3Adapter(S3ClientProtocol):
         size = self._get_uploadfile_size(file)
         if size is not None:
             self._check_upload_size(size, max_size_bytes)
-            if size == 0:
+            # A declared size may lie, so an empty one is asked for a byte; the
+            # streaming below rewinds the file and checks what it reads.
+            if size == 0 and not await self._has_body(file):
                 await self.upload_bytes(
                     key=key,
                     data=b"",
@@ -346,9 +353,14 @@ class S3Adapter(S3ClientProtocol):
             await asyncio.shield(abort)
             raise
 
+    async def _has_body(self, file: UploadFile) -> bool:
+        await file.seek(0)
+        return bool(await file.read(1))
+
     async def _abort_multipart_upload(self, client: Any, **upload: str) -> None:
         try:
-            await client.abort_multipart_upload(**upload)
+            async with asyncio.timeout(ABORT_TIMEOUT_SECONDS):
+                await client.abort_multipart_upload(**upload)
         except Exception as error:
             logger.warning(
                 "[S3Adapter] multipart upload %s not aborted: %s",

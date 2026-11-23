@@ -73,6 +73,7 @@ class Cache(Protocol):
         """
         Take the key's current generations, starting the missing ones.
 
+        A value that takes longer than five minutes to compute may be refused.
         `None` when the cache is disabled or cannot take the reservation: the
         value must not be stored.
         """

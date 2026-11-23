@@ -458,6 +458,8 @@ class InMemoryRedis:
                 self._refuse_write_when_full()
                 version = generation
                 self._write(counter, version, ttl_seconds=int(args[0]))
+            elif self._expires[counter] - _now() < int(args[0]):
+                self._expire(counter, int(args[0]))
             versions.append(version)
         return versions
 

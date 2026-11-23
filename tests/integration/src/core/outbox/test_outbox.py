@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from taskiq import InMemoryBroker
 
@@ -26,6 +27,7 @@ from src.core.outbox.models import OutboxMessage
 from src.core.outbox.repositories import OutboxRepository
 from src.core.outbox.tasks import SWEEPER_GRACE
 from src.core.utils.datetime_utils import get_utc_now
+from tests.fakes.db import FakeAsyncSession
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -416,22 +418,53 @@ async def test_the_purge_task_drains_a_backlog_batch_by_batch(
     assert await surviving(integration_engine, ids + kept) == set(kept)
 
 
+@pytest.mark.parametrize(
+    ("status", "index"),
+    [
+        (OutboxMessageStatus.PUBLISHED, "ix_outbox_messages_published_at"),
+        (OutboxMessageStatus.FAILED, "ix_outbox_messages_updated_at"),
+    ],
+)
 async def test_a_purge_can_read_through_its_index(
-    integration_engine: AsyncEngine,
+    integration_engine: AsyncEngine, status: OutboxMessageStatus, index: str
 ) -> None:
     """A partial index serves only a query whose WHERE implies its predicate; with
-    sequential scans off the planner uses it whenever it can."""
-    statements = {
-        "ix_outbox_messages_published_at": "status = 'PUBLISHED' AND published_at",
-        "ix_outbox_messages_updated_at": "status = 'FAILED' AND updated_at",
-    }
+    sequential scans off the planner uses it whenever it can. The index also has to
+    give the order, or every batch sorts the whole backlog."""
+    recorder = FakeAsyncSession()
+    recorder.execute.return_value = MagicMock(rowcount=0)
+    await OutboxRepository().purge(recorder, status, get_utc_now(), limit=10)
+    statement = recorder.execute.await_args.args[0].compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+    )
+
     async with integration_engine.connect() as connection:
         await connection.execute(text("SET LOCAL enable_seqscan = off"))
-        for index, condition in statements.items():
-            plan = await connection.scalars(
-                text(
-                    f"EXPLAIN SELECT id FROM outbox_messages WHERE {condition} < now()"
-                )
-            )
-            assert index in "\n".join(plan)
+        await connection.execute(text("SET LOCAL enable_bitmapscan = off"))
+        plan = "\n".join(
+            await connection.scalars(text(f"EXPLAIN {statement}".replace(":", "\\:")))
+        )
         await connection.rollback()
+
+    assert f"Index Scan using {index}" in plan
+    assert "Sort" not in plan
+
+
+async def test_a_purge_takes_the_oldest_rows_first(
+    integration_engine: AsyncEngine, make_messages: MakeMessages
+) -> None:
+    ids = [
+        *await make_messages(1, OutboxMessageStatus.FAILED, PURGE_AGE),
+        *await make_messages(1, OutboxMessageStatus.FAILED, 2 * PURGE_AGE),
+        *await make_messages(1, OutboxMessageStatus.FAILED, PURGE_AGE),
+    ]
+
+    async with AsyncSession(integration_engine) as session, session.begin():
+        await OutboxRepository().purge(
+            session,
+            OutboxMessageStatus.FAILED,
+            get_utc_now() - PURGE_CUTOFF,
+            limit=1,
+        )
+
+    assert await surviving(integration_engine, ids) == {ids[0], ids[2]}

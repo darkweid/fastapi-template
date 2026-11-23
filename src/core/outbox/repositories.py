@@ -93,6 +93,7 @@ class OutboxRepository(BaseRepository[OutboxMessage]):
         batch = (
             select(self.model.id)
             .where(self.model.status == status, reached_at < cutoff)
+            .order_by(reached_at)
             .limit(limit)
             .with_for_update(skip_locked=True)
             .cte("batch")

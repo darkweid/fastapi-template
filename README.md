@@ -164,10 +164,16 @@ A client should expect and can rely on:
 the same transaction, so a `GET` that starts after the `PATCH` has returned normally
 observes the new body. A `GET` that missed the cache before the `PATCH` and is still
 computing reserved its version counters first, so its already-stale body is not
-stored. One gap is left open on purpose, bounded by the TTL: if Redis is unreachable
-at that moment, the counter deletion is swallowed (the cache never fails a request)
-while the transaction commits, so a value cached before the outage keeps serving
-until it expires.
+stored. Three gaps are left open on purpose, each bounded by the TTL:
+
+- Redis is unreachable at that moment: the counter deletion is swallowed (the cache
+  never fails a request) while the transaction commits. A value cached before the
+  outage keeps serving, and a value computed across it may still be stored.
+- The process dies between the commit and the after-commit invalidation: a value
+  another request started computing after the invalidation inside the transaction
+  and before the commit keeps serving.
+- Redis restarts or fails over and loses the deletion: the counter comes back, and
+  with it every value stored under it.
 
 That invalidation names one user. A write that touches many at once — a bulk
 import, a role migration — instead flushes them all through the tag every user key

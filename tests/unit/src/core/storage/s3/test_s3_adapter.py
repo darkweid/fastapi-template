@@ -834,6 +834,115 @@ async def test_a_repeated_cancellation_does_not_stop_the_abort(
     assert cm.exited
 
 
+async def test_a_close_cancelled_while_it_waits_for_an_abort_still_closes_the_client(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, cm = multipart
+    aborting, closing = asyncio.Event(), asyncio.Event()
+
+    async def hang(**_: object) -> None:
+        aborting.set()
+        await asyncio.Event().wait()
+
+    client.abort_multipart_upload.side_effect = hang
+    await adapter.__aenter__()
+    upload = await _cancel_during_a_part(adapter, client)
+    await asyncio.wait_for(aborting.wait(), timeout=10)
+    upload.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await upload
+    (abort,) = adapter._aborts  # noqa: SLF001
+
+    close = asyncio.create_task(adapter.close())
+    asyncio.get_running_loop().call_soon(closing.set)
+    await closing.wait()
+    assert not cm.exited
+    close.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close
+
+    assert cm.exited
+    abort.cancel()
+
+
+async def test_an_abort_that_hangs_is_given_up(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The process is killed at the end of stop_grace_period; what waits for the
+    abort must get on with its own cleanup before."""
+    adapter, client, _ = multipart
+    monkeypatch.setattr(adapter_module, "ABORT_TIMEOUT_SECONDS", 0)
+
+    async def hang(**_: object) -> None:
+        await asyncio.Event().wait()
+
+    client.abort_multipart_upload.side_effect = hang
+
+    with capture_logger(caplog, adapter_module.logger):
+        # Called directly: close() would wait for a hung abort past any timeout here.
+        await asyncio.wait_for(
+            adapter._abort_multipart_upload(client, UploadId="u1"),  # noqa: SLF001
+            timeout=10,
+        )
+
+    assert "u1 not aborted" in caplog.text
+
+
+def test_the_abort_fits_in_the_drain_of_a_stopping_container() -> None:
+    assert adapter_module.ABORT_TIMEOUT_SECONDS <= 10
+
+
+async def test_a_body_declared_empty_is_streamed(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """Stored as an empty object, the content would be lost without an error."""
+    adapter, client, _ = multipart
+    upload = _upload(b"0123456")
+    upload.size = 0
+
+    async with adapter:
+        await adapter.upload_large_uploadfile(
+            "key-large", upload, max_size_bytes=7, part_size_bytes=5
+        )
+
+    client.put_object.assert_not_awaited()
+    sent = [call.kwargs["Body"] for call in client.upload_part.await_args_list]
+    assert sent == [b"01234", b"56"]
+
+
+async def test_a_body_declared_empty_is_held_to_the_limit(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    adapter, client, _ = multipart
+    upload = _upload(b"0123456")
+    upload.size = 0
+
+    async with adapter:
+        with pytest.raises(PayloadTooLargeException):
+            await adapter.upload_large_uploadfile(
+                "key-large", upload, max_size_bytes=6, part_size_bytes=5
+            )
+
+    client.complete_multipart_upload.assert_not_awaited()
+
+
+async def test_an_empty_body_is_stored_as_an_empty_object(
+    multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
+) -> None:
+    """A multipart upload without a part cannot be completed."""
+    adapter, client, _ = multipart
+
+    async with adapter:
+        await adapter.upload_large_uploadfile(
+            "key-large", _upload(b""), max_size_bytes=0, part_size_bytes=5
+        )
+
+    assert client.put_object.await_args.kwargs["Body"] == b""
+    client.create_multipart_upload.assert_not_awaited()
+
+
 async def test_a_failed_abort_does_not_replace_the_upload_error(
     multipart: tuple[S3Adapter, AsyncMock, FakeClientCM],
     caplog: pytest.LogCaptureFixture,
