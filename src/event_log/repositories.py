@@ -59,11 +59,13 @@ class EventLogRepository(BaseRepository[EventLog]):
                     )
                 )
         except SQLAlchemyError as error:
-            # An outage in any form takes the caller's transaction with it: there
+            # A lost connection or an unreachable database takes the caller's transaction with it: there
             # is no action left to protect, and going on would end in a
-            # PendingRollbackError that hides the outage.
-            if isinstance(error, (DBAPIError, PoolTimeoutError)) and is_database_outage(
-                error
+            # PendingRollbackError that hides the cause. 57P04 (the database was
+            # dropped) is no outage, yet its connection is gone too.
+            if isinstance(error, (DBAPIError, PoolTimeoutError)) and (
+                getattr(error, "connection_invalidated", False)
+                or is_database_outage(error)
             ):
                 raise
             # Swallowed on purpose: an audit row is never worth failing the

@@ -154,15 +154,20 @@ class DriverError(Exception):
     sqlstate = "53300"
 
 
+class DatabaseDropped(Exception):
+    sqlstate = "57P04"
+
+
 @pytest.mark.parametrize(
     "outage",
     [
         DBAPIError("insert", {}, Exception("closed"), connection_invalidated=True),
         DBAPIError("insert", {}, DriverError()),
+        DBAPIError("insert", {}, DatabaseDropped(), connection_invalidated=True),
         OperationalError("insert", {}, Exception("refused")),
         PoolTimeoutError("QueuePool limit"),
     ],
-    ids=["invalidated", "sqlstate", "operational", "pool"],
+    ids=["invalidated", "sqlstate", "dropped", "operational", "pool"],
 )
 async def test_an_unreachable_database_is_the_callers_error(
     fake_session, outage: SQLAlchemyError

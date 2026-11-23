@@ -8,10 +8,11 @@ from sentry_sdk.integrations.aiohttp import AioHttpIntegration
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
-from sentry_sdk.types import Event, Hint
+from sentry_sdk.types import Breadcrumb, BreadcrumbHint, Event, Hint
 
 from loggers import get_logger
 from src.core.errors.describe import reportable
+from src.core.errors.log_scrubbing import logged_stand_in
 from src.main.config import config
 
 logger = get_logger(__name__)
@@ -33,10 +34,14 @@ def _scrub_event(event: Event, hint: Hint) -> None:
     """
     exc_info = hint.get("exc_info")
     error = exc_info[1] if exc_info else None
-    if error is None:
-        return
-    stand_in = reportable(error)
+    record = hint.get("log_record")
+    stand_in = reportable(error) if error is not None else None
     if stand_in is error:
+        # The traceback quotes nothing, but a log call may pass another error.
+        stand_in = logged_stand_in(record) if record else None
+        if stand_in is not None:
+            event["logentry"] = {"message": str(stand_in)}
+            event.pop("extra", None)
         return
     # The error itself comes last; the ones before it are its chain, and the
     # mechanism only says how they were linked.
@@ -56,8 +61,18 @@ def _scrub_event(event: Event, hint: Hint) -> None:
     # A log call may have put the error into its message, arguments or `extra`.
     if "logentry" in event:
         event["logentry"] = {"message": str(stand_in)}
-    if "log_record" in hint:
+    if record:
         event.pop("extra", None)
+
+
+def _scrub_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
+    """A log record is kept as a breadcrumb of every later event in its scope."""
+    record = hint.get("log_record")
+    stand_in = logged_stand_in(record) if record else None
+    if stand_in is not None:
+        crumb["message"] = str(stand_in)
+        crumb.pop("data", None)
+    return crumb
 
 
 def _scrubbing(before_send: BeforeSend | None) -> BeforeSend:
@@ -129,6 +144,7 @@ def init_sentry(
         # The other HTTP integrations send trace headers to every host by default.
         trace_propagation_targets=[],
         before_send=_scrubbing(before_send),
+        before_breadcrumb=_scrub_breadcrumb,
         before_send_transaction=before_send_transaction,
     )
     _sentry_initialized = True

@@ -204,6 +204,13 @@ try:
     raise RuntimeError("plain")
 except RuntimeError as error:
     logger.critical("failed: %s", error, exc_info=True, extra={"cause": "kept"})
+logger.warning("pool: %s", DBAPIError("SELECT 1", None, ValueError("secret@example.com")))
+logger.critical(
+    "no traceback: %s",
+    DBAPIError("SELECT 1", None, ValueError("secret@example.com")),
+    extra={"cause": DBAPIError("SELECT 1", None, ValueError("secret@example.com"))},
+)
+logger.critical("last")
 print(json.dumps(events))
 """
 
@@ -301,16 +308,18 @@ def test_an_ordinary_error_after_the_response_started_keeps_its_text() -> None:
 
 
 def test_a_logged_error_leaves_no_text_in_the_message_or_the_extra() -> None:
-    [interpolated, with_argument, ordinary] = run(LOGGED_FAILURE)
+    [interpolated, with_argument, ordinary, untraced, last] = run(LOGGED_FAILURE)
 
-    for event in (interpolated, with_argument):
-        assert "secret@example.com" not in json.dumps(
-            {key: event[key] for key in event if key != "breadcrumbs"}
-        )
+    for event in (interpolated, with_argument, untraced):
+        assert "secret@example.com" not in json.dumps(event)
         assert event["logentry"] == {"message": "DBAPIError driver=ValueError"}
         assert event["logger"] == "some.library"
     assert ordinary["logentry"]["formatted"] == "failed: plain"
     assert ordinary["extra"]["cause"] == "kept"
+    crumbs = [crumb["message"] for crumb in last["breadcrumbs"]["values"]]
+    assert crumbs.count("DBAPIError driver=ValueError") == 4
+    assert "failed: plain" in crumbs
+    assert "secret@example.com" not in json.dumps(last)
 
 
 def test_no_trace_header_goes_out_through_a_client_sentry_still_patches() -> None:
