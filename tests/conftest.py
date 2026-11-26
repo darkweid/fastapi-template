@@ -13,6 +13,7 @@ from dotenv import dotenv_values
 # the settings and the application engine read POSTGRES_DB at import time. A subprocess
 # that keeps the worker's environment inherits both variables, hence the check for the
 # suffix.
+_POSTGRES_IDENTIFIER_BYTES = 63
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 if _XDIST_WORKER:
     _base_database = os.environ.get("POSTGRES_DB") or dotenv_values(".env.test").get(
@@ -25,7 +26,16 @@ if _XDIST_WORKER:
             "repository root"
         )
     if not _base_database.endswith(f"_{_XDIST_WORKER}"):
-        os.environ["POSTGRES_DB"] = f"{_base_database}_{_XDIST_WORKER}"
+        _worker_database = f"{_base_database}_{_XDIST_WORKER}"
+        # PostgreSQL truncates a longer identifier, so the worker's DROP DATABASE
+        # would hit the base database or another worker's.
+        if len(_worker_database.encode()) > _POSTGRES_IDENTIFIER_BYTES:
+            raise RuntimeError(
+                f"POSTGRES_DB {_base_database!r} is too long for the xdist worker "
+                f"suffix: {_worker_database!r} exceeds "
+                f"{_POSTGRES_IDENTIFIER_BYTES} bytes"
+            )
+        os.environ["POSTGRES_DB"] = _worker_database
 
 from fastapi import FastAPI
 import httpx2
