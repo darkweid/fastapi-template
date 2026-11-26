@@ -62,12 +62,13 @@ def alembic_env() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def migrated_database() -> None:
+def migrated_database(worker_database: None) -> None:
     """Apply the whole Alembic chain to a clean database once per session.
 
     The database is empty when a run starts — a throwaway container without a volume
-    locally, a fresh service container in CI — so this both prepares the schema and
-    proves the chain still applies from scratch.
+    locally, a fresh service container in CI, a database of its own for an xdist
+    worker — so this both prepares the schema and proves the chain still applies from
+    scratch.
     """
     get_settings.cache_clear()
     subprocess.run(
@@ -94,9 +95,43 @@ async def _run_on_server(statement: str) -> None:
         await engine.dispose()
 
 
+def _worker_tag() -> str:
+    """`gw3_` on an xdist worker, empty on a serial run: a database left by a killed
+    run then names the worker that made it."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    return f"{worker}_" if worker else ""
+
+
 def _quoted(name: str) -> str:
     """A database name as a SQL identifier; `POSTGRES_DB` may carry a double quote."""
     return postgresql.dialect().identifier_preparer.quote_identifier(name)
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def worker_database() -> AsyncGenerator[None]:
+    """Create the database of this xdist worker, named by tests/conftest.py, and drop
+    it after the session; a serial run uses the server's own test database untouched.
+
+    Dropped first as well: a killed run leaves it behind on a server that outlives
+    the run, and the chain must apply to an empty database.
+    """
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        yield
+        return
+    database = get_settings().postgres.POSTGRES_DB
+    # Only a database tests/conftest.py named for this worker may be dropped.
+    if database != os.environ.get("TEST_WORKER_DATABASE"):
+        raise RuntimeError(
+            f"POSTGRES_DB {database!r} was not named by tests/conftest.py for xdist "
+            "worker, refusing to drop it"
+        )
+    name = _quoted(database)
+    await _run_on_server(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    await _run_on_server(f"CREATE DATABASE {name}")
+    try:
+        yield
+    finally:
+        await _run_on_server(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -110,7 +145,7 @@ async def database_template(migrated_database: None) -> AsyncGenerator[str]:
     could come back as the source itself.
     """
     source = get_settings().postgres.POSTGRES_DB
-    name = f"template_{uuid4().hex}"
+    name = f"template_{_worker_tag()}{uuid4().hex}"
     await _run_on_server(f"CREATE DATABASE {_quoted(name)} TEMPLATE {_quoted(source)}")
     try:
         yield name
@@ -139,7 +174,7 @@ async def scratch_database(
     it runs Alembic) with this fixture's fields, so `db_session` and every fixture
     built on the engine follow it there.
     """
-    name = f"scratch_{uuid4().hex}"
+    name = f"scratch_{_worker_tag()}{uuid4().hex}"
     await _run_on_server(
         f"CREATE DATABASE {_quoted(name)} TEMPLATE {_quoted(database_template)}"
     )

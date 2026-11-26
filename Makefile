@@ -15,6 +15,10 @@ DOCKER_COMPOSE_EXEC = $(DOCKER_COMPOSE) exec
 # built inside the test-integration recipe, which is why there is no shared variable here.
 COMPOSE_TEST = infra/docker-compose.test.yml
 
+# `make test n=8` (or `n=auto`) spreads a suite over that many pytest-xdist workers;
+# without it the suite runs in one process.
+PYTEST_WORKERS = $(if $(value n),-n $(call shell_quote,n))
+
 # Container names
 APP_CONTAINER = app
 
@@ -209,11 +213,11 @@ lint: ## Run every pre-commit hook
 
 .PHONY: test
 test: ## Run the tests, excluding the integration suite (no Docker needed)
-	TESTING=true pytest
+	TESTING=true pytest $(PYTEST_WORKERS)
 
 .PHONY: test-cov
 test-cov: ## Run the tests with a coverage report
-	TESTING=true pytest --cov=src --cov-report=term-missing --cov-report=xml
+	TESTING=true pytest $(PYTEST_WORKERS) --cov=src --cov-report=term-missing --cov-report=xml
 
 .PHONY: test-integration
 test-integration: ## Run the integration suite against a throwaway PostgreSQL and Redis
@@ -230,7 +234,7 @@ test-integration: ## Run the integration suite against a throwaway PostgreSQL an
 	REDIS_HOST=127.0.0.1 \
 	REDIS_PORT="$$REDIS_TEST_PORT" \
 	REDIS_TEST_INSTANCE="127.0.0.1:$$REDIS_TEST_PORT" \
-	pytest tests/integration tests/contract -m integration -v
+	pytest $(PYTEST_WORKERS) tests/integration tests/contract -m integration -v
 
 .PHONY: test-backup
 test-backup: ## Back up to a local MinIO and restore from it, end to end (needs Docker)

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import socket
 import subprocess
@@ -8,6 +7,7 @@ import pytest
 import redis
 
 from tests.contract.redis.backends import FAKE, REAL, REAL_INSTANCE_FLAG
+from tests.helpers.nested_pytest import nested_pytest_env
 
 CONTRACT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CONTRACT_DIR.parents[2]
@@ -19,18 +19,10 @@ REAL_ITEM = (
 def _nested_pytest(
     *arguments: str, env_overrides: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    # PYTEST_ADDOPTS belongs to the outer run: a replayed seed, `-k` or `-x` there
-    # would change what the nested run collects or reject its arguments outright.
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if name not in {"PYTEST_ADDOPTS", REAL_INSTANCE_FLAG}
-    }
-    env.update({"TESTING": "true", **(env_overrides or {})})
     return subprocess.run(
         [sys.executable, "-m", "pytest", *arguments],
         cwd=REPO_ROOT,
-        env=env,
+        env=nested_pytest_env(**(env_overrides or {})),
         capture_output=True,
         text=True,
         check=False,

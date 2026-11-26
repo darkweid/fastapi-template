@@ -279,6 +279,9 @@ CI/CD wiring and server preparation.
 - `tests/integration/src/` holds the tests that need a live PostgreSQL — migrations, transaction and UoW semantics, advisory locks, the SQL behind `ListQuery`, the transactional outbox. They carry the `integration` marker, which `pytest.ini` deselects by default, so `make test` stays runnable without Docker. `make test-integration` starts a throwaway database and Redis (`infra/docker-compose.test.yml`) and runs them; see `tests/TEST_GUIDE.md` for what belongs there. `tests/contract/redis/` runs the auth, receiver and cache Lua scripts against `InMemoryRedis` in `make test` and against a real Redis in `make test-integration`; the rate limiter script runs against a real Redis only.
 - Run a focused file with `TESTING=true pytest tests/unit/src/<module>/test_<name>.py`.
 - Both suites run in random order (`pytest-randomly`), and the run header prints the seed: `Using --randomly-seed=1234`. Reproduce a failing order with `TESTING=true pytest --randomly-seed=1234`, or through `make` with `PYTEST_ADDOPTS="--randomly-seed=1234" make test` (the same works for `make test-integration`). `-p no:randomly` restores file order while bisecting; a test that passes only in one order is a bug in the test or its fixtures, not something to pin.
+- Both suites can run in parallel through `pytest-xdist`: `make test n=auto`, `make test-cov n=8`, `make test-integration n=4` (CI passes `n=auto`, or `-n auto` to pytest); without `n` they run in one process. Each worker migrates a PostgreSQL database of its own, `<POSTGRES_DB>_gw<N>`, and the real-Redis tests take a lock that runs one of them at a time across workers. A test resource that two workers could share (a database, a Redis key space, a port, a file, a bucket) is keyed per worker through `PYTEST_XDIST_WORKER`, and test ids carry no `uuid4()` or clock value (`tests/unit/test_collection_determinism.py`).
+- A failure from a `-n` run is replayed serially with its seed: `TESTING=true pytest --randomly-seed=1234 <failing test>` for a unit test, `PYTEST_ADDOPTS="--randomly-seed=1234 -k <test name>" make test-integration` (no `n=`) for an integration test, which needs the test stack that target starts. Workers split the suite anew on every run, so when the serial replay passes, the log line of the failure names its worker (`[gw3] FAILED ...`, also in CI), and the tests that worker ran before it are the suspects.
+- `-n auto` starts one worker per CPU. Every worker holds its own PostgreSQL connections, and the test server keeps the default `max_connections=100`, so on a big host or a self-hosted runner cap it with `PYTEST_XDIST_AUTO_NUM_WORKERS=8`.
 
 ## Ports
 Only Nginx is published on a public address. Postgres and Redis are published on
@@ -324,7 +327,7 @@ for `app.conf` once the certificate is in place.
 - `make logs` — tail all services; `make logs s=app` — a single one
 - `make clean` — remove containers/volumes/images/orphans
 - `make lint` / `make test` — quality checks
-- `make test-cov` — tests with coverage report
+- `make test-cov` — tests with coverage report; `n=auto` (or a number) on any test target runs it on that many xdist workers
 - `make test-integration` — integration suite against a throwaway PostgreSQL and Redis; `make test-all` — both suites
 - `make deploy-prod` — deploy on the server, building the image there
 - `make deploy-image APP_IMAGE=ghcr.io/<owner>/<repo>:sha-<12>` — deploy an image built by CI (the same `BUILD=0` path CD runs through `infra/deploy/deploy.sh`)

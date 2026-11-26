@@ -6,6 +6,39 @@ os.environ.setdefault("TESTING", "true")
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock
 
+from dotenv import dotenv_values
+
+# An xdist worker works in a PostgreSQL database of its own, `<POSTGRES_DB>_<worker>`,
+# which tests/integration/conftest.py creates. Set here, before any src import, because
+# the settings and the application engine read POSTGRES_DB at import time. A subprocess
+# that keeps the worker's environment inherits POSTGRES_DB already renamed, so the name
+# this file set is kept in TEST_WORKER_DATABASE; a suffix alone proves nothing, since a
+# base database may itself be called `<name>_gw0`.
+_POSTGRES_IDENTIFIER_BYTES = 63
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER:
+    _base_database = os.environ.get("POSTGRES_DB") or dotenv_values(".env.test").get(
+        "POSTGRES_DB"
+    )
+    if not _base_database:
+        raise RuntimeError(
+            "POSTGRES_DB is neither exported nor set in .env.test, so the xdist "
+            f"worker {_XDIST_WORKER} cannot name its database; run pytest from the "
+            "repository root"
+        )
+    if os.environ.get("TEST_WORKER_DATABASE") != _base_database:
+        _worker_database = f"{_base_database}_{_XDIST_WORKER}"
+        # PostgreSQL truncates a longer identifier, so the worker's DROP DATABASE
+        # would hit the base database or another worker's.
+        if len(_worker_database.encode()) > _POSTGRES_IDENTIFIER_BYTES:
+            raise RuntimeError(
+                f"POSTGRES_DB {_base_database!r} is too long for the xdist worker "
+                f"suffix: {_worker_database!r} exceeds "
+                f"{_POSTGRES_IDENTIFIER_BYTES} bytes"
+            )
+        os.environ["POSTGRES_DB"] = _worker_database
+        os.environ["TEST_WORKER_DATABASE"] = _worker_database
+
 from fastapi import FastAPI
 import httpx2
 import pytest
