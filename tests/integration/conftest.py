@@ -118,7 +118,14 @@ async def worker_database() -> AsyncGenerator[None]:
     if not os.environ.get("PYTEST_XDIST_WORKER"):
         yield
         return
-    name = _quoted(get_settings().postgres.POSTGRES_DB)
+    database = get_settings().postgres.POSTGRES_DB
+    # Only a database tests/conftest.py named for this worker may be dropped.
+    if database != os.environ.get("TEST_WORKER_DATABASE"):
+        raise RuntimeError(
+            f"POSTGRES_DB {database!r} was not named by tests/conftest.py for xdist "
+            "worker, refusing to drop it"
+        )
+    name = _quoted(database)
     await _run_on_server(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
     await _run_on_server(f"CREATE DATABASE {name}")
     try:

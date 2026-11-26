@@ -11,8 +11,9 @@ from dotenv import dotenv_values
 # An xdist worker works in a PostgreSQL database of its own, `<POSTGRES_DB>_<worker>`,
 # which tests/integration/conftest.py creates. Set here, before any src import, because
 # the settings and the application engine read POSTGRES_DB at import time. A subprocess
-# that keeps the worker's environment inherits both variables, hence the check for the
-# suffix.
+# that keeps the worker's environment inherits POSTGRES_DB already renamed, so the name
+# this file set is kept in TEST_WORKER_DATABASE; a suffix alone proves nothing, since a
+# base database may itself be called `<name>_gw0`.
 _POSTGRES_IDENTIFIER_BYTES = 63
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 if _XDIST_WORKER:
@@ -25,7 +26,7 @@ if _XDIST_WORKER:
             f"worker {_XDIST_WORKER} cannot name its database; run pytest from the "
             "repository root"
         )
-    if not _base_database.endswith(f"_{_XDIST_WORKER}"):
+    if os.environ.get("TEST_WORKER_DATABASE") != _base_database:
         _worker_database = f"{_base_database}_{_XDIST_WORKER}"
         # PostgreSQL truncates a longer identifier, so the worker's DROP DATABASE
         # would hit the base database or another worker's.
@@ -36,6 +37,7 @@ if _XDIST_WORKER:
                 f"{_POSTGRES_IDENTIFIER_BYTES} bytes"
             )
         os.environ["POSTGRES_DB"] = _worker_database
+        os.environ["TEST_WORKER_DATABASE"] = _worker_database
 
 from fastapi import FastAPI
 import httpx2
