@@ -95,6 +95,13 @@ async def _run_on_server(statement: str) -> None:
         await engine.dispose()
 
 
+def _worker_tag() -> str:
+    """`gw3_` on an xdist worker, empty on a serial run: a database left by a killed
+    run then names the worker that made it."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    return f"{worker}_" if worker else ""
+
+
 def _quoted(name: str) -> str:
     """A database name as a SQL identifier; `POSTGRES_DB` may carry a double quote."""
     return postgresql.dialect().identifier_preparer.quote_identifier(name)
@@ -131,7 +138,7 @@ async def database_template(migrated_database: None) -> AsyncGenerator[str]:
     could come back as the source itself.
     """
     source = get_settings().postgres.POSTGRES_DB
-    name = f"template_{uuid4().hex}"
+    name = f"template_{_worker_tag()}{uuid4().hex}"
     await _run_on_server(f"CREATE DATABASE {_quoted(name)} TEMPLATE {_quoted(source)}")
     try:
         yield name
@@ -160,7 +167,7 @@ async def scratch_database(
     it runs Alembic) with this fixture's fields, so `db_session` and every fixture
     built on the engine follow it there.
     """
-    name = f"scratch_{uuid4().hex}"
+    name = f"scratch_{_worker_tag()}{uuid4().hex}"
     await _run_on_server(
         f"CREATE DATABASE {_quoted(name)} TEMPLATE {_quoted(database_template)}"
     )

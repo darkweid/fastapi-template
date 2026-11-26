@@ -14,10 +14,16 @@ from dotenv import dotenv_values
 # nested inside a worker inherits the variable, hence the check for the suffix.
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 if _XDIST_WORKER:
-    _base_database = (
-        os.environ.get("POSTGRES_DB") or dotenv_values(".env.test")["POSTGRES_DB"]
+    _base_database = os.environ.get("POSTGRES_DB") or dotenv_values(".env.test").get(
+        "POSTGRES_DB"
     )
-    if _base_database and not _base_database.endswith(f"_{_XDIST_WORKER}"):
+    if not _base_database:
+        raise RuntimeError(
+            "POSTGRES_DB is neither exported nor set in .env.test, so the xdist "
+            f"worker {_XDIST_WORKER} cannot name its database; run pytest from the "
+            "repository root"
+        )
+    if not _base_database.endswith(f"_{_XDIST_WORKER}"):
         os.environ["POSTGRES_DB"] = f"{_base_database}_{_XDIST_WORKER}"
 
 from fastapi import FastAPI
