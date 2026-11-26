@@ -288,7 +288,7 @@ jobs:
         shell: bash
         run: |
           export PATH="$PWD/.venv/bin:$PATH"
-          make test-cov
+          make test-cov n=auto
 
       # The unit tests read the profile files; this checks the image the deploy
       # builds from them. Per profile, the postgres image built with that
@@ -502,7 +502,8 @@ jobs:
         run: cp .env.example .env
 
       # Migrations are not applied in a step of their own: the `migrated_database`
-      # fixture does it, and that is the path developers run locally.
+      # fixture does it, and that is the path developers run locally. Under `-n`
+      # every worker migrates a database of its own (tests/integration/conftest.py).
       - name: Run integration tests
         shell: bash
         env:
@@ -514,7 +515,7 @@ jobs:
           REDIS_TEST_INSTANCE: '127.0.0.1:6379'
         run: |
           export PATH="$PWD/.venv/bin:$PATH"
-          pytest tests/integration tests/contract -m integration -v
+          pytest -n auto tests/integration tests/contract -m integration -v
 
   # Backs up to a local MinIO and restores from it (scripts/ops/backup_smoke.sh):
   # the stanza, a full backup from a sidecar-shaped container, archived WAL,
