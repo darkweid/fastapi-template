@@ -62,12 +62,13 @@ def alembic_env() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def migrated_database() -> None:
+def migrated_database(worker_database: None) -> None:
     """Apply the whole Alembic chain to a clean database once per session.
 
     The database is empty when a run starts — a throwaway container without a volume
-    locally, a fresh service container in CI — so this both prepares the schema and
-    proves the chain still applies from scratch.
+    locally, a fresh service container in CI, a database of its own for an xdist
+    worker — so this both prepares the schema and proves the chain still applies from
+    scratch.
     """
     get_settings.cache_clear()
     subprocess.run(
@@ -97,6 +98,26 @@ async def _run_on_server(statement: str) -> None:
 def _quoted(name: str) -> str:
     """A database name as a SQL identifier; `POSTGRES_DB` may carry a double quote."""
     return postgresql.dialect().identifier_preparer.quote_identifier(name)
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def worker_database() -> AsyncGenerator[None]:
+    """Create the database of this xdist worker, named by tests/conftest.py, and drop
+    it after the session; a serial run uses the server's own test database untouched.
+
+    Dropped first as well: a killed run leaves it behind on a server that outlives
+    the run, and the chain must apply to an empty database.
+    """
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        yield
+        return
+    name = _quoted(get_settings().postgres.POSTGRES_DB)
+    await _run_on_server(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    await _run_on_server(f"CREATE DATABASE {name}")
+    try:
+        yield
+    finally:
+        await _run_on_server(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

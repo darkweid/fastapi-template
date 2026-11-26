@@ -253,6 +253,7 @@ async def test_get_resource_returns_200(async_client_with_fakes):
 - Run all unit tests: `make test` (integration tests are deselected by default, so no Docker is needed)
 - Run the integration suite: `make test-integration` (needs Docker; starts a throwaway PostgreSQL and Redis)
 - Run both: `make test-all`
+- Run in parallel: `n=auto` (or a number) on `make test`, `make test-cov` or `make test-integration`. Every xdist worker migrates its own database (`<POSTGRES_DB>_gw<N>`, `worker_database` in `tests/integration/conftest.py`), and `real_redis` holds a lock so one real-Redis test runs at a time; a new shared resource is keyed per worker through `PYTEST_XDIST_WORKER` the same way.
 - Run one file: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py -v`
 - Run one test: `TESTING=true python -m pytest tests/unit/src/<module>/test_<name>.py::test_<scenario> -v`
 - Stop on first failure: `TESTING=true python -m pytest tests/unit/src/<module> -x`

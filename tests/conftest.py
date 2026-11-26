@@ -6,6 +6,20 @@ os.environ.setdefault("TESTING", "true")
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock
 
+from dotenv import dotenv_values
+
+# An xdist worker works in a PostgreSQL database of its own, `<POSTGRES_DB>_<worker>`,
+# which tests/integration/conftest.py creates. Set here, before any src import, because
+# the settings and the application engine read POSTGRES_DB at import time. A pytest
+# nested inside a worker inherits the variable, hence the check for the suffix.
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER:
+    _base_database = (
+        os.environ.get("POSTGRES_DB") or dotenv_values(".env.test")["POSTGRES_DB"]
+    )
+    if _base_database and not _base_database.endswith(f"_{_XDIST_WORKER}"):
+        os.environ["POSTGRES_DB"] = f"{_base_database}_{_XDIST_WORKER}"
+
 from fastapi import FastAPI
 import httpx2
 import pytest

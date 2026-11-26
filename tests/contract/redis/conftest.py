@@ -1,4 +1,7 @@
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import contextmanager
+import fcntl
+import os
 from pathlib import Path
 from typing import cast
 
@@ -31,17 +34,43 @@ def pytest_itemcollected(item: pytest.Item) -> None:
         item.add_marker(pytest.mark.integration)
 
 
+@contextmanager
+def _one_worker_at_a_time(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Hold the run's real Redis for this test alone across xdist workers.
+
+    A database index per worker would not keep them apart: the tests FLUSHALL, and
+    some change server-wide state, such as `maxmemory` and the script cache. The
+    lock file sits in the directory every worker's basetemp shares; a serial run
+    takes no lock.
+    """
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        yield
+        return
+    lock_path = tmp_path_factory.getbasetemp().parent / "real-redis.lock"
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 @pytest.fixture
-async def real_redis() -> AsyncIterator[Redis]:
+async def real_redis(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> AsyncIterator[Redis]:
     require_throwaway_instance(f"{config.redis.REDIS_HOST}:{config.redis.REDIS_PORT}")
-    client = create_redis_client(config.redis.dsn)
-    # FLUSHALL, not FLUSHDB: the receiver's claims live in the tasks database.
-    await client.flushall()
-    try:
-        yield client
-    finally:
+    with _one_worker_at_a_time(tmp_path_factory):
+        client = create_redis_client(config.redis.dsn)
+        # FLUSHALL, not FLUSHDB: the receiver's claims live in the tasks database.
         await client.flushall()
-        await client.aclose()
+        try:
+            yield client
+        finally:
+            await client.flushall()
+            await client.aclose()
 
 
 @pytest.fixture

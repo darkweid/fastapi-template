@@ -80,6 +80,8 @@ dnspython==2.9.2
     # via email-validator
 email-validator==2.4.0
     # via -r base.in
+execnet==2.1.2
+    # via pytest-xdist
 fastapi==0.165.0
     # via -r base.in
 filelock==4.2.12
@@ -203,11 +205,14 @@ pytest==9.2.0
     #   pytest-asyncio
     #   pytest-cov
     #   pytest-randomly
+    #   pytest-xdist
 pytest-asyncio==1.5.0
     # via -r dev.in
 pytest-cov==7.1.0
     # via -r dev.in
 pytest-randomly==5.1.0
+    # via -r dev.in
+pytest-xdist==3.8.0
     # via -r dev.in
 python-dateutil==2.9.0.post0
     # via

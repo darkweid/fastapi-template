@@ -12,6 +12,7 @@ pytest
 pytest-asyncio
 pytest-cov
 pytest-randomly
+pytest-xdist
 taskiq[reload]
 
 # Type stubs
