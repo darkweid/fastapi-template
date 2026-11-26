@@ -10,8 +10,9 @@ from dotenv import dotenv_values
 
 # An xdist worker works in a PostgreSQL database of its own, `<POSTGRES_DB>_<worker>`,
 # which tests/integration/conftest.py creates. Set here, before any src import, because
-# the settings and the application engine read POSTGRES_DB at import time. A pytest
-# nested inside a worker inherits the variable, hence the check for the suffix.
+# the settings and the application engine read POSTGRES_DB at import time. A subprocess
+# that keeps the worker's environment inherits both variables, hence the check for the
+# suffix.
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 if _XDIST_WORKER:
     _base_database = os.environ.get("POSTGRES_DB") or dotenv_values(".env.test").get(
